@@ -40,6 +40,31 @@ const (
 	actUninstall
 )
 
+type actionDef struct {
+	key     string
+	label   string
+	enabled func(*manager.Status) bool
+}
+
+var actionRegistry = map[action]actionDef{
+	actStart: {
+		key: "1", label: "Start",
+		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Stopped },
+	},
+	actStop: {
+		key: "2", label: "Stop",
+		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running },
+	},
+	actRestart: {
+		key: "3", label: "Restart",
+		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running },
+	},
+	actReload: {
+		key: "4", label: "Reload",
+		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running },
+	},
+}
+
 type model struct {
 	mgr            manager.Manager
 	status         *manager.Status
@@ -340,15 +365,8 @@ func isActionAllowed(s *manager.Status, a action) bool {
 	if !s.Installed {
 		return a == actInstall
 	}
-	switch a {
-	case actStart:
-		return s.InstanceState == manager.Stopped
-	case actStop:
-		return s.InstanceState == manager.Running
-	case actRestart:
-		return s.InstanceState == manager.Running
-	case actReload:
-		return s.InstanceState == manager.Running
+	if def, ok := actionRegistry[a]; ok {
+		return def.enabled(s)
 	}
 	return false
 }

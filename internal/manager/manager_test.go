@@ -409,7 +409,7 @@ rules:
     server: example.com`
 	rules := `DOMAIN-SUFFIX,google.com,Proxy`
 
-	got, err := RenderConfig(tmpl, sub, rules)
+	got, err := renderConfig(tmpl, sub, rules)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,7 +430,7 @@ rules:
 
 func TestRenderConfigEmptySubscription(t *testing.T) {
 	tmpl := `proxies: {{subscription}}`
-	got, err := RenderConfig(tmpl, "", "rules: all")
+	got, err := renderConfig(tmpl, "", "rules: all")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestRenderConfigEmptySubscription(t *testing.T) {
 
 func TestRenderConfigEmptyRules(t *testing.T) {
 	tmpl := `rules: {{routing_rules}}`
-	got, err := RenderConfig(tmpl, "proxies: x", "")
+	got, err := renderConfig(tmpl, "proxies: x", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestRenderConfigEmptyRules(t *testing.T) {
 
 func TestRenderConfigNoPlaceholders(t *testing.T) {
 	tmpl := `static config`
-	got, err := RenderConfig(tmpl, "sub", "rules")
+	got, err := renderConfig(tmpl, "sub", "rules")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

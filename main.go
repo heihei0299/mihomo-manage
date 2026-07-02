@@ -348,7 +348,7 @@ func cliEditFile(mgr manager.Manager, path string, args []string) {
 	quietPrintln("config updated")
 }
 
-type simpleOp func(context.Context) error
+type commandFunc func(context.Context) error
 
 func printUsage() {
 	fmt.Println(`Usage: mihomo-manager [--quiet] <command> [args]
@@ -381,7 +381,7 @@ Commands:
 Run without arguments to start the TUI.`)
 }
 
-func cliSimpleOp(op simpleOp, verb string) {
+func cliSimpleOp(op commandFunc, verb string) {
 	if err := op(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
