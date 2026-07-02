@@ -115,11 +115,8 @@ jobs:
             echo "license = MIT"
           } > pkg/.PKGINFO
 
-          cd pkg
-          bsdtar -c --zstd -f "../dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
-            --options 'compress-level=19' \
-            .PKGINFO usr/
-          cd ..
+          tar -c --zstd -f "../dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
+            -C pkg .PKGINFO usr/
 
       - uses: actions/upload-artifact@v4
         with:
