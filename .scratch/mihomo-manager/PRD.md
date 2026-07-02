@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # mihomo-manager: 本地 mihomo 代理实例管理器
 

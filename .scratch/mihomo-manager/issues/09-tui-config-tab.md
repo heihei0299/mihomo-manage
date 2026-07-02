@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # TUI 配置管理标签页
 

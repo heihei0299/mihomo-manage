@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # mihomo-manager v1.0 代码稳定化
 

@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # --quiet 模式 + 日志查看
 

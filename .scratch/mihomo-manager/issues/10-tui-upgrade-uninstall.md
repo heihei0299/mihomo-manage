@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # TUI 升级版本选择 + 卸载流程
 

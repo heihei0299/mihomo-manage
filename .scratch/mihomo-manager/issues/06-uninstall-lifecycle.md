@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 卸载生命周期
 

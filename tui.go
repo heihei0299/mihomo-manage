@@ -44,11 +44,16 @@ type actionDef struct {
 	enabled func(*manager.Status) bool
 }
 
+var (
+	installedStopped = func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Stopped }
+	installedRunning = func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }
+)
+
 var actionRegistry = map[action]actionDef{
-	actStart:   {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Stopped }},
-	actStop:    {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }},
-	actRestart: {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }},
-	actReload:  {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }},
+	actStart:   {enabled: installedStopped},
+	actStop:    {enabled: installedRunning},
+	actRestart: {enabled: installedRunning},
+	actReload:  {enabled: installedRunning},
 }
 
 type model struct {

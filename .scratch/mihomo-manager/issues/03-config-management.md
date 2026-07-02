@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 配置管理
 

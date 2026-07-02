@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 实例运行控制
 

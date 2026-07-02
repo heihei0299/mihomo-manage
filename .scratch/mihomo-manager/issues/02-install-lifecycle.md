@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 安装生命周期
 

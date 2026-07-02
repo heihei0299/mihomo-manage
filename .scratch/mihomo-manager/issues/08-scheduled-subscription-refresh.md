@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 定时订阅刷新
 

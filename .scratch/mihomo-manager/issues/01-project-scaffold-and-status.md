@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 项目骨架 + 状态仪表盘
 

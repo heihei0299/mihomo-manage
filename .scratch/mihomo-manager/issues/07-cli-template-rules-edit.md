@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # CLI 模板/规则编辑
 

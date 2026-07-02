@@ -156,7 +156,7 @@ func NewOSServiceManager(sys System) *OSServiceManager {
 	return &OSServiceManager{sys: sys}
 }
 
-func (s *OSServiceManager) run(f func(osStrategy) error) error {
+func (s *OSServiceManager) withStrategy(f func(osStrategy) error) error {
 	strat, err := s.strategy()
 	if err != nil {
 		return err
@@ -173,25 +173,25 @@ func (s *OSServiceManager) IsRunning(name string) (bool, error) {
 }
 
 func (s *OSServiceManager) Register(name, serviceFilePath string) error {
-	return s.run(func(strat osStrategy) error { return strat.enable(name, serviceFilePath) })
+	return s.withStrategy(func(strat osStrategy) error { return strat.enable(name, serviceFilePath) })
 }
 
 func (s *OSServiceManager) Unregister(name string) error {
-	return s.run(func(strat osStrategy) error { return strat.disable(name) })
+	return s.withStrategy(func(strat osStrategy) error { return strat.disable(name) })
 }
 
 func (s *OSServiceManager) Start(name string) error {
-	return s.run(func(strat osStrategy) error { return strat.start(name) })
+	return s.withStrategy(func(strat osStrategy) error { return strat.start(name) })
 }
 
 func (s *OSServiceManager) Stop(name string) error {
-	return s.run(func(strat osStrategy) error { return strat.stop(name) })
+	return s.withStrategy(func(strat osStrategy) error { return strat.stop(name) })
 }
 
 func (s *OSServiceManager) Restart(name string) error {
-	return s.run(func(strat osStrategy) error { return strat.restart(name) })
+	return s.withStrategy(func(strat osStrategy) error { return strat.restart(name) })
 }
 
 func (s *OSServiceManager) Reload(name string) error {
-	return s.run(func(strat osStrategy) error { return strat.reload(name) })
+	return s.withStrategy(func(strat osStrategy) error { return strat.reload(name) })
 }
