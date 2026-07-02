@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 1: mihomo-manager 快速入门</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>Lesson 1: mihomo-manager 快速入门</h1>
+<p>完成本节后你将能用一条命令完成 mihomo 的安装、配置和日常启停。</p>
+
+<h2>准备工作</h2>
+<p>编译当前项目：</p>
+<pre><code>go build -o mihomo-manager .
+sudo cp mihomo-manager /usr/local/bin/</code></pre>
+
+<div class="note">
+  <strong>注意：</strong>部分操作（安装、卸载、系统服务注册）需要 <code>sudo</code> 权限。
+</div>
+
+<h2>1. 查看状态</h2>
+<p>任何时候都可以通过 <code>status</code> 命令查看当前 mihomo 的安装和运行状态：</p>
+<pre><code>mihomo-manager status</code></pre>
+<p>输出示例：</p>
+<pre><code>mihomo: not installed    ← 尚未安装
+mihomo: running v1.19.27 ← 正常运行中
+mihomo: stopped v1.19.27 ← 已停止</code></pre>
+<p>退出码含义：<code>0</code> = 运行中，<code>1</code> = 已停止/失败，<code>2</code> = 未安装。</p>
+
+<h2>2. 安装 mihomo</h2>
+<p>安装最新版：</p>
+<pre><code>sudo mihomo-manager install</code></pre>
+<p>安装指定版本：</p>
+<pre><code>sudo mihomo-manager install v1.19.27</code></pre>
+<p>安装过程分 5 个阶段，每个阶段都有进度输出：</p>
+<pre><code>  [fetch] Downloading mihomo v1.19.27
+  [fetch] Download complete
+  [deploy] Deploying binary
+  [bootstrap] Creating config directory
+  [register] Registering system service
+  [start] Starting mihomo
+mihomo installed successfully</code></pre>
+
+<h2>3. 查看版本列表</h2>
+<pre><code>mihomo-manager versions</code></pre>
+<p>从 GitHub Releases 获取最近 5 个可用版本：</p>
+<pre><code>v1.19.27
+v1.19.26
+v1.19.25
+v1.19.24
+v1.19.23</code></pre>
+
+<h2>4. 升级 mihomo</h2>
+<p>升级到最新版：</p>
+<pre><code>sudo mihomo-manager upgrade</code></pre>
+<p>升级到指定版本：</p>
+<pre><code>sudo mihomo-manager upgrade v1.19.26</code></pre>
+<p>升级流程：下载新版本 → 停止当前实例 → 备份旧二进制 → 替换 → 启动。如果启动失败会自动回滚。</p>
+
+<h2>5. 启停控制</h2>
+<div class="step">
+  <strong>启动：</strong><code>mihomo-manager start</code> — 启动代理<br>
+  <strong>停止：</strong><code>mihomo-manager stop</code> — 停止代理<br>
+  <strong>重启：</strong><code>mihomo-manager restart</code> — 完全重启<br>
+  <strong>重载配置：</strong><code>mihomo-manager reload</code> — 不重启进程，仅重载配置
+</div>
+
+<h2>6. TUI 交互界面</h2>
+<p>不加任何参数运行即启动 TUI：</p>
+<pre><code>mihomo-manager</code></pre>
+<p>TUI 中的操作键：</p>
+<ul>
+  <li><kbd>1</kbd> Start / <kbd>2</kbd> Stop / <kbd>3</kbd> Restart / <kbd>4</kbd> Reload</li>
+  <li><kbd>5</kbd> Upgrade / <kbd>i</kbd> Install</li>
+  <li><kbd>r</kbd> 刷新状态 / <kbd>q</kbd> 退出</li>
+</ul>
+
+<h2>7. 卸载</h2>
+<pre><code>sudo mihomo-manager uninstall              # 删除所有
+sudo mihomo-manager uninstall --keep-backup # 保留配置备份</code></pre>
+
+<h2>后续</h2>
+<p>配置管理（订阅设置、分流规则编辑）等功能可以通过 <code>mihomo-manager subscription set</code>、<code>mihomo-manager config preview</code> 等 CLI 命令操作，详见 <code>mihomo-manager --help</code>。</p>
+
+<p>如果任何一步不清楚，直接问我。</p>
+
+</body>
+</html>

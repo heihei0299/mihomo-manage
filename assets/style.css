@@ -1,0 +1,17 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  line-height: 1.7;
+  color: #1a1a2e;
+  background: #fafafa;
+}
+h1 { font-size: 1.8rem; border-bottom: 2px solid #0f3460; padding-bottom: 0.3rem; }
+h2 { font-size: 1.3rem; margin-top: 2rem; color: #0f3460; }
+code { background: #e8e8e8; padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em; }
+pre { background: #1a1a2e; color: #e0e0e0; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; color: inherit; }
+kbd { background: #eee; border: 1px solid #ccc; padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.85em; }
+.note { background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.5rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+.step { margin: 1.5rem 0; padding-left: 1rem; border-left: 3px solid #0f3460; }
