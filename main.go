@@ -32,17 +32,43 @@ func main() {
 	svc := manager.NewOSServiceManager(sys)
 	mgr := manager.New(sys, svc)
 
-	args := make([]string, 0, len(os.Args)-1)
+	var args []string
 	showHelp := false
 	showVersion := false
-	for _, a := range os.Args[1:] {
+
+	raw := os.Args[1:]
+	for i := 0; i < len(raw); i++ {
+		a := raw[i]
 		switch a {
 		case "--quiet", "-q":
 			quiet = true
 		case "--help", "-h":
 			showHelp = true
-		case "--version", "-v":
+		case "--version":
 			showVersion = true
+		case "-v":
+			showVersion = true
+		case "-s":
+			if i+1 >= len(raw) {
+				fmt.Fprintln(os.Stderr, "usage: mihomo-manager -s <url>")
+				os.Exit(1)
+			}
+			i++
+			args = append(args, "subscription", "set", raw[i])
+		case "-u":
+			args = append(args, "subscription", "update")
+		case "-c":
+			args = append(args, "config", "preview")
+		case "-t":
+			if i+1 < len(raw) && raw[i+1] == "--off" {
+				i++
+				args = append(args, "subscription", "schedule", "--off")
+			} else if i+2 < len(raw) && raw[i+1] == "--interval" {
+				i += 2
+				args = append(args, "subscription", "schedule", "--interval", raw[i])
+			} else {
+				args = append(args, "subscription", "schedule")
+			}
 		default:
 			args = append(args, a)
 		}
@@ -61,6 +87,17 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	}
+
+	switch args[0] {
+	case "i":
+		args[0] = "install"
+	case "ui":
+		args[0] = "uninstall"
+	case "ug":
+		args[0] = "upgrade"
+	case "v":
+		args[0] = "versions"
 	}
 
 	switch args[0] {
@@ -354,23 +391,24 @@ func printUsage() {
 	fmt.Println(`Usage: mihomo-manager [--quiet] <command> [args]
 
 Commands:
-  install [version]        Install mihomo (default: latest)
-  uninstall [--keep-backup] Remove mihomo
+  install [version]        Install mihomo (default: latest)    (alias: i)
+  uninstall [--keep-backup] Remove mihomo                     (alias: ui)
+  upgrade [version]        Upgrade mihomo (default: latest)    (alias: ug)
+  versions                 List available versions             (alias: v)
+
   start                    Start mihomo
   stop                     Stop mihomo
   restart                  Restart mihomo
   reload                   Reload config
   status                   Show mihomo status
-  upgrade [version]        Upgrade mihomo (default: latest)
-  versions                 List available versions
 
-  config preview           Preview generated config
+  config preview           Preview generated config            (alias: -c)
   template edit            Edit config template ($EDITOR)
   rules edit               Edit routing rules ($EDITOR)
 
-  subscription set <data>  Set subscription source
-  subscription update      Refresh and apply subscription
-  subscription schedule    View/configure auto-refresh
+  subscription set <data>  Set subscription source             (alias: -s)
+  subscription update      Refresh and apply subscription      (alias: -u)
+  subscription schedule    View/configure auto-refresh         (alias: -t)
 
   logs [--tail=N] [--follow] View mihomo logs
 
