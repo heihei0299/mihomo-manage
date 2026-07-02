@@ -37,8 +37,7 @@ jobs:
             -o "dist/mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" \
             .
 
-      - name: upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
@@ -46,12 +45,14 @@ jobs:
   deb:
     runs-on: ubuntu-latest
     needs: build
-    steps:
-      - uses: actions/checkout@v4
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
 
+    steps:
       - uses: actions/download-artifact@v4
         with:
-          name: mihomo-manager-linux-amd64
+          name: mihomo-manager-linux-${{ matrix.arch }}
           path: dist/
 
       - name: build deb
@@ -60,36 +61,32 @@ jobs:
           VERSION="${VERSION#v}"
           mkdir -p pkg/DEBIAN
           mkdir -p pkg/usr/bin
-          mkdir -p pkg/opt/mihomo-manager
-          mkdir -p pkg/opt/mihomo/etc
 
-          install -m 0755 dist/mihomo-manager-linux-amd64 pkg/usr/bin/mihomo-manager
+          install -m 0755 "dist/mihomo-manager-linux-${{ matrix.arch }}" pkg/usr/bin/mihomo-manager
 
           cat > pkg/DEBIAN/control <<EOF
 Package: mihomo-manager
 Version: $VERSION
 Section: net
 Priority: optional
-Architecture: amd64
+Architecture: ${{ matrix.arch }}
 Maintainer: mihomo-manager <dev@example.com>
 Description: mihomo (Clash Meta) proxy manager
  Manages the lifecycle, configuration, and subscription
  updates of a mihomo proxy instance.
 EOF
 
-          dpkg-deb --build pkg "dist/mihomo-manager_${VERSION}_amd64.deb"
+          dpkg-deb --build pkg "dist/mihomo-manager_${VERSION}_${{ matrix.arch }}.deb"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mihomo-manager-deb
+          name: mihomo-manager-deb-${{ matrix.arch }}
           path: dist/mihomo-manager_*.deb
 
   arch:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           name: mihomo-manager-linux-amd64
@@ -99,34 +96,35 @@ EOF
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          mkdir -p pkg/usr/bin
+          PKGDIR="pkg/usr/bin"
+          mkdir -p "$PKGDIR"
 
-          install -m 0755 dist/mihomo-manager-linux-amd64 pkg/usr/bin/mihomo-manager
+          install -m 0755 dist/mihomo-manager-linux-amd64 "$PKGDIR/mihomo-manager"
 
-          cat > PKGBUILD <<EOF
-# Maintainer: mihomo-manager <dev@example.com>
-pkgname=mihomo-manager
-pkgver=$VERSION
-pkgrel=1
-pkgdesc="mihomo (Clash Meta) proxy manager"
-arch=('x86_64')
-url="https://github.com/${{ github.repository }}"
-license=('MIT')
-source=("mihomo-manager::https://github.com/${{ github.repository }}/releases/download/v\$pkgver/mihomo-manager-linux-amd64")
-sha256sums=('SKIP')
+          BINARY_SIZE=$(stat -c%s "$PKGDIR/mihomo-manager")
 
-package() {
-  install -Dm0755 "\$srcdir/mihomo-manager" "\$pkgdir/usr/bin/mihomo-manager"
-}
+          cat > pkg/.PKGINFO <<EOF
+pkgname = mihomo-manager
+pkgver = $VERSION
+pkgdesc = mihomo (Clash Meta) proxy manager
+url = https://github.com/${{ github.repository }}
+builddate = $(date +%s)
+packager = mihomo-manager <dev@example.com>
+size = $BINARY_SIZE
+arch = x86_64
+license = MIT
 EOF
 
-          install -dm0755 pkg
-          tar czf "dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.gz" -C pkg .
+          cd pkg
+          bsdtar -c --zstd -f "../dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
+            --options 'compress-level=19' \
+            .PKGINFO usr/
+          cd ..
 
       - uses: actions/upload-artifact@v4
         with:
           name: mihomo-manager-arch
-          path: dist/mihomo-manager-*.pkg.tar.gz
+          path: dist/mihomo-manager-*.pkg.tar.zst
 
   release:
     runs-on: ubuntu-latest
