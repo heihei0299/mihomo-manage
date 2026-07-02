@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -63,8 +64,21 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			if len(bytes.TrimSpace(fetched)) == 0 {
+				m.sys.Remove(tmpPath)
+				return fmt.Errorf("fetched subscription content is empty")
+			}
 			m.sys.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
 			m.sys.Remove(tmpPath)
+		}
+	}
+
+	if !m.sys.FileExists(ConfigTemplatePath) {
+		if err := m.sys.MkdirAll(configDir, filePermUserRWX); err != nil {
+			return err
+		}
+		if err := m.sys.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
+			return err
 		}
 	}
 
@@ -73,8 +87,13 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 		return err
 	}
 
+	if strings.TrimSpace(preview) == "" {
+		return fmt.Errorf("generated config is empty")
+	}
+
+	var backupPath string
 	if m.sys.FileExists(configYAML) {
-		backupPath := configYAML + ".bak." + timestamp()
+		backupPath = configYAML + ".bak." + timestamp()
 		existing, err := m.sys.ReadFile(configYAML)
 		if err != nil {
 			return err
@@ -86,6 +105,17 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 
 	if err := m.sys.WriteFile(configYAML, []byte(preview), filePermUserRW); err != nil {
 		return err
+	}
+
+	if m.sys.FileExists(binaryPath) {
+		if _, err := m.sys.RunCommand(binaryPath, "-t", "-d", configDir); err != nil {
+			if backupPath != "" {
+				if bak, rErr := m.sys.ReadFile(backupPath); rErr == nil {
+					m.sys.WriteFile(configYAML, bak, filePermUserRW)
+				}
+			}
+			return fmt.Errorf("config validation failed: %w", err)
+		}
 	}
 
 	m.svcMgr.Reload(serviceName)
