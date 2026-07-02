@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 01 — 基础设施 + 安装验证
 

@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 05 — 定时 + 日志 + --quiet
 

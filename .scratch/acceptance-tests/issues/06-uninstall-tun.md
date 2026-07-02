@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 06 — 卸载 + TUN 网卡
 

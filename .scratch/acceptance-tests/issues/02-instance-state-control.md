@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 02 — 实例状态 + 启停控制
 

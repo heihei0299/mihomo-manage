@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 04 — 升级 + 回滚
 

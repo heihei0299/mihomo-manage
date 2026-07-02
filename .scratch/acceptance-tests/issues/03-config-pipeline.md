@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # 03 — 配置管道
 
