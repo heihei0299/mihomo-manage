@@ -64,17 +64,17 @@ jobs:
 
           install -m 0755 "dist/mihomo-manager-linux-${{ matrix.arch }}" pkg/usr/bin/mihomo-manager
 
-          cat > pkg/DEBIAN/control <<EOF
-Package: mihomo-manager
-Version: $VERSION
-Section: net
-Priority: optional
-Architecture: ${{ matrix.arch }}
-Maintainer: mihomo-manager <dev@example.com>
-Description: mihomo (Clash Meta) proxy manager
- Manages the lifecycle, configuration, and subscription
- updates of a mihomo proxy instance.
-EOF
+          {
+            echo "Package: mihomo-manager"
+            echo "Version: $VERSION"
+            echo "Section: net"
+            echo "Priority: optional"
+            echo "Architecture: ${{ matrix.arch }}"
+            echo "Maintainer: mihomo-manager <dev@example.com>"
+            echo "Description: mihomo (Clash Meta) proxy manager"
+            echo " Manages the lifecycle, configuration, and subscription"
+            echo " updates of a mihomo proxy instance."
+          } > pkg/DEBIAN/control
 
           dpkg-deb --build pkg "dist/mihomo-manager_${VERSION}_${{ matrix.arch }}.deb"
 
@@ -103,17 +103,17 @@ EOF
 
           BINARY_SIZE=$(stat -c%s "$PKGDIR/mihomo-manager")
 
-          cat > pkg/.PKGINFO <<EOF
-pkgname = mihomo-manager
-pkgver = $VERSION
-pkgdesc = mihomo (Clash Meta) proxy manager
-url = https://github.com/${{ github.repository }}
-builddate = $(date +%s)
-packager = mihomo-manager <dev@example.com>
-size = $BINARY_SIZE
-arch = x86_64
-license = MIT
-EOF
+          {
+            echo "pkgname = mihomo-manager"
+            echo "pkgver = $VERSION"
+            echo "pkgdesc = mihomo (Clash Meta) proxy manager"
+            echo "url = https://github.com/${{ github.repository }}"
+            echo "builddate = $(date +%s)"
+            echo "packager = mihomo-manager <dev@example.com>"
+            echo "size = $BINARY_SIZE"
+            echo "arch = x86_64"
+            echo "license = MIT"
+          } > pkg/.PKGINFO
 
           cd pkg
           bsdtar -c --zstd -f "../dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
