@@ -115,6 +115,10 @@ func (m *mockSystem) RunCommand(name string, args ...string) (string, error) {
 	return m.cmdOutput, m.cmdErr
 }
 
+func (m *mockSystem) RunCommandIgnoreExit(name string, args ...string) (string, error) {
+	return m.cmdOutput, m.cmdErr
+}
+
 func (m *mockSystem) ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error) {
 	return m.versions, m.versionsErr
 }

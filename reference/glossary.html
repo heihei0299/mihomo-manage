@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>mihomo-manager 术语表</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    dt { font-weight: 700; color: #0f3460; margin-top: 1.2rem; font-size: 1.05rem; }
+    dd { margin: 0.2rem 0 0 0; padding-left: 1rem; border-left: 2px solid #e0e0e0; }
+    .avoid { color: #888; font-size: 0.9rem; }
+    h2 { margin-top: 2.5rem; }
+  </style>
+</head>
+<body>
+
+<h1>mihomo-manager 术语表</h1>
+<p>本文档是 mihomo-manager 的规范术语。所有课程和参考文档均使用此处的定义。</p>
+
+<h2>核心概念</h2>
+
+<dl>
+  <dt>mihomo</dt>
+  <dd>代理核心程序（原 Clash Meta）。mihomo-manager 管理的目标进程。<br>
+    <span class="avoid">避免：Clash / 代理软件</span></dd>
+
+  <dt>mihomo-manager</dt>
+  <dd>本仓库的工具，提供 CLI + TUI 来管理 mihomo 实例的完整生命周期。<br>
+    <span class="avoid">避免：管理器 / 前端</span></dd>
+
+  <dt>实例（Instance）</dt>
+  <dd>运行在宿主机上的单一 mihomo 进程。由 systemd（Linux）或 launchd（macOS）管理。<br>
+    <span class="avoid">避免：服务节点</span></dd>
+
+  <dt>实例状态（InstanceState）</dt>
+  <dd>实例的生命周期状态：<code>stopped</code> → <code>running</code> → <code>upgrading</code> → <code>failed</code>。<br>
+    <span class="avoid">避免：开启/关闭</span></dd>
+</dl>
+
+<h2>安装生命周期</h2>
+
+<dl>
+  <dt>安装（Install）</dt>
+  <dd>下载 mihomo 二进制 → 部署到 <code>/opt/mihomo/bin/</code> → 注册系统服务 → 写入默认配置 → 启动。</dd>
+
+  <dt>升级（Upgrade）</dt>
+  <dd>下载新版本 → 停止实例 → 备份旧二进制 → 替换 → 启动。启动失败时自动回滚。</dd>
+
+  <dt>卸载（Uninstall）</dt>
+  <dd>停止实例 → 注销系统服务 → 删除二进制/配置/数据。可指定 <code>--keep-backup</code> 保留配置备份。</dd>
+
+  <dt>回滚（Rollback）</dt>
+  <dd>升级过程中自动触发：新版本启动失败后，自动恢复旧二进制并重新启动。<br>
+    <span class="avoid">避免：降级</span></dd>
+</dl>
+
+<h2>配置管道</h2>
+
+<dl>
+  <dt>配置模板（Config Template）</dt>
+  <dd><code>/opt/mihomo/etc/config-template.yaml</code>，含 <code>{{subscription}}</code> 和 <code>{{routing_rules}}</code> 占位符的模板文件。</dd>
+
+  <dt>订阅（Subscription）</dt>
+  <dd>远程代理节点列表，来自订阅 URL 或本地粘贴的配置内容。存储在 <code>subscription-data.txt</code>。</dd>
+
+  <dt>分流规则（Routing Rules）</dt>
+  <dd>用户自定义规则，决定哪些流量走哪个代理。存储在 <code>routing-rules.txt</code>，插入到 <code>{{routing_rules}}</code> 位置。</dd>
+
+  <dt>生成配置（Generated Config）</dt>
+  <dd>模板 + 订阅数据 + 分流规则合并后的最终 <code>config.yaml</code>，即 mihomo 实际加载的配置。</dd>
+</dl>
+
+<h2>操作控制</h2>
+
+<dl>
+  <dt>启动 / 停止 / 重启 / 重载（Start / Stop / Restart / Reload）</dt>
+  <dd><b>重载</b>仅热更新配置，不重启进程；<b>重启</b>完全停止再启动。</dd>
+
+  <dt>状态（Status）</dt>
+  <dd>返回实例是否已安装、当前实例状态、版本号。</dd>
+
+  <dt>版本列表（Versions）</dt>
+  <dd>从 GitHub Releases 获取最近 5 个可用版本，不含预发布版本（Prerelease 标签）。</dd>
+</dl>
+
+<h2>文件系统布局</h2>
+
+<dl>
+  <dt><code>/opt/mihomo/bin/mihomo</code></dt>
+  <dd>mihomo 二进制文件。</dd>
+
+  <dt><code>/opt/mihomo/etc/config.yaml</code></dt>
+  <dd>mihomo 实际加载的生成配置。该文件会被定时覆盖，不要手动编辑。</dd>
+
+  <dt><code>/opt/mihomo/etc/config.yaml.bak.&lt;timestamp&gt;</code></dt>
+  <dd>订阅更新前自动生成的配置备份。</dd>
+
+  <dt><code>/opt/mihomo/etc/config-template.yaml</code></dt>
+  <dd>用户可编辑的配置模板（含 <code>{{subscription}}</code> / <code>{{routing_rules}}</code>）。</dd>
+
+  <dt><code>/opt/mihomo/etc/routing-rules.txt</code></dt>
+  <dd>用户自定义分流规则。</dd>
+
+  <dt><code>/opt/mihomo-manager/state/subscription-data.txt</code></dt>
+  <dd>订阅内容（URL 或原始数据），每次 <code>subscription update</code> 刷新。</dd>
+
+  <dt><code>/opt/mihomo-manager/state/subscription-url.txt</code></dt>
+  <dd>订阅 URL（可选），有 URL 时优先从远程拉取数据。</dd>
+
+  <dt><code>/opt/mihomo-manager/backups/mihomo.bak</code></dt>
+  <dd>升级时备份的旧二进制文件，用于回滚。</dd>
+</dl>
+
+</body>
+</html>

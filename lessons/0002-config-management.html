@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 2: 配置管理 — 订阅、模板与分流规则</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    .flow { display: flex; align-items: center; justify-content: flex-start; gap: 0.5rem; flex-wrap: wrap; margin: 1.5rem 0; padding: 1rem; background: #f0f4ff; border-radius: 6px; }
+    .flow span { padding: 0.3rem 0.6rem; border-radius: 4px; }
+    .src { background: #e3f2fd; border: 1px solid #90caf9; }
+    .step-box { background: #fff3e0; border: 1px solid #ffe0b2; }
+    .result { background: #e8f5e9; border: 1px solid #a5d6a7; }
+    .arrow { color: #888; font-size: 1.2rem; }
+  </style>
+</head>
+<body>
+
+<h1>Lesson 2: 配置管理</h1>
+<p>完成本节后你将能管理 mihomo 的完整配置管道：设置订阅、编辑模板、编写分流规则、预览和生效。</p>
+
+<h2>配置管道概览</h2>
+<p>mihomo-manager 使用三条输入生成最终的 <code>config.yaml</code>：</p>
+
+<div class="flow">
+  <span class="src">订阅数据</span>
+  <span class="arrow">↓</span>
+  <span class="src">配置模板<br><small>(含 {{subscription}} / {{routing_rules}})</small></span>
+  <span class="arrow">↓</span>
+  <span class="step-box">合并</span>
+  <span class="arrow">↓</span>
+  <span class="result">config.yaml</span>
+</div>
+
+<p>分流规则通过 <code>{{routing_rules}}</code> 占位符插入模板。</p>
+
+<h2>1. 设置订阅源</h2>
+<p>订阅源可以是远程 URL 或本地粘贴的配置数据：</p>
+
+<pre><code>mihomo-manager subscription set "https://sub.example.com/profile"</code></pre>
+
+<p>数据存储在 <code>/opt/mihomo-manager/state/subscription-data.txt</code>。如果是 URL，每次 <code>update</code> 时从远程拉取。</p>
+
+<div class="note">
+  <strong>注意：</strong>数据是原始代理配置内容，<em>不是</em> mihomo 的最终配置。模板引擎会把它插入到 <code>{{subscription}}</code> 位置。
+</div>
+
+<h2>2. 编辑配置模板</h2>
+
+<pre><code>mihomo-manager template edit</code></pre>
+
+<p>这会用 <code>$EDITOR</code>（默认 vi）打开 <code>/opt/mihomo/etc/config-template.yaml</code>。一个典型的模板：</p>
+
+<pre><code>port: 7890
+socks-port: 7891
+allow-lan: false
+mode: Rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+proxies:
+{{subscription}}
+
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - DIRECT
+
+rules:
+  - MATCH,DIRECT
+{{routing_rules}}</code></pre>
+
+<p><code>{{subscription}}</code> 会被订阅数据替换，<code>{{routing_rules}}</code> 会被分流规则替换。</p>
+
+<h2>3. 编辑分流规则</h2>
+
+<pre><code>mihomo-manager rules edit</code></pre>
+
+<p>分流规则是追加在 <code>rules:</code> 段的额外规则行。一个例子：</p>
+
+<pre><code>  - DOMAIN-SUFFIX,google.com,Proxy
+  - DOMAIN-KEYWORD,youtube,Proxy
+  - GEOIP,CN,DIRECT</code></pre>
+
+<div class="note">
+  <strong>技巧：</strong>模板中的 <code>rules:</code> 段包含 <code>MATCH,DIRECT</code> 兜底规则。你的分流规则在它<em>前面</em>插入。
+</div>
+
+<h2>4. 预览生成配置</h2>
+<p>在实际生效前，预览最终结果：</p>
+
+<pre><code>mihomo-manager config preview</code></pre>
+
+<p>输出等同于即将写入 <code>/opt/mihomo/etc/config.yaml</code> 的内容。</p>
+
+<h2>5. 生效配置</h2>
+
+<pre><code>mihomo-manager subscription update</code></pre>
+
+<p>该命令依次：</p>
+<ul>
+  <li>读取订阅源（必要时从远程拉取）</li>
+  <li>备份当前 <code>config.yaml</code> → <code>config.yaml.bak.&lt;timestamp&gt;</code></li>
+  <li>合并模板+订阅+规则 → 写入 <code>config.yaml</code></li>
+  <li>重载 mihomo 配置（<code>reload</code>，不重启进程）</li>
+</ul>
+
+<h2>6. 定时刷新</h2>
+
+<pre><code># 每 6 小时自动拉取订阅并重载
+mihomo-manager subscription schedule --interval 6h
+
+# 查看当前定时设置
+mihomo-manager subscription schedule
+
+# 关闭定时
+mihomo-manager subscription schedule --off</code></pre>
+
+<p>支持的时间单位：<code>30m</code>、<code>2h</code>、<code>1h30m</code> 等。</p>
+
+<h2>练习：完成一个配置流程</h2>
+<ol>
+  <li>运行 <code>mihomo-manager subscription set "https://example.com/sub"</code></li>
+  <li>运行 <code>mihomo-manager template edit</code>，确保模板包含 <code>{{subscription}}</code> 和 <code>{{routing_rules}}</code></li>
+  <li>运行 <code>mihomo-manager config preview</code>，观察输出</li>
+  <li>运行 <code>mihomo-manager subscription update</code> 使配置生效</li>
+  <li>运行 <code>mihomo-manager subscription schedule --interval 6h</code></li>
+</ol>
+
+<p>有不清楚的地方随时问我。</p>
+
+<p>参考：<a href="../reference/glossary.html">术语表</a> · <a href="../reference/cli-tui-reference.html">命令速查</a></p>
+
+</body>
+</html>

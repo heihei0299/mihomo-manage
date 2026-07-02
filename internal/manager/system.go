@@ -22,6 +22,7 @@ type System interface {
 	Chmod(path string, perm uint32) error
 
 	RunCommand(name string, args ...string) (string, error)
+	RunCommandIgnoreExit(name string, args ...string) (string, error)
 	Download(ctx context.Context, url, dest string) error
 	ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error)
 	LatestVersion(ctx context.Context, owner, repo string) (string, error)
@@ -62,6 +63,18 @@ func (OSSystem) RunCommand(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.Output()
 	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func (OSSystem) RunCommandIgnoreExit(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return string(out), nil
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil

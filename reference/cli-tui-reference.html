@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>mihomo-manager CLI & TUI 速查表</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+    th { background: #0f3460; color: #fff; font-weight: 600; }
+    tr:nth-child(even) { background: #f5f5f5; }
+    .cmd { font-family: monospace; font-weight: 600; white-space: nowrap; }
+    .key { background: #eee; border: 1px solid #ccc; padding: 0.05rem 0.35rem; border-radius: 3px; font-size: 0.85rem; font-family: monospace; }
+    .flag { color: #555; font-family: monospace; }
+    h2 { margin-top: 2rem; }
+    .col-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  </style>
+</head>
+<body>
+
+<h1>mihomo-manager CLI &amp; TUI 速查表</h1>
+
+<h2>全局选项</h2>
+<table>
+  <tr><th>Flag</th><th>作用</th></tr>
+  <tr><td class="cmd">--help</td><td>显示帮助信息</td></tr>
+  <tr><td class="cmd">--version</td><td>显示版本号</td></tr>
+  <tr><td class="cmd">--quiet</td><td>抑制正常输出（仅输出错误）</td></tr>
+</table>
+
+<h2>CLI 命令</h2>
+<table>
+  <tr><th>命令</th><th>参数</th><th>说明</th></tr>
+  <tr><td class="cmd">install</td><td><span class="flag">[version]</span></td><td>安装 mihomo（默认 latest）</td></tr>
+  <tr><td class="cmd">uninstall</td><td><span class="flag">[--keep-backup]</span></td><td>卸载，可选保留配置备份</td></tr>
+  <tr><td class="cmd">start</td><td></td><td>启动实例</td></tr>
+  <tr><td class="cmd">stop</td><td></td><td>停止实例</td></tr>
+  <tr><td class="cmd">restart</td><td></td><td>重启实例</td></tr>
+  <tr><td class="cmd">reload</td><td></td><td>热重载配置（不重启进程）</td></tr>
+  <tr><td class="cmd">status</td><td></td><td>查看状态和版本</td></tr>
+  <tr><td class="cmd">upgrade</td><td><span class="flag">[version]</span></td><td>升级到指定版本（默认 latest）</td></tr>
+  <tr><td class="cmd">versions</td><td></td><td>列出最近 5 个可用版本</td></tr>
+  <tr><td class="cmd">config preview</td><td></td><td>预览生成的最终配置</td></tr>
+  <tr><td class="cmd">template edit</td><td></td><td>编辑配置模板（<code>$EDITOR</code>）</td></tr>
+  <tr><td class="cmd">rules edit</td><td></td><td>编辑分流规则（<code>$EDITOR</code>）</td></tr>
+  <tr><td class="cmd">subscription set</td><td><span class="flag">&lt;data&gt;</span></td><td>设置订阅源（URL 或原始内容）</td></tr>
+  <tr><td class="cmd">subscription update</td><td></td><td>拉取远程订阅并更新配置</td></tr>
+  <tr><td class="cmd">subscription schedule</td><td></td><td>查看定时刷新状态</td></tr>
+  <tr><td class="cmd">subscription schedule --interval</td><td><span class="flag">&lt;duration&gt;</span></td><td>设置定时刷新间隔（如 <code>6h</code>）</td></tr>
+  <tr><td class="cmd">subscription schedule --off</td><td></td><td>关闭定时刷新</td></tr>
+  <tr><td class="cmd">logs</td><td><span class="flag">[--tail=N] [--follow]</span></td><td>查看 mihomo 日志</td></tr>
+</table>
+
+<h2>退出码</h2>
+<table>
+  <tr><th>代码</th><th>含义</th></tr>
+  <tr><td>0</td><td>mihomo 正在运行</td></tr>
+  <tr><td>1</td><td>已停止 / 升级中 / 操作失败</td></tr>
+  <tr><td>2</td><td>未安装</td></tr>
+</table>
+
+<h2>TUI 键盘快捷键</h2>
+<table>
+  <tr><th>快捷键</th><th>作用</th><th>可用条件</th></tr>
+  <tr><td><span class="key">1</span></td><td>Start 启动</td><td>已安装且 Stopped</td></tr>
+  <tr><td><span class="key">2</span></td><td>Stop 停止</td><td>已安装且 Running</td></tr>
+  <tr><td><span class="key">3</span></td><td>Restart 重启</td><td>已安装且 Running</td></tr>
+  <tr><td><span class="key">4</span></td><td>Reload 重载</td><td>已安装且 Running</td></tr>
+  <tr><td><span class="key">i</span></td><td>Install 安装</td><td>未安装</td></tr>
+  <tr><td><span class="key">5</span></td><td>Upgrade 升级</td><td>已安装（弹出版本选择）</td></tr>
+  <tr><td><span class="key">u</span></td><td>Uninstall 卸载</td><td>已安装（弹出确认对话框）</td></tr>
+  <tr><td><span class="key">r</span></td><td>Refresh 刷新状态</td><td>始终可用</td></tr>
+  <tr><td><span class="key">Tab</span></td><td>配置页签切换</td><td>在 Config 模式下</td></tr>
+  <tr><td><span class="key">←</span> / <span class="key">→</span></td><td>配置页签切换</td><td>在 Config 模式下</td></tr>
+  <tr><td><span class="key">q</span></td><td>退出 TUI</td><td>始终可用</td></tr>
+</table>
+
+<h2>TUI 视图模式</h2>
+<table>
+  <tr><th>模式</th><th>说明</th></tr>
+  <tr><td><b>Status</b>（仪表盘）</td><td>默认视图，显示实例状态 + 四个操作按钮（Start/Stop/Restart/Reload）</td></tr>
+  <tr><td><b>Confirm Uninstall</b></td><td>卸载确认对话框，通过 <kbd>y</kbd>/<kbd>n</kbd> 选择是否保留备份</td></tr>
+  <tr><td><b>Choose Version</b></td><td>版本选择列表，用 <kbd>↑</kbd>/<kbd>↓</kbd> 导航，<kbd>Enter</kbd> 确认</td></tr>
+  <tr><td><b>Config</b></td><td>四个子标签页：Subscription / Template / Rules / Preview，<kbd>Tab</kbd> 切换</td></tr>
+  <tr><td><b>Executing</b></td><td>操作进行中的进度视图（安装/升级/卸载等），完成后自动返回 Status</td></tr>
+</table>
+
+<h2>日志查看选项</h2>
+<table>
+  <tr><th>Flag</th><th>作用</th><th>示例</th></tr>
+  <tr><td class="cmd">--tail=N</td><td>显示最后 N 行（默认 50）</td><td><code>mihomo-manager logs --tail=200</code></td></tr>
+  <tr><td class="cmd">--follow</td><td>持续跟踪新日志</td><td><code>mihomo-manager logs --follow</code></td></tr>
+</table>
+
+<h2>典型工作流</h2>
+<pre><code># 1. 首次使用：安装
+sudo mihomo-manager install
+
+# 2. 设置订阅
+mihomo-manager subscription set "https://example.com/sub"
+
+# 3. 编辑模板（可选）
+mihomo-manager template edit
+
+# 4. 编辑分流规则（可选）
+mihomo-manager rules edit
+
+# 5. 更新配置
+mihomo-manager subscription update
+
+# 6. 设置定时刷新（可选）
+mihomo-manager subscription schedule --interval 6h
+
+# 7. 查看状态
+mihomo-manager status
+
+# 8. 进入 TUI 日常操作
+mihomo-manager</code></pre>
+
+<h2>常见问题</h2>
+<ul>
+  <li><strong>重载 vs 重启：</strong>修改模板/规则后只需 <code>reload</code> 即可热更新，不需要 <code>restart</code>。</li>
+  <li><strong>二进制回滚：</strong>升级如果启动失败会自动回滚到旧版本，无需手动干预。</li>
+  <li><strong>配置备份：</strong>每次 <code>subscription update</code> 前自动备份 <code>config.yaml.bak.&lt;timestamp&gt;</code>。</li>
+  <li><strong>sudo 要求：</strong>只有 <code>install</code>、<code>uninstall</code>、<code>upgrade</code> 需要 sudo，日常启停不需要。</li>
+</ul>
+
+<p>参见 <a href="glossary.html">术语表</a> 和 <a href="../lessons/0001-quick-start.html">快速入门</a>。</p>
+
+</body>
+</html>

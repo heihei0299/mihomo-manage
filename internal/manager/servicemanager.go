@@ -19,9 +19,9 @@ type osStrategy interface {
 type linuxSystemctl struct{ sys System }
 
 func (l linuxSystemctl) isActive(name string) (bool, error) {
-	out, err := l.sys.RunCommand("systemctl", "is-active", name)
+	out, err := l.sys.RunCommandIgnoreExit("systemctl", "is-active", name)
 	if err != nil {
-		return false, fmt.Errorf("systemctl is-active %s: %w", name, err)
+		return false, fmt.Errorf("systemctl is-active: %w", err)
 	}
 	return strings.TrimSpace(out) == "active", nil
 }

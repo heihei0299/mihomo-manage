@@ -2,12 +2,14 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
 type commandRecorder struct {
-	captured []cmdCall
-	output   string
+	captured   []cmdCall
+	output     string
+	cmdErr     error
 }
 
 type cmdCall struct {
@@ -17,10 +19,21 @@ type cmdCall struct {
 
 func (r *commandRecorder) RunCommand(name string, args ...string) (string, error) {
 	r.captured = append(r.captured, cmdCall{name, args})
+	if r.cmdErr != nil {
+		return "inactive", r.cmdErr
+	}
 	if r.output != "" {
 		return r.output, nil
 	}
 	return "active", nil
+}
+
+func (r *commandRecorder) RunCommandIgnoreExit(name string, args ...string) (string, error) {
+	r.captured = append(r.captured, cmdCall{name, args})
+	if r.output != "" {
+		return r.output, nil
+	}
+	return "inactive", nil
 }
 
 func (r *commandRecorder) FileExists(path string) bool                        { return false }
@@ -39,7 +52,7 @@ func (r *commandRecorder) LatestVersion(ctx context.Context, owner, repo string)
 }
 
 func TestOSServiceManagerIsRunningLinux(t *testing.T) {
-	rec := &commandRecorder{}
+	rec := &commandRecorder{output: "active"}
 	svc := &OSServiceManager{sys: rec, osType: "linux"}
 
 	running, err := svc.IsRunning("mihomo")
@@ -54,6 +67,19 @@ func TestOSServiceManagerIsRunningLinux(t *testing.T) {
 	}
 	if rec.captured[0].name != "systemctl" {
 		t.Errorf("expected systemctl, got %s", rec.captured[0].name)
+	}
+}
+
+func TestOSServiceManagerIsNotRunningLinux(t *testing.T) {
+	rec := &commandRecorder{cmdErr: fmt.Errorf("exit status 1")}
+	svc := &OSServiceManager{sys: rec, osType: "linux"}
+
+	running, err := svc.IsRunning("mihomo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if running {
+		t.Error("expected running=false for 'inactive' output")
 	}
 }
 
