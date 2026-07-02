@@ -7,126 +7,122 @@ import (
 )
 
 type osStrategy interface {
-	isActive(sys System, name string) (bool, error)
-	enable(sys System, name, serviceFilePath string) error
-	disable(sys System, name string) error
-	start(sys System, name string) error
-	stop(sys System, name string) error
-	restart(sys System, name string) error
-	reload(sys System, name string) error
+	isActive(name string) (bool, error)
+	enable(name, serviceFilePath string) error
+	disable(name string) error
+	start(name string) error
+	stop(name string) error
+	restart(name string) error
+	reload(name string) error
 }
 
-type linuxSystemctl struct{}
+type linuxSystemctl struct{ sys System }
 
-func (linuxSystemctl) isActive(sys System, name string) (bool, error) {
-	out, err := sys.RunCommand("systemctl", "is-active", name)
+func (l linuxSystemctl) isActive(name string) (bool, error) {
+	out, err := l.sys.RunCommand("systemctl", "is-active", name)
 	if err != nil {
 		return false, fmt.Errorf("systemctl is-active %s: %w", name, err)
 	}
 	return strings.TrimSpace(out) == "active", nil
 }
 
-func (linuxSystemctl) enable(sys System, name, _ string) error {
-	if _, err := sys.RunCommand("systemctl", "daemon-reload"); err != nil {
+func (l linuxSystemctl) enable(name, _ string) error {
+	if _, err := l.sys.RunCommand("systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
-	if _, err := sys.RunCommand("systemctl", "enable", name); err != nil {
+	if _, err := l.sys.RunCommand("systemctl", "enable", name); err != nil {
 		return fmt.Errorf("systemctl enable %s: %w", name, err)
 	}
 	return nil
 }
 
-func (linuxSystemctl) disable(sys System, name string) error {
-	if _, err := sys.RunCommand("systemctl", "disable", name); err != nil {
+func (l linuxSystemctl) disable(name string) error {
+	if _, err := l.sys.RunCommand("systemctl", "disable", name); err != nil {
 		return fmt.Errorf("systemctl disable %s: %w", name, err)
 	}
 	return nil
 }
 
-func (linuxSystemctl) start(sys System, name string) error {
-	if _, err := sys.RunCommand("systemctl", "start", name); err != nil {
+func (l linuxSystemctl) start(name string) error {
+	if _, err := l.sys.RunCommand("systemctl", "start", name); err != nil {
 		return fmt.Errorf("systemctl start %s: %w", name, err)
 	}
 	return nil
 }
 
-func (linuxSystemctl) stop(sys System, name string) error {
-	if _, err := sys.RunCommand("systemctl", "stop", name); err != nil {
+func (l linuxSystemctl) stop(name string) error {
+	if _, err := l.sys.RunCommand("systemctl", "stop", name); err != nil {
 		return fmt.Errorf("systemctl stop %s: %w", name, err)
 	}
 	return nil
 }
 
-func (linuxSystemctl) restart(sys System, name string) error {
-	if _, err := sys.RunCommand("systemctl", "restart", name); err != nil {
+func (l linuxSystemctl) restart(name string) error {
+	if _, err := l.sys.RunCommand("systemctl", "restart", name); err != nil {
 		return fmt.Errorf("systemctl restart %s: %w", name, err)
 	}
 	return nil
 }
 
-func (linuxSystemctl) reload(sys System, name string) error {
-	if _, err := sys.RunCommand("systemctl", "reload", name); err != nil {
+func (l linuxSystemctl) reload(name string) error {
+	if _, err := l.sys.RunCommand("systemctl", "reload", name); err != nil {
 		return fmt.Errorf("systemctl reload %s: %w", name, err)
 	}
 	return nil
 }
 
-type darwinLaunchctl struct{}
+type darwinLaunchctl struct{ sys System }
 
-func (darwinLaunchctl) isActive(sys System, name string) (bool, error) {
-	out, err := sys.RunCommand("launchctl", "list", name)
+func (d darwinLaunchctl) isActive(name string) (bool, error) {
+	out, err := d.sys.RunCommand("launchctl", "list", name)
 	if err != nil {
 		return false, fmt.Errorf("launchctl list %s: %w", name, err)
 	}
 	return strings.Contains(out, "PID"), nil
 }
 
-func (darwinLaunchctl) enable(sys System, name, serviceFilePath string) error {
-	_, err := sys.RunCommand("launchctl", "load", serviceFilePath)
+func (d darwinLaunchctl) enable(name, serviceFilePath string) error {
+	_, err := d.sys.RunCommand("launchctl", "load", serviceFilePath)
 	return err
 }
 
-func (darwinLaunchctl) disable(sys System, name string) error {
-	_, err := sys.RunCommand("launchctl", "unload", fmt.Sprintf("/Library/LaunchAgents/%s.plist", name))
+func (d darwinLaunchctl) disable(name string) error {
+	_, err := d.sys.RunCommand("launchctl", "unload", fmt.Sprintf("/Library/LaunchAgents/%s.plist", name))
 	return err
 }
 
-func (darwinLaunchctl) start(sys System, name string) error {
-	_, err := sys.RunCommand("launchctl", "start", name)
+func (d darwinLaunchctl) start(name string) error {
+	_, err := d.sys.RunCommand("launchctl", "start", name)
 	return err
 }
 
-func (darwinLaunchctl) stop(sys System, name string) error {
-	_, err := sys.RunCommand("launchctl", "stop", name)
+func (d darwinLaunchctl) stop(name string) error {
+	_, err := d.sys.RunCommand("launchctl", "stop", name)
 	return err
 }
 
-func (darwinLaunchctl) restart(sys System, name string) error {
-	if _, err := sys.RunCommand("launchctl", "stop", name); err != nil {
+func (d darwinLaunchctl) restart(name string) error {
+	if _, err := d.sys.RunCommand("launchctl", "stop", name); err != nil {
 		return err
 	}
-	_, err := sys.RunCommand("launchctl", "start", name)
+	_, err := d.sys.RunCommand("launchctl", "start", name)
 	return err
 }
 
-func (darwinLaunchctl) reload(sys System, name string) error {
-	if _, err := sys.RunCommand("launchctl", "stop", name); err != nil {
+func (d darwinLaunchctl) reload(name string) error {
+	if _, err := d.sys.RunCommand("launchctl", "stop", name); err != nil {
 		return err
 	}
-	_, err := sys.RunCommand("launchctl", "start", name)
+	_, err := d.sys.RunCommand("launchctl", "start", name)
 	return err
 }
 
-type errUnsupportedOS struct{ os string }
-
-func (e errUnsupportedOS) Error() string { return fmt.Sprintf("unsupported OS: %s", e.os) }
-
-func strategyFor(os string) osStrategy {
+func strategyFor(sys System, os string) osStrategy {
 	switch os {
 	case "linux":
-		return linuxSystemctl{}
+		return linuxSystemctl{sys: sys}
 	case "darwin":
-		return darwinLaunchctl{}
+		return darwinLaunchctl{sys: sys}
 	default:
 		return nil
 	}
@@ -139,13 +135,17 @@ func (s *OSServiceManager) goos() string {
 	return runtime.GOOS
 }
 
-func (s *OSServiceManager) strategy() osStrategy {
-	strat := strategyFor(s.goos())
+func (s *OSServiceManager) strategy() (osStrategy, error) {
+	strat := strategyFor(s.sys, s.goos())
 	if strat == nil {
-		return nil
+		return nil, errUnsupportedOS{s.goos()}
 	}
-	return strat
+	return strat, nil
 }
+
+type errUnsupportedOS struct{ os string }
+
+func (e errUnsupportedOS) Error() string { return fmt.Sprintf("unsupported OS: %s", e.os) }
 
 type OSServiceManager struct {
 	sys    System
@@ -156,58 +156,42 @@ func NewOSServiceManager(sys System) *OSServiceManager {
 	return &OSServiceManager{sys: sys}
 }
 
-func (s *OSServiceManager) IsRunning(name string) (bool, error) {
-	strat := s.strategy()
-	if strat == nil {
-		return false, errUnsupportedOS{s.goos()}
+func (s *OSServiceManager) run(f func(osStrategy) error) error {
+	strat, err := s.strategy()
+	if err != nil {
+		return err
 	}
-	return strat.isActive(s.sys, name)
+	return f(strat)
+}
+
+func (s *OSServiceManager) IsRunning(name string) (bool, error) {
+	strat, err := s.strategy()
+	if err != nil {
+		return false, err
+	}
+	return strat.isActive(name)
 }
 
 func (s *OSServiceManager) Register(name, serviceFilePath string) error {
-	strat := s.strategy()
-	if strat == nil {
-		return errUnsupportedOS{s.goos()}
-	}
-	return strat.enable(s.sys, name, serviceFilePath)
+	return s.run(func(strat osStrategy) error { return strat.enable(name, serviceFilePath) })
 }
 
 func (s *OSServiceManager) Unregister(name string) error {
-	strat := s.strategy()
-	if strat == nil {
-		return errUnsupportedOS{s.goos()}
-	}
-	return strat.disable(s.sys, name)
+	return s.run(func(strat osStrategy) error { return strat.disable(name) })
 }
 
 func (s *OSServiceManager) Start(name string) error {
-	strat := s.strategy()
-	if strat == nil {
-		return errUnsupportedOS{s.goos()}
-	}
-	return strat.start(s.sys, name)
+	return s.run(func(strat osStrategy) error { return strat.start(name) })
 }
 
 func (s *OSServiceManager) Stop(name string) error {
-	strat := s.strategy()
-	if strat == nil {
-		return errUnsupportedOS{s.goos()}
-	}
-	return strat.stop(s.sys, name)
+	return s.run(func(strat osStrategy) error { return strat.stop(name) })
 }
 
 func (s *OSServiceManager) Restart(name string) error {
-	strat := s.strategy()
-	if strat == nil {
-		return errUnsupportedOS{s.goos()}
-	}
-	return strat.restart(s.sys, name)
+	return s.run(func(strat osStrategy) error { return strat.restart(name) })
 }
 
 func (s *OSServiceManager) Reload(name string) error {
-	strat := s.strategy()
-	if strat == nil {
-		return errUnsupportedOS{s.goos()}
-	}
-	return strat.reload(s.sys, name)
+	return s.run(func(strat osStrategy) error { return strat.reload(name) })
 }

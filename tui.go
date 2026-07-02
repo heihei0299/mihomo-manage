@@ -41,28 +41,14 @@ const (
 )
 
 type actionDef struct {
-	key     string
-	label   string
 	enabled func(*manager.Status) bool
 }
 
 var actionRegistry = map[action]actionDef{
-	actStart: {
-		key: "1", label: "Start",
-		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Stopped },
-	},
-	actStop: {
-		key: "2", label: "Stop",
-		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running },
-	},
-	actRestart: {
-		key: "3", label: "Restart",
-		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running },
-	},
-	actReload: {
-		key: "4", label: "Reload",
-		enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running },
-	},
+	actStart:   {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Stopped }},
+	actStop:    {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }},
+	actRestart: {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }},
+	actReload:  {enabled: func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }},
 }
 
 type model struct {

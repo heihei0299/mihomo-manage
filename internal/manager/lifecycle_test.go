@@ -82,7 +82,7 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 
 func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 	sys := &mockSystem{
-		writeErr: assertError{"disk full"},
+		writeErr: testError{"disk full"},
 	}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)

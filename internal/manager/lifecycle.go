@@ -68,7 +68,7 @@ func (m *manager) resolveVersion(ctx context.Context, version string) string {
 	return tag
 }
 
-func (m *manager) downloadMihomo(ctx context.Context, version string, onProgress ProgressCallback) (string, error) {
+func (m *manager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback) (string, error) {
 	version = m.resolveVersion(ctx, version)
 	tempPath := fmt.Sprintf("%s.tmp.%s", binaryPath, version)
 	gzPath := tempPath + ".gz"
@@ -116,7 +116,7 @@ func (m *manager) rollbackInstall(ctx context.Context, phase string, err error) 
 }
 
 func (m *manager) Install(ctx context.Context, version string, onProgress ProgressCallback) error {
-	tempPath, err := m.downloadMihomo(ctx, version, onProgress)
+	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress)
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 		return fmt.Errorf("mihomo is not installed")
 	}
 
-	tempPath, err := m.downloadMihomo(ctx, version, onProgress)
+	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress)
 	if err != nil {
 		return err
 	}

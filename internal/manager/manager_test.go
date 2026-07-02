@@ -187,9 +187,9 @@ func (m *mockServiceManager) Reload(name string) error {
 	return nil
 }
 
-type assertError struct{ msg string }
+type testError struct{ msg string }
 
-func (e assertError) Error() string { return e.msg }
+func (e testError) Error() string { return e.msg }
 
 func TestStatusNotInstalled(t *testing.T) {
 	sys := &mockSystem{fileExists: map[string]bool{}}
@@ -261,7 +261,7 @@ func TestStatusServiceManagerError(t *testing.T) {
 	sys := &mockSystem{
 		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
 	}
-	svc := &mockServiceManager{err: assertError{"service not found"}}
+	svc := &mockServiceManager{err: testError{"service not found"}}
 	m := New(sys, svc)
 
 	_, err := m.Status(context.Background())
@@ -311,7 +311,7 @@ func TestParseVersion(t *testing.T) {
 }
 
 func TestParseVersionError(t *testing.T) {
-	sys := &mockSystem{cmdErr: assertError{"command failed"}}
+	sys := &mockSystem{cmdErr: testError{"command failed"}}
 	_, err := parseVersion(sys, "/dummy")
 	if err == nil {
 		t.Error("expected error, got nil")
@@ -319,7 +319,7 @@ func TestParseVersionError(t *testing.T) {
 }
 
 func TestInstallDownloadFails(t *testing.T) {
-	sys := &mockSystem{downloadErr: assertError{"network error"}}
+	sys := &mockSystem{downloadErr: testError{"network error"}}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
 
@@ -385,7 +385,7 @@ func TestInstallCreatesServiceFile(t *testing.T) {
 }
 
 func TestInstallDeployFailsRollsBack(t *testing.T) {
-	sys := &mockSystem{writeErr: assertError{"disk full"}}
+	sys := &mockSystem{writeErr: testError{"disk full"}}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
 
@@ -470,7 +470,7 @@ func TestUpdateConfigReadURLError(t *testing.T) {
 		written: map[string][]byte{
 			ConfigTemplatePath: []byte(`test: {{subscription}}`),
 		},
-		readFileErr: map[string]error{subscriptionURLFile: assertError{"permission denied"}},
+		readFileErr: map[string]error{subscriptionURLFile: testError{"permission denied"}},
 	}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
@@ -525,7 +525,7 @@ func TestPreviewConfigSubscriptionReadError(t *testing.T) {
 		written: map[string][]byte{
 			ConfigTemplatePath: []byte(`test: {{subscription}}`),
 		},
-		readFileErr: map[string]error{subscriptionDataFile: assertError{"permission denied"}},
+		readFileErr: map[string]error{subscriptionDataFile: testError{"permission denied"}},
 	}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
@@ -544,7 +544,7 @@ func TestPreviewConfigRulesReadError(t *testing.T) {
 		written: map[string][]byte{
 			ConfigTemplatePath: []byte(`test`),
 		},
-		readFileErr: map[string]error{RoutingRulesPath: assertError{"permission denied"}},
+		readFileErr: map[string]error{RoutingRulesPath: testError{"permission denied"}},
 	}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
@@ -820,7 +820,7 @@ func TestReloadStopped(t *testing.T) {
 func TestUpgradeDownloadFails(t *testing.T) {
 	sys := &mockSystem{
 		fileExists:  map[string]bool{"/opt/mihomo/bin/mihomo": true},
-		downloadErr: assertError{"network error"},
+		downloadErr: testError{"network error"},
 	}
 	svc := &mockServiceManager{running: true}
 	m := New(sys, svc)
@@ -848,7 +848,7 @@ func TestUpgradeStartFailsRollsBack(t *testing.T) {
 	sys := &mockSystem{
 		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
 	}
-	svc := &mockServiceManager{running: true, startErr: assertError{"start failed"}}
+	svc := &mockServiceManager{running: true, startErr: testError{"start failed"}}
 	m := New(sys, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
