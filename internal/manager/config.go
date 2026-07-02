@@ -15,38 +15,20 @@ func renderConfig(template, subscription, routingRules string) (string, error) {
 	return result, nil
 }
 
-func extractProxies(data []byte) []byte {
-	lines := strings.Split(string(data), "\n")
-	insideProxies := false
-	var out []string
-	hasTopLevelKeys := false
-	for _, line := range lines {
+func hasTopLevelKeys(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if insideProxies {
-				out = append(out, line)
-			}
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.Contains(trimmed, ":") {
-			hasTopLevelKeys = true
-			if trimmed == "proxies:" || strings.HasPrefix(trimmed, "proxies:") {
-				insideProxies = true
-				continue
-			}
-			if insideProxies && (strings.Contains(trimmed, ":") && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t")) {
-				insideProxies = false
-			}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
 			continue
 		}
-		if insideProxies {
-			out = append(out, line)
+		if strings.Contains(trimmed, ":") {
+			return true
 		}
 	}
-	if !hasTopLevelKeys {
-		return data
-	}
-	return []byte(strings.Join(out, "\n"))
+	return false
 }
 
 func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
@@ -56,7 +38,7 @@ func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
 	if looksLikeURL(url) {
 		return m.sys.WriteFile(subscriptionURLFile, []byte(url), filePermUserRW)
 	}
-	return m.sys.WriteFile(subscriptionDataFile, extractProxies([]byte(url)), filePermUserRW)
+	return m.sys.WriteFile(subscriptionDataFile, []byte(url), filePermUserRW)
 }
 
 func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
@@ -64,14 +46,22 @@ func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
 }
 
 func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
+	subData, err := m.sys.ReadFile(subscriptionDataFile)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if err == nil && hasTopLevelKeys(subData) {
+		return string(subData), nil
+	}
+
 	tmpl, err := m.sys.ReadFile(ConfigTemplatePath)
 	if err != nil {
 		return "", err
 	}
 
-	subData, err := m.sys.ReadFile(subscriptionDataFile)
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
+	var subStr string
+	if err == nil {
+		subStr = string(subData)
 	}
 
 	rulesData, err := m.sys.ReadFile(RoutingRulesPath)
@@ -79,7 +69,7 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	return renderConfig(string(tmpl), string(subData), string(rulesData))
+	return renderConfig(string(tmpl), subStr, string(rulesData))
 }
 
 func (m *manager) UpdateConfig(ctx context.Context) error {
@@ -103,7 +93,6 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 				m.sys.Remove(tmpPath)
 				return fmt.Errorf("fetched subscription content is empty")
 			}
-			fetched = extractProxies(fetched)
 			m.sys.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
 			m.sys.Remove(tmpPath)
 		}
