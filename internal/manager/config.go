@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -14,6 +15,40 @@ func renderConfig(template, subscription, routingRules string) (string, error) {
 	return result, nil
 }
 
+func extractProxies(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	insideProxies := false
+	var out []string
+	hasTopLevelKeys := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if insideProxies {
+				out = append(out, line)
+			}
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.Contains(trimmed, ":") {
+			hasTopLevelKeys = true
+			if trimmed == "proxies:" || strings.HasPrefix(trimmed, "proxies:") {
+				insideProxies = true
+				continue
+			}
+			if insideProxies && (strings.Contains(trimmed, ":") && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t")) {
+				insideProxies = false
+			}
+			continue
+		}
+		if insideProxies {
+			out = append(out, line)
+		}
+	}
+	if !hasTopLevelKeys {
+		return data
+	}
+	return []byte(strings.Join(out, "\n"))
+}
+
 func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
 	if err := m.sys.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
@@ -21,7 +56,7 @@ func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
 	if looksLikeURL(url) {
 		return m.sys.WriteFile(subscriptionURLFile, []byte(url), filePermUserRW)
 	}
-	return m.sys.WriteFile(subscriptionDataFile, []byte(url), filePermUserRW)
+	return m.sys.WriteFile(subscriptionDataFile, extractProxies([]byte(url)), filePermUserRW)
 }
 
 func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
@@ -68,6 +103,7 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 				m.sys.Remove(tmpPath)
 				return fmt.Errorf("fetched subscription content is empty")
 			}
+			fetched = extractProxies(fetched)
 			m.sys.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
 			m.sys.Remove(tmpPath)
 		}
@@ -108,13 +144,15 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 	}
 
 	if m.sys.FileExists(binaryPath) {
-		if _, err := m.sys.RunCommand(binaryPath, "-t", "-d", configDir); err != nil {
+		cmd := exec.Command(binaryPath, "-t", "-d", configDir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			if backupPath != "" {
 				if bak, rErr := m.sys.ReadFile(backupPath); rErr == nil {
 					m.sys.WriteFile(configYAML, bak, filePermUserRW)
 				}
 			}
-			return fmt.Errorf("config validation failed: %w", err)
+			return fmt.Errorf("config validation failed:\n%s", string(out))
 		}
 	}
 
