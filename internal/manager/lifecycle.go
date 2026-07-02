@@ -62,7 +62,7 @@ func (m *manager) resolveVersion(ctx context.Context, version string) string {
 	if version != "latest" {
 		return version
 	}
-	tag, err := m.sys.LatestVersion(ctx, "MetaCubeX", "mihomo")
+	tag, err := m.gh.LatestVersion(ctx, "MetaCubeX", "mihomo")
 	if err != nil || tag == "" {
 		return version
 	}
@@ -75,23 +75,23 @@ func (m *manager) downloadAndDecompress(ctx context.Context, version string, onP
 	gzPath := tempPath + ".gz"
 
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Downloading mihomo %s", version)})
-	if err := m.sys.Download(ctx, releaseURL(runtime.GOOS, runtime.GOARCH, version), gzPath); err != nil {
+	if err := m.gh.Download(ctx, releaseURL(runtime.GOOS, runtime.GOARCH, version), gzPath); err != nil {
 		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download failed", Error: err})
-		m.sys.Remove(gzPath)
+		m.fs.Remove(gzPath)
 		return "", fmt.Errorf("download failed: %w", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Decompressing"})
 	if err := m.decompressGzip(gzPath, tempPath); err != nil {
-		m.sys.Remove(gzPath)
+		m.fs.Remove(gzPath)
 		return "", fmt.Errorf("decompress failed: %w", err)
 	}
-	m.sys.Remove(gzPath)
+	m.fs.Remove(gzPath)
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download complete"})
 	return tempPath, nil
 }
 
 func (m *manager) decompressGzip(src, dest string) error {
-	data, err := m.sys.ReadFile(src)
+	data, err := m.fs.ReadFile(src)
 	if err != nil {
 		return err
 	}
@@ -105,14 +105,14 @@ func (m *manager) decompressGzip(src, dest string) error {
 		return fmt.Errorf("decompress read: %w", err)
 	}
 	gr.Close()
-	return m.sys.WriteFile(dest, decompressed, filePermUserRWX)
+	return m.fs.WriteFile(dest, decompressed, filePermUserRWX)
 }
 
 func (m *manager) rollbackInstall(ctx context.Context, phase string, err error) error {
 	m.svcMgr.Stop(serviceName)
 	m.svcMgr.Unregister(serviceName)
-	m.sys.Remove(binaryPath)
-	m.sys.Remove(configDir)
+	m.fs.Remove(binaryPath)
+	m.fs.Remove(configDir)
 	return fmt.Errorf("install failed at %s: %w", phase, err)
 }
 
@@ -123,28 +123,28 @@ func (m *manager) Install(ctx context.Context, version string, onProgress Progre
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Deploying binary"})
-	if err := m.sys.Rename(tempPath, binaryPath); err != nil {
-		m.sys.Remove(tempPath)
+	if err := m.fs.Rename(tempPath, binaryPath); err != nil {
+		m.fs.Remove(tempPath)
 		return m.rollbackInstall(ctx, "deploy rename", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Binary deployed"})
 
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Creating directories"})
-	if err := m.sys.MkdirAll(configDir, filePermUserRWX); err != nil {
+	if err := m.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap mkdir config", err)
 	}
-	if err := m.sys.MkdirAll(stateDir, filePermUserRWX); err != nil {
+	if err := m.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap mkdir state", err)
 	}
-	if err := m.sys.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
+	if err := m.fs.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap template", err)
 	}
-	if err := m.sys.WriteFile(configYAML, defaultConfig, filePermUserRW); err != nil {
+	if err := m.fs.WriteFile(configYAML, defaultConfig, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap config", err)
 	}
 	svcPath := serviceUnitPath()
 	svcContent := serviceUnitContent()
-	if err := m.sys.WriteFile(svcPath, svcContent, filePermUserRW); err != nil {
+	if err := m.fs.WriteFile(svcPath, svcContent, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap service unit", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Config files created"})
@@ -165,7 +165,7 @@ func (m *manager) Install(ctx context.Context, version string, onProgress Progre
 }
 
 func (m *manager) Uninstall(ctx context.Context, keepBackup bool, onProgress ProgressCallback) error {
-	if !m.sys.FileExists(binaryPath) {
+	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
 
@@ -182,13 +182,13 @@ func (m *manager) Uninstall(ctx context.Context, keepBackup bool, onProgress Pro
 	onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Cleaning up files"})
 	if keepBackup {
 		backupPath := "/opt/mihomo.bak." + timestamp()
-		m.sys.Rename("/opt/mihomo", backupPath)
+		m.fs.Rename("/opt/mihomo", backupPath)
 		onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Files backed up to " + backupPath})
 	} else {
-		m.sys.Remove(binaryPath + ".bak.")
-		m.sys.Remove(configDir)
-		m.sys.Remove("/opt/mihomo")
-		m.sys.Remove("/opt/mihomo-manager")
+		m.fs.Remove(binaryPath + ".bak.")
+		m.fs.Remove(configDir)
+		m.fs.Remove("/opt/mihomo")
+		m.fs.Remove("/opt/mihomo-manager")
 		onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Files removed"})
 	}
 
@@ -197,7 +197,7 @@ func (m *manager) Uninstall(ctx context.Context, keepBackup bool, onProgress Pro
 
 func (m *manager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error {
 	version = m.resolveVersion(ctx, version)
-	if !m.sys.FileExists(binaryPath) {
+	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
 
@@ -209,7 +209,7 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopping mihomo"})
 	if running, _ := m.svcMgr.IsRunning(serviceName); running {
 		if err := m.svcMgr.Stop(serviceName); err != nil {
-			m.sys.Remove(tempPath)
+			m.fs.Remove(tempPath)
 			return fmt.Errorf("stop failed: %w", err)
 		}
 	}
@@ -217,16 +217,16 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Backing up old binary"})
 	backupDir := "/opt/mihomo-manager/backups"
-	m.sys.MkdirAll(backupDir, filePermUserRWX)
+	m.fs.MkdirAll(backupDir, filePermUserRWX)
 	backupPath := backupDir + "/mihomo.bak"
-	m.sys.Rename(binaryPath, backupPath)
+	m.fs.Rename(binaryPath, backupPath)
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Replacing binary"})
-	if err := m.sys.Chmod(tempPath, filePermUserRWX); err != nil {
+	if err := m.fs.Chmod(tempPath, filePermUserRWX); err != nil {
 		m.restoreBinary(backupPath, tempPath)
 		return fmt.Errorf("chmod failed: %w", err)
 	}
-	if err := m.sys.Rename(tempPath, binaryPath); err != nil {
+	if err := m.fs.Rename(tempPath, binaryPath); err != nil {
 		m.restoreBinary(backupPath, tempPath)
 		return fmt.Errorf("rename failed: %w", err)
 	}
@@ -245,8 +245,8 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 }
 
 func (m *manager) restoreBinary(backupPath, tempPath string) error {
-	m.sys.Remove(binaryPath)
-	m.sys.Rename(backupPath, binaryPath)
-	m.sys.Remove(tempPath)
+	m.fs.Remove(binaryPath)
+	m.fs.Rename(backupPath, binaryPath)
+	m.fs.Remove(tempPath)
 	return m.svcMgr.Start(serviceName)
 }

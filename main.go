@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -10,28 +11,19 @@ import (
 	"strings"
 	"time"
 
+	"mihomo-manager/internal/cli"
 	"mihomo-manager/internal/manager"
 )
 
-var quiet bool
-var version = "dev"
-
-func quietPrintf(format string, a ...interface{}) {
-	if !quiet {
-		fmt.Printf(format, a...)
-	}
-}
-
-func quietPrintln(a ...interface{}) {
-	if !quiet {
-		fmt.Println(a...)
-	}
-}
+var (
+	version   = "dev"
+	quietMode bool
+)
 
 func main() {
-	sys := &manager.OSSystem{}
-	svc := manager.NewOSServiceManager(sys)
-	mgr := manager.New(sys, svc)
+	oss := &manager.OSSystem{}
+	svc := manager.NewOSServiceManager(oss)
+	mgr := manager.New(oss, oss, oss, svc)
 
 	var args []string
 	showHelp := false
@@ -42,7 +34,7 @@ func main() {
 		a := raw[i]
 		switch a {
 		case "--quiet", "-q":
-			quiet = true
+			quietMode = true
 		case "--help", "-h":
 			showHelp = true
 		case "--version":
@@ -83,6 +75,13 @@ func main() {
 		printUsage()
 		return
 	}
+
+	stdout := io.Writer(os.Stdout)
+	if quietMode {
+		stdout = io.Discard
+	}
+	h := cli.New(mgr, stdout, os.Stderr)
+
 	if len(args) == 0 {
 		if err := startTUI(mgr); err != nil {
 			log.Fatal(err)
@@ -101,41 +100,41 @@ func main() {
 		args[0] = "versions"
 	}
 
+	ctx := context.Background()
+	var exitCode int
+
 	switch args[0] {
 	case "status":
-		cliStatus(mgr)
-		return
+		exitCode = h.Status(ctx)
 	case "install":
-		version := "latest"
+		ver := "latest"
 		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-			version = args[1]
+			ver = args[1]
 		}
-		cliInstall(mgr, version)
-		return
-	case "template":
-		cliEditFile(mgr, manager.ConfigTemplatePath, args[1:])
-		return
-	case "rules":
-		cliEditFile(mgr, manager.RoutingRulesPath, args[1:])
+		exitCode = h.Install(ctx, ver)
+	case "template", "rules":
+		path := manager.ConfigTemplatePath
+		if args[0] == "rules" {
+			path = manager.RoutingRulesPath
+		}
+		cliEditFile(mgr, path, args[1:])
 		return
 	case "config":
-		cliConfig(mgr, args[1:])
-		return
+		if len(args) == 1 || args[1] != "preview" {
+			fmt.Fprintln(os.Stderr, "usage: mihomo-manager config preview")
+			os.Exit(1)
+		}
+		exitCode = h.PreviewConfig(ctx)
 	case "subscription":
-		cliSubscription(mgr, args[1:])
-		return
+		exitCode = handleSubscription(h, ctx, args[1:])
 	case "start":
-		cliSimpleOp(mgr.Start, "started")
-		return
+		exitCode = h.Start(ctx)
 	case "stop":
-		cliSimpleOp(mgr.Stop, "stopped")
-		return
+		exitCode = h.Stop(ctx)
 	case "restart":
-		cliSimpleOp(mgr.Restart, "restarted")
-		return
+		exitCode = h.Restart(ctx)
 	case "reload":
-		cliSimpleOp(mgr.Reload, "reloaded")
-		return
+		exitCode = h.Reload(ctx)
 	case "uninstall":
 		keepBackup := false
 		for _, a := range args[1:] {
@@ -143,185 +142,70 @@ func main() {
 				keepBackup = true
 			}
 		}
-		cliUninstall(mgr, keepBackup)
-		return
+		exitCode = h.Uninstall(ctx, keepBackup)
 	case "upgrade":
-		version := "latest"
+		ver := "latest"
 		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-			version = args[1]
+			ver = args[1]
 		}
-		cliUpgrade(mgr, version)
-		return
+		exitCode = h.Upgrade(ctx, ver)
 	case "logs":
 		cliLogs(args[1:])
 		return
 	case "versions":
-		cliVersions(mgr)
-		return
-	}
-}
-
-func cliStatus(mgr manager.Manager) {
-	status, err := mgr.Status(context.Background())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !status.Installed {
-		quietPrintln("mihomo: not installed")
-		os.Exit(2)
-	}
-
-	switch status.InstanceState {
-	case manager.Running:
-		quietPrintf("mihomo: running  (version: %s)\n", status.Version)
-		os.Exit(0)
-	case manager.Stopped:
-		quietPrintf("mihomo: stopped  (version: %s)\n", status.Version)
-		os.Exit(1)
-	case manager.Upgrading:
-		quietPrintln("mihomo: upgrading")
-		os.Exit(1)
+		exitCode = h.Versions(ctx)
 	default:
-		quietPrintf("mihomo: %s\n", strings.ToLower(status.InstanceState.String()))
-		os.Exit(1)
+		exitCode = 1
+		printUsage()
 	}
+
+	os.Exit(exitCode)
 }
 
-func cliInstall(mgr manager.Manager, version string) {
-	err := mgr.Install(context.Background(), version, func(e manager.ProgressEvent) {
-		prefix := "  "
-		if e.Error != nil {
-			prefix = "✗ "
-		} else if strings.HasSuffix(e.Message, "complete") || strings.HasSuffix(e.Message, "running") {
-			prefix = "✓ "
-		}
-		fmt.Printf("%s[%s] %s\n", prefix, e.Phase, e.Message)
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "install failed: %v\n", err)
-		os.Exit(1)
-	}
-	quietPrintln("mihomo installed successfully")
-}
-
-func cliConfig(mgr manager.Manager, args []string) {
+func handleSubscription(h *cli.Handler, ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: mihomo-manager config preview")
-		os.Exit(1)
-	}
-	switch args[0] {
-	case "preview":
-		preview, err := mgr.PreviewConfig(context.Background())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(preview)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[0])
-		os.Exit(1)
-	}
-}
-
-func cliSubscription(mgr manager.Manager, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: mihomo-manager subscription <set|update>")
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, "usage: mihomo-manager subscription <set|update|schedule>")
+		return 1
 	}
 	switch args[0] {
 	case "set":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: mihomo-manager subscription set <url-or-data>")
-			os.Exit(1)
+			return 1
 		}
-		data := strings.Join(args[1:], " ")
-		if err := mgr.SetSubscriptionSource(context.Background(), data); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		quietPrintln("subscription saved")
+		return h.SetSubscription(ctx, strings.Join(args[1:], " "))
 	case "update":
-		if err := mgr.UpdateConfig(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		quietPrintln("config updated")
+		return h.UpdateConfig(ctx)
 	case "schedule":
-		cliSchedule(mgr, args[1:])
+		return handleSchedule(h, ctx, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subscription subcommand: %s\n", args[0])
-		os.Exit(1)
+		return 1
 	}
 }
 
-func cliSchedule(mgr manager.Manager, args []string) {
+func handleSchedule(h *cli.Handler, ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		interval, active, _ := mgr.ScheduleStatus(context.Background())
-		if active {
-			fmt.Printf("schedule: every %v\n", interval)
-		} else {
-			quietPrintln("schedule: off")
-		}
-		return
+		return h.ScheduleStatus(ctx)
 	}
 	switch args[0] {
 	case "--interval":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: mihomo-manager subscription schedule --interval <duration>")
-			os.Exit(1)
+			return 1
 		}
 		d, err := time.ParseDuration(args[1])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "invalid duration: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		if err := mgr.SetSchedule(context.Background(), d); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("schedule set to every %v\n", d)
+		return h.SetSchedule(ctx, d)
 	case "--off":
-		if err := mgr.StopSchedule(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		quietPrintln("schedule stopped")
+		return h.StopSchedule(ctx)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown schedule option: %s\n", args[0])
-		os.Exit(1)
+		return 1
 	}
-}
-
-func cliUninstall(mgr manager.Manager, keepBackup bool) {
-	err := mgr.Uninstall(context.Background(), keepBackup, func(e manager.ProgressEvent) {
-		prefix := "  "
-		if e.Error != nil {
-			prefix = "✗ "
-		}
-		fmt.Printf("%s[%s] %s\n", prefix, e.Phase, e.Message)
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "uninstall failed: %v\n", err)
-		os.Exit(1)
-	}
-	quietPrintln("mihomo uninstalled")
-}
-
-func cliUpgrade(mgr manager.Manager, version string) {
-	err := mgr.Upgrade(context.Background(), version, func(e manager.ProgressEvent) {
-		prefix := "  "
-		if e.Error != nil {
-			prefix = "✗ "
-		}
-		fmt.Printf("%s[%s] %s\n", prefix, e.Phase, e.Message)
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "upgrade failed: %v\n", err)
-		os.Exit(1)
-	}
-	quietPrintln("upgrade complete")
 }
 
 func cliLogs(args []string) {
@@ -351,17 +235,6 @@ func cliLogs(args []string) {
 	}
 }
 
-func cliVersions(mgr manager.Manager) {
-	versions, err := mgr.ListVersions(context.Background())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	for _, v := range versions {
-		fmt.Println(v.Tag)
-	}
-}
-
 func cliEditFile(mgr manager.Manager, path string, args []string) {
 	if len(args) != 1 || args[0] != "edit" {
 		fmt.Fprintf(os.Stderr, "usage: mihomo-manager %s edit\n", path)
@@ -383,10 +256,10 @@ func cliEditFile(mgr manager.Manager, path string, args []string) {
 		fmt.Fprintf(os.Stderr, "config update failed: %v\n", err)
 		os.Exit(1)
 	}
-	quietPrintln("config updated")
+	if !quietMode {
+		fmt.Println("config updated")
+	}
 }
-
-type commandFunc func(context.Context) error
 
 func printUsage() {
 	fmt.Println(`Usage of mihomo-manager:
@@ -420,10 +293,4 @@ func printUsage() {
 Run without arguments to start the TUI.`)
 }
 
-func cliSimpleOp(op commandFunc, verb string) {
-	if err := op(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	quietPrintf("mihomo %s\n", verb)
-}
+

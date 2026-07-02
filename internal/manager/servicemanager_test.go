@@ -1,15 +1,14 @@
 package manager
 
 import (
-	"context"
 	"fmt"
 	"testing"
 )
 
 type commandRecorder struct {
-	captured   []cmdCall
-	output     string
-	cmdErr     error
+	captured []cmdCall
+	output   string
+	cmdErr   error
 }
 
 type cmdCall struct {
@@ -36,24 +35,9 @@ func (r *commandRecorder) RunCommandIgnoreExit(name string, args ...string) (str
 	return "inactive", nil
 }
 
-func (r *commandRecorder) FileExists(path string) bool                        { return false }
-func (r *commandRecorder) ReadFile(path string) ([]byte, error)               { return nil, nil }
-func (r *commandRecorder) WriteFile(path string, data []byte, perm uint32) error { return nil }
-func (r *commandRecorder) Remove(path string) error                           { return nil }
-func (r *commandRecorder) Rename(oldPath, newPath string) error               { return nil }
-func (r *commandRecorder) MkdirAll(path string, perm uint32) error            { return nil }
-func (r *commandRecorder) Chmod(path string, perm uint32) error               { return nil }
-func (r *commandRecorder) Download(ctx context.Context, url, dest string) error { return nil }
-func (r *commandRecorder) ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error) {
-	return nil, nil
-}
-func (r *commandRecorder) LatestVersion(ctx context.Context, owner, repo string) (string, error) {
-	return "v1.0.0", nil
-}
-
 func TestOSServiceManagerIsRunningLinux(t *testing.T) {
 	rec := &commandRecorder{output: "active"}
-	svc := &OSServiceManager{sys: rec, osType: "linux"}
+	svc := &OSServiceManager{cmd: rec, osType: "linux"}
 
 	running, err := svc.IsRunning("mihomo")
 	if err != nil {
@@ -72,7 +56,7 @@ func TestOSServiceManagerIsRunningLinux(t *testing.T) {
 
 func TestOSServiceManagerIsNotRunningLinux(t *testing.T) {
 	rec := &commandRecorder{cmdErr: fmt.Errorf("exit status 1")}
-	svc := &OSServiceManager{sys: rec, osType: "linux"}
+	svc := &OSServiceManager{cmd: rec, osType: "linux"}
 
 	running, err := svc.IsRunning("mihomo")
 	if err != nil {
@@ -85,7 +69,7 @@ func TestOSServiceManagerIsNotRunningLinux(t *testing.T) {
 
 func TestOSServiceManagerRegisterLinux(t *testing.T) {
 	rec := &commandRecorder{}
-	svc := &OSServiceManager{sys: rec, osType: "linux"}
+	svc := &OSServiceManager{cmd: rec, osType: "linux"}
 
 	err := svc.Register("mihomo", "")
 	if err != nil {
@@ -104,7 +88,7 @@ func TestOSServiceManagerRegisterLinux(t *testing.T) {
 
 func TestOSServiceManagerUnregisterLinux(t *testing.T) {
 	rec := &commandRecorder{}
-	svc := &OSServiceManager{sys: rec, osType: "linux"}
+	svc := &OSServiceManager{cmd: rec, osType: "linux"}
 
 	err := svc.Unregister("mihomo")
 	if err != nil {
@@ -133,7 +117,7 @@ func TestOSServiceManagerStartStopRestartLinux(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := &commandRecorder{}
-			svc := &OSServiceManager{sys: rec, osType: "linux"}
+			svc := &OSServiceManager{cmd: rec, osType: "linux"}
 
 			if err := tt.fn(svc); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -150,7 +134,7 @@ func TestOSServiceManagerStartStopRestartLinux(t *testing.T) {
 
 func TestOSServiceManagerIsRunningDarwin(t *testing.T) {
 	rec := &commandRecorder{output: "PID 12345 mihomo"}
-	svc := &OSServiceManager{sys: rec, osType: "darwin"}
+	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
 
 	running, err := svc.IsRunning("mihomo")
 	if err != nil {
@@ -166,7 +150,7 @@ func TestOSServiceManagerIsRunningDarwin(t *testing.T) {
 
 func TestOSServiceManagerRegisterDarwin(t *testing.T) {
 	rec := &commandRecorder{output: "success"}
-	svc := &OSServiceManager{sys: rec, osType: "darwin"}
+	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
 
 	err := svc.Register("mihomo", "/path/to/mihomo.plist")
 	if err != nil {
@@ -182,7 +166,7 @@ func TestOSServiceManagerRegisterDarwin(t *testing.T) {
 
 func TestOSServiceManagerUnregisterDarwin(t *testing.T) {
 	rec := &commandRecorder{output: "success"}
-	svc := &OSServiceManager{sys: rec, osType: "darwin"}
+	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
 
 	err := svc.Unregister("mihomo")
 	if err != nil {
@@ -198,7 +182,7 @@ func TestOSServiceManagerUnregisterDarwin(t *testing.T) {
 
 func TestOSServiceManagerIsNotRunningDarwin(t *testing.T) {
 	rec := &commandRecorder{output: "mihomo\tstopped"}
-	svc := &OSServiceManager{sys: rec, osType: "darwin"}
+	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
 
 	running, err := svc.IsRunning("mihomo")
 	if err != nil {
@@ -211,7 +195,7 @@ func TestOSServiceManagerIsNotRunningDarwin(t *testing.T) {
 
 func TestOSServiceManagerUnsupportedOS(t *testing.T) {
 	rec := &commandRecorder{}
-	svc := &OSServiceManager{sys: rec, osType: "windows"}
+	svc := &OSServiceManager{cmd: rec, osType: "windows"}
 
 	_, err := svc.IsRunning("mihomo")
 	if err == nil {

@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-type System interface {
+type FileSystem interface {
 	FileExists(path string) bool
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm uint32) error
@@ -20,9 +20,14 @@ type System interface {
 	Rename(oldPath, newPath string) error
 	MkdirAll(path string, perm uint32) error
 	Chmod(path string, perm uint32) error
+}
 
+type CommandRunner interface {
 	RunCommand(name string, args ...string) (string, error)
 	RunCommandIgnoreExit(name string, args ...string) (string, error)
+}
+
+type GitHubReleases interface {
 	Download(ctx context.Context, url, dest string) error
 	ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error)
 	LatestVersion(ctx context.Context, owner, repo string) (string, error)

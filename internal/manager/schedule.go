@@ -23,7 +23,7 @@ func (m *manager) SetSchedule(ctx context.Context, interval time.Duration) error
 	}
 
 	data := fmt.Sprintf("%d", int64(interval.Seconds()))
-	if err := m.sys.WriteFile(scheduleFile, []byte(data), filePermUserRW); err != nil {
+	if err := m.fs.WriteFile(scheduleFile, []byte(data), filePermUserRW); err != nil {
 		return err
 	}
 
@@ -35,7 +35,7 @@ func (m *manager) SetSchedule(ctx context.Context, interval time.Duration) error
 		for {
 			select {
 			case <-ticker.C:
-				m.UpdateConfig(context.Background())
+				m.pipeline.Apply(context.Background())
 			case <-stopCh:
 				ticker.Stop()
 				return
@@ -55,12 +55,12 @@ func (m *manager) StopSchedule(ctx context.Context) error {
 		m.stopCh = nil
 	}
 	m.mu.Unlock()
-	m.sys.WriteFile(scheduleFile, []byte("off"), filePermUserRW)
+	m.fs.WriteFile(scheduleFile, []byte("off"), filePermUserRW)
 	return nil
 }
 
 func (m *manager) ScheduleStatus(ctx context.Context) (time.Duration, bool, error) {
-	data, err := m.sys.ReadFile(scheduleFile)
+	data, err := m.fs.ReadFile(scheduleFile)
 	if err != nil {
 		return 0, false, nil
 	}

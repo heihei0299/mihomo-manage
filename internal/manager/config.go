@@ -9,6 +9,51 @@ import (
 	"strings"
 )
 
+type ConfigValidator interface {
+	Validate(ctx context.Context, configPath string) error
+}
+
+type configValidator struct{}
+
+func (v *configValidator) Validate(ctx context.Context, configPath string) error {
+	cmd := exec.Command(binaryPath, "-t", "-d", configDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("config validation failed:\n%s", string(out))
+	}
+	return nil
+}
+
+type ConfigPipeline interface {
+	SetSubscriptionSource(ctx context.Context, source string) error
+	SetRoutingRules(ctx context.Context, rules string) error
+	Preview(ctx context.Context) (string, error)
+	Apply(ctx context.Context) error
+}
+
+type ConfigPipelineOptions struct {
+	OnReload  func(ctx context.Context) error
+	Validator ConfigValidator
+}
+
+type configPipeline struct {
+	fs       FileSystem
+	gh       GitHubReleases
+	onReload func(ctx context.Context) error
+	validate ConfigValidator
+}
+
+func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOptions) *configPipeline {
+	p := &configPipeline{fs: fs, gh: gh}
+	if opts.OnReload != nil {
+		p.onReload = opts.OnReload
+	}
+	if opts.Validator != nil {
+		p.validate = opts.Validator
+	}
+	return p
+}
+
 func renderConfig(template, subscription, routingRules string) (string, error) {
 	result := strings.ReplaceAll(template, "{{subscription}}", subscription)
 	result = strings.ReplaceAll(result, "{{routing_rules}}", routingRules)
@@ -31,22 +76,22 @@ func hasTopLevelKeys(data []byte) bool {
 	return false
 }
 
-func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
-	if err := m.sys.MkdirAll(stateDir, filePermUserRWX); err != nil {
+func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
+	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
-	if looksLikeURL(url) {
-		return m.sys.WriteFile(subscriptionURLFile, []byte(url), filePermUserRW)
+	if looksLikeURL(source) {
+		return p.fs.WriteFile(subscriptionURLFile, []byte(source), filePermUserRW)
 	}
-	return m.sys.WriteFile(subscriptionDataFile, []byte(url), filePermUserRW)
+	return p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW)
 }
 
-func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
-	return m.sys.WriteFile(RoutingRulesPath, []byte(rules), filePermUserRW)
+func (p *configPipeline) SetRoutingRules(ctx context.Context, rules string) error {
+	return p.fs.WriteFile(RoutingRulesPath, []byte(rules), filePermUserRW)
 }
 
-func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
-	subData, err := m.sys.ReadFile(subscriptionDataFile)
+func (p *configPipeline) Preview(ctx context.Context) (string, error) {
+	subData, err := p.fs.ReadFile(subscriptionDataFile)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
@@ -54,7 +99,7 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 		return string(subData), nil
 	}
 
-	tmpl, err := m.sys.ReadFile(ConfigTemplatePath)
+	tmpl, err := p.fs.ReadFile(ConfigTemplatePath)
 	if err != nil {
 		return "", err
 	}
@@ -64,7 +109,7 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 		subStr = string(subData)
 	}
 
-	rulesData, err := m.sys.ReadFile(RoutingRulesPath)
+	rulesData, err := p.fs.ReadFile(RoutingRulesPath)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
@@ -72,8 +117,8 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 	return renderConfig(string(tmpl), subStr, string(rulesData))
 }
 
-func (m *manager) UpdateConfig(ctx context.Context) error {
-	data, err := m.sys.ReadFile(subscriptionURLFile)
+func (p *configPipeline) Apply(ctx context.Context) error {
+	data, err := p.fs.ReadFile(subscriptionURLFile)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("reading subscription URL: %w", err)
@@ -82,32 +127,32 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 		url := strings.TrimSpace(string(data))
 		if url != "" {
 			tmpPath := subscriptionDataFile + ".tmp"
-			if err := m.sys.Download(ctx, url, tmpPath); err != nil {
+			if err := p.gh.Download(ctx, url, tmpPath); err != nil {
 				return fmt.Errorf("fetching subscription: %w", err)
 			}
-			fetched, err := m.sys.ReadFile(tmpPath)
+			fetched, err := p.fs.ReadFile(tmpPath)
 			if err != nil {
 				return err
 			}
 			if len(bytes.TrimSpace(fetched)) == 0 {
-				m.sys.Remove(tmpPath)
+				p.fs.Remove(tmpPath)
 				return fmt.Errorf("fetched subscription content is empty")
 			}
-			m.sys.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
-			m.sys.Remove(tmpPath)
+			p.fs.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
+			p.fs.Remove(tmpPath)
 		}
 	}
 
-	if !m.sys.FileExists(ConfigTemplatePath) {
-		if err := m.sys.MkdirAll(configDir, filePermUserRWX); err != nil {
+	if !p.fs.FileExists(ConfigTemplatePath) {
+		if err := p.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
 			return err
 		}
-		if err := m.sys.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
 			return err
 		}
 	}
 
-	preview, err := m.PreviewConfig(ctx)
+	preview, err := p.Preview(ctx)
 	if err != nil {
 		return err
 	}
@@ -117,35 +162,53 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 	}
 
 	var backupPath string
-	if m.sys.FileExists(configYAML) {
+	if p.fs.FileExists(configYAML) {
 		backupPath = configYAML + ".bak." + timestamp()
-		existing, err := m.sys.ReadFile(configYAML)
+		existing, err := p.fs.ReadFile(configYAML)
 		if err != nil {
 			return err
 		}
-		if err := m.sys.WriteFile(backupPath, existing, filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(backupPath, existing, filePermUserRW); err != nil {
 			return err
 		}
 	}
 
-	if err := m.sys.WriteFile(configYAML, []byte(preview), filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(configYAML, []byte(preview), filePermUserRW); err != nil {
 		return err
 	}
 
-	if m.sys.FileExists(binaryPath) {
-		cmd := exec.Command(binaryPath, "-t", "-d", configDir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
+	if p.validate != nil {
+		if err := p.validate.Validate(ctx, configYAML); err != nil {
 			if backupPath != "" {
-				if bak, rErr := m.sys.ReadFile(backupPath); rErr == nil {
-					m.sys.WriteFile(configYAML, bak, filePermUserRW)
+				if bak, rErr := p.fs.ReadFile(backupPath); rErr == nil {
+					p.fs.WriteFile(configYAML, bak, filePermUserRW)
 				}
 			}
-			return fmt.Errorf("config validation failed:\n%s", string(out))
+			return err
 		}
 	}
 
-	m.svcMgr.Reload(serviceName)
+	if p.onReload != nil {
+		p.onReload(ctx)
+	}
 
 	return nil
+}
+
+// manager delegation methods
+
+func (m *manager) SetSubscriptionSource(ctx context.Context, source string) error {
+	return m.pipeline.SetSubscriptionSource(ctx, source)
+}
+
+func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
+	return m.pipeline.SetRoutingRules(ctx, rules)
+}
+
+func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
+	return m.pipeline.Preview(ctx)
+}
+
+func (m *manager) UpdateConfig(ctx context.Context) error {
+	return m.pipeline.Apply(ctx)
 }

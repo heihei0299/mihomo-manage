@@ -9,28 +9,34 @@ import (
 func noopProgress(ProgressEvent) {}
 
 func TestLifecycleInstall(t *testing.T) {
-	sys := &mockSystem{}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Install(context.Background(), "v1.18.0", noopProgress)
 	if err != nil {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	assertFileExists(t, sys, binaryPath, "binary should be deployed")
-	assertFileExists(t, sys, ConfigTemplatePath, "template should be created")
-	assertFileExists(t, sys, configYAML, "config should be created")
-	assertFileExists(t, sys, defaultServiceUnitPath, "BUG 1: service unit file should be created")
+	assertFileExists(t, fs, binaryPath, "binary should be deployed")
+	assertFileExists(t, fs, ConfigTemplatePath, "template should be created")
+	assertFileExists(t, fs, configYAML, "config should be created")
+	assertFileExists(t, fs, defaultServiceUnitPath, "BUG 1: service unit file should be created")
 	if !svc.running {
 		t.Error("service should be running after Install")
 	}
 }
 
 func TestLifecycleInstallThenStatus(t *testing.T) {
-	sys := &mockSystem{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	m.Install(context.Background(), "v1.18.0", noopProgress)
 
@@ -50,7 +56,7 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 }
 
 func TestLifecycleSubscriptionUpdate(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			ConfigTemplatePath:  true,
 			subscriptionURLFile: true,
@@ -61,18 +67,20 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},
-		downloadErr: nil,
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
 
-	assertFileExists(t, sys, configYAML, "config should be updated")
-	if !sys.downloadCalled {
+	assertFileExists(t, fs, configYAML, "config should be updated")
+	if !gh.downloadCalled {
 		t.Error("BUG 2: remote subscription URL should have been fetched via Download")
 	}
 	if !svc.reloadCalled {
@@ -81,11 +89,14 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 }
 
 func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		writeErr: testError{"disk full"},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Install(context.Background(), "v1.18.0", noopProgress)
 	if err == nil {
@@ -98,7 +109,7 @@ func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 }
 
 func TestScheduleSetAndStop(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			ConfigTemplatePath: true,
 		},
@@ -106,8 +117,10 @@ func TestScheduleSetAndStop(t *testing.T) {
 			ConfigTemplatePath: []byte(`test: {{subscription}}`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.SetSchedule(context.Background(), time.Hour)
 	if err != nil {
@@ -140,9 +153,11 @@ func TestScheduleSetAndStop(t *testing.T) {
 }
 
 func TestScheduleRejectsShortInterval(t *testing.T) {
-	sys := &mockSystem{}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.SetSchedule(context.Background(), time.Minute)
 	if err == nil {
@@ -150,14 +165,14 @@ func TestScheduleRejectsShortInterval(t *testing.T) {
 	}
 }
 
-func assertFileExists(t *testing.T, sys *mockSystem, path string, msg string) {
+func assertFileExists(t *testing.T, fs *fakeFileSystem, path string, msg string) {
 	t.Helper()
-	if sys.written != nil {
-		if _, ok := sys.written[path]; ok {
+	if fs.written != nil {
+		if _, ok := fs.written[path]; ok {
 			return
 		}
 	}
-	for _, newPath := range sys.renamed {
+	for _, newPath := range fs.renamed {
 		if newPath == path {
 			return
 		}

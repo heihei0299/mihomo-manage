@@ -127,13 +127,26 @@ type Manager interface {
 	ScheduleStatus(ctx context.Context) (time.Duration, bool, error)
 }
 
-func New(sys System, svcMgr ServiceManager) Manager {
-	return &manager{sys: sys, svcMgr: svcMgr}
+func New(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager) Manager {
+	pipe := newConfigPipeline(fs, gh, ConfigPipelineOptions{
+		OnReload:  func(ctx context.Context) error { return svcMgr.Reload(serviceName) },
+		Validator: &configValidator{},
+	})
+	return &manager{
+		fs:       fs,
+		cmd:      cmd,
+		gh:       gh,
+		svcMgr:   svcMgr,
+		pipeline: pipe,
+	}
 }
 
 type manager struct {
-	sys    System
-	svcMgr ServiceManager
+	fs       FileSystem
+	cmd      CommandRunner
+	gh       GitHubReleases
+	svcMgr   ServiceManager
+	pipeline *configPipeline
 
 	mu     sync.Mutex
 	ticker *time.Ticker
@@ -154,8 +167,8 @@ func looksLikeVersion(s string) bool {
 	return s[1] >= '0' && s[1] <= '9'
 }
 
-func parseVersion(sys System, binaryPath string) (string, error) {
-	out, err := sys.RunCommand(binaryPath, "-v")
+func parseVersion(cmd CommandRunner, binaryPath string) (string, error) {
+	out, err := cmd.RunCommand(binaryPath, "-v")
 	if err != nil {
 		return "", err
 	}

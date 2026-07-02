@@ -9,44 +9,22 @@ import (
 	"testing"
 )
 
-type mockSystem struct {
-	fileExists     map[string]bool
-	written        map[string][]byte
-	writeErr       error
-	removeErr      error
-	renameErr      error
-	cmdOutput      string
-	cmdErr         error
-	downloadErr    error
-	downloadCalled bool
-	versions       []VersionInfo
-	versionsErr    error
-	removed        []string
-	renamed        map[string]string
-	readFileErr    map[string]error
+type fakeFileSystem struct {
+	fileExists  map[string]bool
+	written     map[string][]byte
+	writeErr    error
+	removeErr   error
+	renameErr   error
+	removed     []string
+	renamed     map[string]string
+	readFileErr map[string]error
 }
 
-func (m *mockSystem) Download(ctx context.Context, url, dest string) error {
-	m.downloadCalled = true
-	if m.downloadErr != nil {
-		return m.downloadErr
-	}
-	if m.written == nil {
-		m.written = make(map[string][]byte)
-	}
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	gw.Write([]byte("proxies:\n  - server: fetched-node\n"))
-	gw.Close()
-	m.written[dest] = buf.Bytes()
-	return nil
-}
-
-func (m *mockSystem) FileExists(path string) bool {
+func (m *fakeFileSystem) FileExists(path string) bool {
 	return m.fileExists[path]
 }
 
-func (m *mockSystem) ReadFile(path string) ([]byte, error) {
+func (m *fakeFileSystem) ReadFile(path string) ([]byte, error) {
 	if m.readFileErr != nil {
 		if err, ok := m.readFileErr[path]; ok {
 			return nil, err
@@ -62,7 +40,7 @@ func (m *mockSystem) ReadFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-func (m *mockSystem) WriteFile(path string, data []byte, perm uint32) error {
+func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error {
 	if m.writeErr != nil {
 		return m.writeErr
 	}
@@ -73,7 +51,7 @@ func (m *mockSystem) WriteFile(path string, data []byte, perm uint32) error {
 	return nil
 }
 
-func (m *mockSystem) Remove(path string) error {
+func (m *fakeFileSystem) Remove(path string) error {
 	if m.removeErr != nil {
 		return m.removeErr
 	}
@@ -81,7 +59,7 @@ func (m *mockSystem) Remove(path string) error {
 	return nil
 }
 
-func (m *mockSystem) Rename(oldPath, newPath string) error {
+func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
 	if m.renameErr != nil {
 		return m.renameErr
 	}
@@ -103,27 +81,65 @@ func (m *mockSystem) Rename(oldPath, newPath string) error {
 	return nil
 }
 
-func (m *mockSystem) MkdirAll(path string, perm uint32) error {
+func (m *fakeFileSystem) MkdirAll(path string, perm uint32) error {
 	return nil
 }
 
-func (m *mockSystem) Chmod(path string, perm uint32) error {
+func (m *fakeFileSystem) Chmod(path string, perm uint32) error {
 	return nil
 }
 
-func (m *mockSystem) RunCommand(name string, args ...string) (string, error) {
+type fakeCmdRunner struct {
+	cmdOutput string
+	cmdErr    error
+}
+
+func (m *fakeCmdRunner) RunCommand(name string, args ...string) (string, error) {
 	return m.cmdOutput, m.cmdErr
 }
 
-func (m *mockSystem) RunCommandIgnoreExit(name string, args ...string) (string, error) {
+func (m *fakeCmdRunner) RunCommandIgnoreExit(name string, args ...string) (string, error) {
 	return m.cmdOutput, m.cmdErr
 }
 
-func (m *mockSystem) ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error) {
+type fakeGitHubReleases struct {
+	downloadErr    error
+	downloadCalled bool
+	written        map[string][]byte
+	versions       []VersionInfo
+	versionsErr    error
+}
+
+func (m *fakeGitHubReleases) Download(ctx context.Context, url, dest string) error {
+	m.downloadCalled = true
+	if m.downloadErr != nil {
+		return m.downloadErr
+	}
+	if m.written == nil {
+		m.written = make(map[string][]byte)
+	}
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	gw.Write([]byte("proxies:\n  - server: fetched-node\n"))
+	gw.Close()
+	m.written[dest] = buf.Bytes()
+	return nil
+}
+
+// linkStorage makes gh share the same written map as fs, so
+// Download writes are visible to ReadFile.
+func linkStorage(fs *fakeFileSystem, gh *fakeGitHubReleases) {
+	if fs.written == nil {
+		fs.written = make(map[string][]byte)
+	}
+	gh.written = fs.written
+}
+
+func (m *fakeGitHubReleases) ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error) {
 	return m.versions, m.versionsErr
 }
 
-func (m *mockSystem) LatestVersion(ctx context.Context, owner, repo string) (string, error) {
+func (m *fakeGitHubReleases) LatestVersion(ctx context.Context, owner, repo string) (string, error) {
 	if len(m.versions) > 0 {
 		return m.versions[0].Tag, nil
 	}
@@ -191,14 +207,33 @@ func (m *mockServiceManager) Reload(name string) error {
 	return nil
 }
 
+type testManager struct {
+	fs  *fakeFileSystem
+	cmd *fakeCmdRunner
+	gh  *fakeGitHubReleases
+	svc *mockServiceManager
+	m   Manager
+}
+
+func newTestManager() *testManager {
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
+	svc := &mockServiceManager{}
+	return &testManager{fs: fs, cmd: cmd, gh: gh, svc: svc, m: New(fs, cmd, gh, svc)}
+}
+
 type testError struct{ msg string }
 
 func (e testError) Error() string { return e.msg }
 
 func TestStatusNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	status, err := m.Status(context.Background())
 
@@ -217,12 +252,11 @@ func TestStatusNotInstalled(t *testing.T) {
 }
 
 func TestStatusInstalledStopped(t *testing.T) {
-	sys := &mockSystem{
-		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
-		cmdOutput:  "Mihomo Meta v1.18.0 linux amd64",
-	}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: false}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	status, err := m.Status(context.Background())
 
@@ -241,12 +275,11 @@ func TestStatusInstalledStopped(t *testing.T) {
 }
 
 func TestStatusInstalledRunning(t *testing.T) {
-	sys := &mockSystem{
-		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
-		cmdOutput:  "Mihomo Meta v1.18.0 linux amd64",
-	}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	status, err := m.Status(context.Background())
 
@@ -262,11 +295,11 @@ func TestStatusInstalledRunning(t *testing.T) {
 }
 
 func TestStatusServiceManagerError(t *testing.T) {
-	sys := &mockSystem{
-		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
-	}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{err: testError{"service not found"}}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	_, err := m.Status(context.Background())
 
@@ -302,8 +335,8 @@ func TestParseVersion(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		sys := &mockSystem{cmdOutput: tt.output}
-		got, err := parseVersion(sys, "/dummy")
+		cmd := &fakeCmdRunner{cmdOutput: tt.output}
+		got, err := parseVersion(cmd, "/dummy")
 		if err != nil {
 			t.Errorf("parseVersion(%q) unexpected error: %v", tt.output, err)
 			continue
@@ -315,17 +348,19 @@ func TestParseVersion(t *testing.T) {
 }
 
 func TestParseVersionError(t *testing.T) {
-	sys := &mockSystem{cmdErr: testError{"command failed"}}
-	_, err := parseVersion(sys, "/dummy")
+	cmd := &fakeCmdRunner{cmdErr: testError{"command failed"}}
+	_, err := parseVersion(cmd, "/dummy")
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
 }
 
 func TestInstallDownloadFails(t *testing.T) {
-	sys := &mockSystem{downloadErr: testError{"network error"}}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{downloadErr: testError{"network error"}}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	var events []ProgressEvent
 	err := m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {
@@ -341,9 +376,12 @@ func TestInstallDownloadFails(t *testing.T) {
 }
 
 func TestInstallHappyPath(t *testing.T) {
-	sys := &mockSystem{}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	var phases []InstallationPhase
 	var lastErr error
@@ -370,14 +408,17 @@ func TestInstallHappyPath(t *testing.T) {
 }
 
 func TestInstallCreatesServiceFile(t *testing.T) {
-	sys := &mockSystem{}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {})
 
 	hasServiceFile := false
-	for path := range sys.written {
+	for path := range fs.written {
 		if strings.Contains(path, "mihomo.service") || strings.Contains(path, "systemd") {
 			hasServiceFile = true
 			break
@@ -389,9 +430,12 @@ func TestInstallCreatesServiceFile(t *testing.T) {
 }
 
 func TestInstallDeployFailsRollsBack(t *testing.T) {
-	sys := &mockSystem{writeErr: testError{"disk full"}}
+	fs := &fakeFileSystem{writeErr: testError{"disk full"}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	var events []ProgressEvent
 	err := m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {
@@ -466,9 +510,9 @@ func TestRenderConfigNoPlaceholders(t *testing.T) {
 }
 
 func TestUpdateConfigReadURLError(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath: true,
+			ConfigTemplatePath:  true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
@@ -476,8 +520,10 @@ func TestUpdateConfigReadURLError(t *testing.T) {
 		},
 		readFileErr: map[string]error{subscriptionURLFile: testError{"permission denied"}},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.UpdateConfig(context.Background())
 	if err == nil {
@@ -486,27 +532,29 @@ func TestUpdateConfigReadURLError(t *testing.T) {
 }
 
 func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
-	sys := &mockSystem{}
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub")
 	if err != nil {
 		t.Fatalf("SetSubscriptionSource failed: %v", err)
 	}
 
-	if _, wroteData := sys.written[subscriptionDataFile]; wroteData {
+	if _, wroteData := fs.written[subscriptionDataFile]; wroteData {
 		t.Error("SetSubscriptionSource should not write to subscriptionDataFile — it's dead code, only subscriptionURLFile should be written")
 	}
-	if _, wroteURL := sys.written[subscriptionURLFile]; !wroteURL {
+	if _, wroteURL := fs.written[subscriptionURLFile]; !wroteURL {
 		t.Error("SetSubscriptionSource should write to subscriptionURLFile")
 	}
 }
 
 func TestSubscriptionRemoteURLFetched(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:                         true,
+			ConfigTemplatePath:                        true,
 			"/opt/mihomo-manager/state/subscription-url.txt": true,
 		},
 		written: map[string][]byte{
@@ -514,25 +562,30 @@ func TestSubscriptionRemoteURLFetched(t *testing.T) {
 			"/opt/mihomo-manager/state/subscription-url.txt": []byte(`https://example.com/sub`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	m.UpdateConfig(context.Background())
 
-	if !sys.downloadCalled {
+	if !gh.downloadCalled {
 		t.Error("BUG 2: subscription set with URL should trigger Download but it was never called — URL literal is substituted verbatim")
 	}
 }
 
 func TestPreviewConfigSubscriptionReadError(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		written: map[string][]byte{
 			ConfigTemplatePath: []byte(`test: {{subscription}}`),
 		},
 		readFileErr: map[string]error{subscriptionDataFile: testError{"permission denied"}},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	_, err := m.PreviewConfig(context.Background())
 	if err == nil {
@@ -541,7 +594,7 @@ func TestPreviewConfigSubscriptionReadError(t *testing.T) {
 }
 
 func TestPreviewConfigRulesReadError(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			ConfigTemplatePath: true,
 		},
@@ -550,8 +603,10 @@ func TestPreviewConfigRulesReadError(t *testing.T) {
 		},
 		readFileErr: map[string]error{RoutingRulesPath: testError{"permission denied"}},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	_, err := m.PreviewConfig(context.Background())
 	if err == nil {
@@ -560,13 +615,15 @@ func TestPreviewConfigRulesReadError(t *testing.T) {
 }
 
 func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		written: map[string][]byte{
 			ConfigTemplatePath: []byte(`proxies: {{subscription}}`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	result, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -578,14 +635,16 @@ func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 }
 
 func TestUpdateConfigEmptyURL(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+			ConfigTemplatePath:  []byte(`test: {{subscription}}`),
 			subscriptionURLFile: []byte(``),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -594,7 +653,7 @@ func TestUpdateConfigEmptyURL(t *testing.T) {
 }
 
 func TestUpdateConfigNoExistingConfig(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			ConfigTemplatePath: true,
 		},
@@ -602,8 +661,10 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 			ConfigTemplatePath: []byte(`test: {{subscription}}`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -613,7 +674,7 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 }
 
 func TestUpdateConfigHappyPath(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			"/opt/mihomo/etc/config-template.yaml":            true,
 			"/opt/mihomo-manager/state/subscription-data.txt": true,
@@ -630,8 +691,10 @@ rules:
 			"/opt/mihomo/etc/rules.txt": []byte(`DOMAIN-KEYWORD,google,Proxy`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -646,7 +709,7 @@ rules:
 }
 
 func TestUpdateConfigReloadsInstance(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			"/opt/mihomo/etc/config-template.yaml": true,
 		},
@@ -654,8 +717,10 @@ func TestUpdateConfigReloadsInstance(t *testing.T) {
 			"/opt/mihomo/etc/config-template.yaml": []byte(`test: {{subscription}}`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	m.UpdateConfig(context.Background())
 
@@ -665,7 +730,7 @@ func TestUpdateConfigReloadsInstance(t *testing.T) {
 }
 
 func TestUpdateConfigCreatesBackup(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			"/opt/mihomo/etc/config-template.yaml": true,
 			"/opt/mihomo/etc/config.yaml":          true,
@@ -675,8 +740,10 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 			"/opt/mihomo/etc/config.yaml":          []byte(`old content`),
 		},
 	}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -684,7 +751,7 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 	}
 
 	hasBackup := false
-	for path := range sys.written {
+	for path := range fs.written {
 		if strings.Contains(path, "config.yaml.bak.") {
 			hasBackup = true
 		}
@@ -695,9 +762,11 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 }
 
 func TestStartNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Start(context.Background())
 	if err == nil {
@@ -706,9 +775,11 @@ func TestStartNotInstalled(t *testing.T) {
 }
 
 func TestStartStopped(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: false}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Start(context.Background())
 	if err != nil {
@@ -720,9 +791,11 @@ func TestStartStopped(t *testing.T) {
 }
 
 func TestStartAlreadyRunning(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Start(context.Background())
 	if err == nil {
@@ -731,9 +804,11 @@ func TestStartAlreadyRunning(t *testing.T) {
 }
 
 func TestStopNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Stop(context.Background())
 	if err == nil {
@@ -742,9 +817,11 @@ func TestStopNotInstalled(t *testing.T) {
 }
 
 func TestStopRunning(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Stop(context.Background())
 	if err != nil {
@@ -756,9 +833,11 @@ func TestStopRunning(t *testing.T) {
 }
 
 func TestStopAlreadyStopped(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: false}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Stop(context.Background())
 	if err == nil {
@@ -767,9 +846,11 @@ func TestStopAlreadyStopped(t *testing.T) {
 }
 
 func TestRestartNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Restart(context.Background())
 	if err == nil {
@@ -778,9 +859,11 @@ func TestRestartNotInstalled(t *testing.T) {
 }
 
 func TestRestartRunning(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Restart(context.Background())
 	if err != nil {
@@ -789,9 +872,11 @@ func TestRestartRunning(t *testing.T) {
 }
 
 func TestReloadNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Reload(context.Background())
 	if err == nil {
@@ -800,9 +885,11 @@ func TestReloadNotInstalled(t *testing.T) {
 }
 
 func TestReloadRunning(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Reload(context.Background())
 	if err != nil {
@@ -811,9 +898,11 @@ func TestReloadRunning(t *testing.T) {
 }
 
 func TestReloadStopped(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: false}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Reload(context.Background())
 	if err == nil {
@@ -822,12 +911,11 @@ func TestReloadStopped(t *testing.T) {
 }
 
 func TestUpgradeDownloadFails(t *testing.T) {
-	sys := &mockSystem{
-		fileExists:  map[string]bool{"/opt/mihomo/bin/mihomo": true},
-		downloadErr: testError{"network error"},
-	}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{downloadErr: testError{"network error"}}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err == nil {
@@ -836,11 +924,12 @@ func TestUpgradeDownloadFails(t *testing.T) {
 }
 
 func TestUpgradeHappyPath(t *testing.T) {
-	sys := &mockSystem{
-		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
-	}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err != nil {
@@ -849,11 +938,12 @@ func TestUpgradeHappyPath(t *testing.T) {
 }
 
 func TestUpgradeStartFailsRollsBack(t *testing.T) {
-	sys := &mockSystem{
-		fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true},
-	}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
 	svc := &mockServiceManager{running: true, startErr: testError{"start failed"}}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err == nil {
@@ -862,9 +952,11 @@ func TestUpgradeStartFailsRollsBack(t *testing.T) {
 }
 
 func TestUpgradeNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err == nil {
@@ -873,7 +965,9 @@ func TestUpgradeNotInstalled(t *testing.T) {
 }
 
 func TestListVersions(t *testing.T) {
-	sys := &mockSystem{
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{
 		versions: []VersionInfo{
 			{Tag: "v1.19.0"},
 			{Tag: "v1.18.0"},
@@ -881,7 +975,7 @@ func TestListVersions(t *testing.T) {
 		},
 	}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	versions, err := m.ListVersions(context.Background())
 	if err != nil {
@@ -896,9 +990,11 @@ func TestListVersions(t *testing.T) {
 }
 
 func TestUninstallNotInstalled(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Uninstall(context.Background(), false, func(e ProgressEvent) {})
 	if err == nil {
@@ -907,9 +1003,11 @@ func TestUninstallNotInstalled(t *testing.T) {
 }
 
 func TestUninstallCleanup(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Uninstall(context.Background(), false, func(e ProgressEvent) {})
 	if err != nil {
@@ -921,9 +1019,11 @@ func TestUninstallCleanup(t *testing.T) {
 }
 
 func TestUninstallKeepBackup(t *testing.T) {
-	sys := &mockSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{running: true}
-	m := New(sys, svc)
+	m := New(fs, cmd, gh, svc)
 
 	err := m.Uninstall(context.Background(), true, func(e ProgressEvent) {})
 	if err != nil {
