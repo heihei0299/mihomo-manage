@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -566,9 +567,15 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	subData, _ := m.sys.ReadFile(subscriptionDataFile)
+	subData, err := m.sys.ReadFile(subscriptionDataFile)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
 
-	rulesData, _ := m.sys.ReadFile(RoutingRulesPath)
+	rulesData, err := m.sys.ReadFile(RoutingRulesPath)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
 
 	return RenderConfig(string(tmpl), string(subData), string(rulesData))
 }
