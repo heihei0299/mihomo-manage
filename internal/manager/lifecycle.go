@@ -129,9 +129,12 @@ func (m *manager) Install(ctx context.Context, version string, onProgress Progre
 	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Binary deployed"})
 
-	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Creating config directory"})
+	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Creating directories"})
 	if err := m.sys.MkdirAll(configDir, filePermUserRWX); err != nil {
-		return m.rollbackInstall(ctx, "bootstrap mkdir", err)
+		return m.rollbackInstall(ctx, "bootstrap mkdir config", err)
+	}
+	if err := m.sys.MkdirAll(stateDir, filePermUserRWX); err != nil {
+		return m.rollbackInstall(ctx, "bootstrap mkdir state", err)
 	}
 	if err := m.sys.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap template", err)

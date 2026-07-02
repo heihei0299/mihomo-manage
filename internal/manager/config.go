@@ -14,6 +14,9 @@ func renderConfig(template, subscription, routingRules string) (string, error) {
 }
 
 func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
+	if err := m.sys.MkdirAll(stateDir, filePermUserRWX); err != nil {
+		return fmt.Errorf("creating state directory: %w", err)
+	}
 	if looksLikeURL(url) {
 		return m.sys.WriteFile(subscriptionURLFile, []byte(url), filePermUserRW)
 	}
