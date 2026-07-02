@@ -115,7 +115,7 @@ jobs:
             echo "license = MIT"
           } > pkg/.PKGINFO
 
-          tar -c --zstd -f "../dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
+          tar -c --zstd -f "dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
             -C pkg .PKGINFO usr/
 
       - uses: actions/upload-artifact@v4
