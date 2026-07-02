@@ -45,6 +45,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=/opt/mihomo/bin/mihomo -d /opt/mihomo/etc
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
@@ -184,6 +185,7 @@ func (m *manager) Uninstall(ctx context.Context, keepBackup bool, onProgress Pro
 		m.sys.Remove(binaryPath + ".bak.")
 		m.sys.Remove(configDir)
 		m.sys.Remove("/opt/mihomo")
+		m.sys.Remove("/opt/mihomo-manager")
 		onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Files removed"})
 	}
 
@@ -211,7 +213,9 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopped"})
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Backing up old binary"})
-	backupPath := binaryPath + ".bak." + version
+	backupDir := "/opt/mihomo-manager/backups"
+	m.sys.MkdirAll(backupDir, filePermUserRWX)
+	backupPath := backupDir + "/mihomo.bak"
 	m.sys.Rename(binaryPath, backupPath)
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Replacing binary"})
