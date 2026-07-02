@@ -1,0 +1,147 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: build
+        run: |
+          go build -ldflags "-X main.version=${{ github.ref_name }}" \
+            -o "dist/mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" \
+            .
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+
+  deb:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mihomo-manager-linux-amd64
+          path: dist/
+
+      - name: build deb
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          mkdir -p pkg/DEBIAN
+          mkdir -p pkg/usr/bin
+          mkdir -p pkg/opt/mihomo-manager
+          mkdir -p pkg/opt/mihomo/etc
+
+          install -m 0755 dist/mihomo-manager-linux-amd64 pkg/usr/bin/mihomo-manager
+
+          cat > pkg/DEBIAN/control <<EOF
+Package: mihomo-manager
+Version: $VERSION
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: mihomo-manager <dev@example.com>
+Description: mihomo (Clash Meta) proxy manager
+ Manages the lifecycle, configuration, and subscription
+ updates of a mihomo proxy instance.
+EOF
+
+          dpkg-deb --build pkg "dist/mihomo-manager_${VERSION}_amd64.deb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-manager-deb
+          path: dist/mihomo-manager_*.deb
+
+  arch:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mihomo-manager-linux-amd64
+          path: dist/
+
+      - name: build arch package
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          mkdir -p pkg/usr/bin
+
+          install -m 0755 dist/mihomo-manager-linux-amd64 pkg/usr/bin/mihomo-manager
+
+          cat > PKGBUILD <<EOF
+# Maintainer: mihomo-manager <dev@example.com>
+pkgname=mihomo-manager
+pkgver=$VERSION
+pkgrel=1
+pkgdesc="mihomo (Clash Meta) proxy manager"
+arch=('x86_64')
+url="https://github.com/${{ github.repository }}"
+license=('MIT')
+source=("mihomo-manager::https://github.com/${{ github.repository }}/releases/download/v\$pkgver/mihomo-manager-linux-amd64")
+sha256sums=('SKIP')
+
+package() {
+  install -Dm0755 "\$srcdir/mihomo-manager" "\$pkgdir/usr/bin/mihomo-manager"
+}
+EOF
+
+          install -dm0755 pkg
+          tar czf "dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.gz" -C pkg .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-manager-arch
+          path: dist/mihomo-manager-*.pkg.tar.gz
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [deb, arch]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts/ -type f -exec cp {} release-assets/ \;
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true

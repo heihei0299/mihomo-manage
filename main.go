@@ -14,6 +14,7 @@ import (
 )
 
 var quiet bool
+var version = "dev"
 
 func quietPrintf(format string, a ...interface{}) {
 	if !quiet {
@@ -75,7 +76,7 @@ func main() {
 	}
 
 	if showVersion {
-		fmt.Println("mihomo-manager v0.1.0")
+		fmt.Printf("mihomo-manager %s\n", version)
 		return
 	}
 	if showHelp {
