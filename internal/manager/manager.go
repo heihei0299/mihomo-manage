@@ -214,6 +214,9 @@ func parseVersion(sys System, binaryPath string) (string, error) {
 }
 
 const (
+	filePermUserRW   = 0644
+	filePermUserRWX  = 0755
+
 	binaryPath           = "/opt/mihomo/bin/mihomo"
 	configDir            = "/opt/mihomo/etc"
 	ConfigTemplatePath   = "/opt/mihomo/etc/config-template.yaml"
@@ -293,18 +296,18 @@ func (m *manager) Install(ctx context.Context, version string, onProgress Progre
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Binary deployed"})
 
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Creating config directory"})
-	if err := m.sys.MkdirAll(configDir, 0755); err != nil {
+	if err := m.sys.MkdirAll(configDir, filePermUserRWX); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap mkdir", err)
 	}
-	if err := m.sys.WriteFile(ConfigTemplatePath, defaultTemplate, 0644); err != nil {
+	if err := m.sys.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap template", err)
 	}
-	if err := m.sys.WriteFile(configYAML, defaultConfig, 0644); err != nil {
+	if err := m.sys.WriteFile(configYAML, defaultConfig, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap config", err)
 	}
 	svcPath := serviceUnitPath()
 	svcContent := serviceUnitContent()
-	if err := m.sys.WriteFile(svcPath, svcContent, 0644); err != nil {
+	if err := m.sys.WriteFile(svcPath, svcContent, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap service unit", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Config files created"})
@@ -387,7 +390,7 @@ func (m *manager) decompressGzip(src, dest string) error {
 		return fmt.Errorf("decompress read: %w", err)
 	}
 	gr.Close()
-	return m.sys.WriteFile(dest, decompressed, 0755)
+	return m.sys.WriteFile(dest, decompressed, filePermUserRWX)
 }
 
 func (m *manager) rollbackInstall(ctx context.Context, phase string, err error) error {
@@ -513,7 +516,7 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 	m.sys.Rename(binaryPath, backupPath)
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Replacing binary"})
-	if err := m.sys.Chmod(tempPath, 0755); err != nil {
+	if err := m.sys.Chmod(tempPath, filePermUserRWX); err != nil {
 		m.restoreBinary(backupPath, tempPath)
 		return fmt.Errorf("chmod failed: %w", err)
 	}
@@ -548,13 +551,13 @@ func (m *manager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
 
 func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
 	if looksLikeURL(url) {
-		return m.sys.WriteFile(subscriptionURLFile, []byte(url), 0644)
+		return m.sys.WriteFile(subscriptionURLFile, []byte(url), filePermUserRW)
 	}
-	return m.sys.WriteFile(subscriptionDataFile, []byte(url), 0644)
+	return m.sys.WriteFile(subscriptionDataFile, []byte(url), filePermUserRW)
 }
 
 func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
-	return m.sys.WriteFile(RoutingRulesPath, []byte(rules), 0644)
+	return m.sys.WriteFile(RoutingRulesPath, []byte(rules), filePermUserRW)
 }
 
 func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
@@ -563,31 +566,16 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	var subData []byte
-	if m.sys.FileExists(subscriptionDataFile) {
-		subData, err = m.sys.ReadFile(subscriptionDataFile)
-		if err != nil {
-			return "", err
-		}
-	}
+	subData, _ := m.sys.ReadFile(subscriptionDataFile)
 
-	var rulesData []byte
-	if m.sys.FileExists(RoutingRulesPath) {
-		rulesData, err = m.sys.ReadFile(RoutingRulesPath)
-		if err != nil {
-			return "", err
-		}
-	}
+	rulesData, _ := m.sys.ReadFile(RoutingRulesPath)
 
 	return RenderConfig(string(tmpl), string(subData), string(rulesData))
 }
 
 func (m *manager) UpdateConfig(ctx context.Context) error {
-	if m.sys.FileExists(subscriptionURLFile) {
-		data, err := m.sys.ReadFile(subscriptionURLFile)
-		if err != nil {
-			return fmt.Errorf("reading subscription URL: %w", err)
-		}
+	data, err := m.sys.ReadFile(subscriptionURLFile)
+	if err == nil {
 		url := strings.TrimSpace(string(data))
 		if url != "" {
 			tmpPath := subscriptionDataFile + ".tmp"
@@ -598,7 +586,7 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			m.sys.WriteFile(subscriptionDataFile, fetched, 0644)
+			m.sys.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
 			m.sys.Remove(tmpPath)
 		}
 	}
@@ -614,12 +602,12 @@ func (m *manager) UpdateConfig(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := m.sys.WriteFile(backupPath, existing, 0644); err != nil {
+		if err := m.sys.WriteFile(backupPath, existing, filePermUserRW); err != nil {
 			return err
 		}
 	}
 
-	if err := m.sys.WriteFile(configYAML, []byte(preview), 0644); err != nil {
+	if err := m.sys.WriteFile(configYAML, []byte(preview), filePermUserRW); err != nil {
 		return err
 	}
 
@@ -643,7 +631,7 @@ func (m *manager) SetSchedule(ctx context.Context, interval time.Duration) error
 	}
 
 	data := fmt.Sprintf("%d", int64(interval.Seconds()))
-	if err := m.sys.WriteFile(scheduleFile, []byte(data), 0644); err != nil {
+	if err := m.sys.WriteFile(scheduleFile, []byte(data), filePermUserRW); err != nil {
 		return err
 	}
 
@@ -675,7 +663,7 @@ func (m *manager) StopSchedule(ctx context.Context) error {
 		m.stopCh = nil
 	}
 	m.mu.Unlock()
-	m.sys.WriteFile(scheduleFile, []byte("off"), 0644)
+	m.sys.WriteFile(scheduleFile, []byte("off"), filePermUserRW)
 	return nil
 }
 

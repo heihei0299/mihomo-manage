@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -50,11 +51,11 @@ func (m *mockSystem) ReadFile(path string) ([]byte, error) {
 		return nil, m.readFileErr
 	}
 	if m.written == nil {
-		return nil, assertError{"not found"}
+		return nil, os.ErrNotExist
 	}
 	data, ok := m.written[path]
 	if !ok {
-		return nil, assertError{"not found"}
+		return nil, os.ErrNotExist
 	}
 	return data, nil
 }
@@ -483,7 +484,10 @@ func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
 
-	m.SetSubscriptionSource(context.Background(), "https://example.com/sub")
+	err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub")
+	if err != nil {
+		t.Fatalf("SetSubscriptionSource failed: %v", err)
+	}
 
 	if _, wroteData := sys.written[subscriptionDataFile]; wroteData {
 		t.Error("SetSubscriptionSource should not write to subscriptionDataFile — it's dead code, only subscriptionURLFile should be written")
