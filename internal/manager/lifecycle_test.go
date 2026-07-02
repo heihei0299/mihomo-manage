@@ -52,14 +52,14 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 func TestLifecycleSubscriptionUpdate(t *testing.T) {
 	sys := &mockSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:                           true,
-			subscriptionDataFile:                     true,
-			configYAML:                               true,
+			ConfigTemplatePath:  true,
+			subscriptionURLFile: true,
+			configYAML:          true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath:       []byte(`proxies: {{subscription}}`),
-			subscriptionDataFile: []byte(`https://example.com/sub`),
-			configYAML:           []byte(`old config`),
+			ConfigTemplatePath:  []byte(`proxies: {{subscription}}`),
+			subscriptionURLFile: []byte(`https://example.com/sub`),
+			configYAML:          []byte(`old config`),
 		},
 		downloadErr: nil,
 	}

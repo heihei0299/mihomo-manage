@@ -110,7 +110,7 @@ func fetchVersionsCmd(mgr manager.Manager) tea.Cmd {
 	}
 }
 
-func execActionCmd(mgr manager.Manager, a action, progressCh chan<- progressMsg, version string) tea.Cmd {
+func execActionCmd(mgr manager.Manager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		ctx := context.Background()
@@ -136,7 +136,7 @@ func execActionCmd(mgr manager.Manager, a action, progressCh chan<- progressMsg,
 				}
 			})
 		case actUninstall:
-			err = mgr.Uninstall(ctx, false, func(e manager.ProgressEvent) {
+			err = mgr.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
@@ -315,7 +315,7 @@ func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
 	ch := make(chan progressMsg, 20)
 	return m, tea.Batch(
 		progressReaderCmd(ch),
-		execActionCmd(m.mgr, a, ch, version),
+		execActionCmd(m.mgr, a, ch, version, m.keepBackup),
 	)
 }
 
@@ -439,17 +439,21 @@ func (m model) statusView() string {
 	if !s.Installed {
 		actions = "\ni) Install"
 	} else {
-		if isActionAllowed(s, actStart) {
-			actions += "\n1) Start"
+		actions += "\n1) Start"
+		if !isActionAllowed(s, actStart) {
+			actions += "  (already running)"
 		}
-		if isActionAllowed(s, actStop) {
-			actions += "\n2) Stop"
+		actions += "\n2) Stop"
+		if !isActionAllowed(s, actStop) {
+			actions += "  (not running)"
 		}
-		if isActionAllowed(s, actRestart) {
-			actions += "\n3) Restart"
+		actions += "\n3) Restart"
+		if !isActionAllowed(s, actRestart) {
+			actions += "  (not running)"
 		}
-		if isActionAllowed(s, actReload) {
-			actions += "\n4) Reload"
+		actions += "\n4) Reload"
+		if !isActionAllowed(s, actReload) {
+			actions += "  (not running)"
 		}
 		actions += "\n5) Upgrade"
 		actions += "\nu) Uninstall"

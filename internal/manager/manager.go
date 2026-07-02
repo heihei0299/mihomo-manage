@@ -222,6 +222,7 @@ const (
 	defaultServiceUnitPath = "/etc/systemd/system/mihomo.service"
 	stateDir             = "/opt/mihomo-manager/state"
 	subscriptionDataFile = "/opt/mihomo-manager/state/subscription-data.txt"
+	subscriptionURLFile  = "/opt/mihomo-manager/state/subscription-url.txt"
 	RoutingRulesPath     = "/opt/mihomo/etc/rules.txt"
 	scheduleFile         = "/opt/mihomo-manager/state/schedule.txt"
 )
@@ -524,7 +525,9 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Starting mihomo"})
 	if err := m.svcMgr.Start(serviceName); err != nil {
-		m.restoreBinary(backupPath, "")
+		if rbErr := m.restoreBinary(backupPath, ""); rbErr != nil {
+			return fmt.Errorf("start failed, rollback also failed: %v (original: %w)", rbErr, err)
+		}
 		return fmt.Errorf("start failed, rolled back: %w", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + version})
@@ -532,11 +535,11 @@ func (m *manager) Upgrade(ctx context.Context, version string, onProgress Progre
 	return nil
 }
 
-func (m *manager) restoreBinary(backupPath, tempPath string) {
+func (m *manager) restoreBinary(backupPath, tempPath string) error {
 	m.sys.Remove(binaryPath)
 	m.sys.Rename(backupPath, binaryPath)
 	m.sys.Remove(tempPath)
-	m.svcMgr.Start(serviceName)
+	return m.svcMgr.Start(serviceName)
 }
 
 func (m *manager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
@@ -544,6 +547,9 @@ func (m *manager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
 }
 
 func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
+	if looksLikeURL(url) {
+		m.sys.WriteFile(subscriptionURLFile, []byte(url), 0644)
+	}
 	return m.sys.WriteFile(subscriptionDataFile, []byte(url), 0644)
 }
 
@@ -577,12 +583,12 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 }
 
 func (m *manager) UpdateConfig(ctx context.Context) error {
-	if m.sys.FileExists(subscriptionDataFile) {
-		data, _ := m.sys.ReadFile(subscriptionDataFile)
-		src := strings.TrimSpace(string(data))
-		if looksLikeURL(src) {
+	if m.sys.FileExists(subscriptionURLFile) {
+		data, _ := m.sys.ReadFile(subscriptionURLFile)
+		url := strings.TrimSpace(string(data))
+		if url != "" {
 			tmpPath := subscriptionDataFile + ".tmp"
-			if err := m.sys.Download(ctx, src, tmpPath); err != nil {
+			if err := m.sys.Download(ctx, url, tmpPath); err != nil {
 				return fmt.Errorf("fetching subscription: %w", err)
 			}
 			fetched, err := m.sys.ReadFile(tmpPath)

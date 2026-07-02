@@ -457,12 +457,12 @@ func TestRenderConfigNoPlaceholders(t *testing.T) {
 func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	sys := &mockSystem{
 		fileExists: map[string]bool{
-			"/opt/mihomo/etc/config-template.yaml":             true,
-			"/opt/mihomo-manager/state/subscription-data.txt":  true,
+			ConfigTemplatePath:                         true,
+			"/opt/mihomo-manager/state/subscription-url.txt": true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte(`proxies: {{subscription}}`),
-			"/opt/mihomo-manager/state/subscription-data.txt": []byte(`https://example.com/sub`),
+			ConfigTemplatePath: []byte(`proxies: {{subscription}}`),
+			"/opt/mihomo-manager/state/subscription-url.txt": []byte(`https://example.com/sub`),
 		},
 	}
 	svc := &mockServiceManager{}
