@@ -33,77 +33,93 @@ func main() {
 	mgr := manager.New(sys, svc)
 
 	args := make([]string, 0, len(os.Args)-1)
+	showHelp := false
+	showVersion := false
 	for _, a := range os.Args[1:] {
-		if a == "--quiet" || a == "-q" {
+		switch a {
+		case "--quiet", "-q":
 			quiet = true
-		} else {
+		case "--help", "-h":
+			showHelp = true
+		case "--version", "-v":
+			showVersion = true
+		default:
 			args = append(args, a)
 		}
 	}
 
-	if len(args) > 0 {
-		switch args[0] {
-		case "status":
-			cliStatus(mgr)
-			return
-		case "install":
-			version := "latest"
-			if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-				version = args[1]
-			}
-			cliInstall(mgr, version)
-			return
-		case "template":
-			cliEditFile(mgr, manager.ConfigTemplatePath, args[1:])
-			return
-		case "rules":
-			cliEditFile(mgr, manager.RoutingRulesPath, args[1:])
-			return
-		case "config":
-			cliConfig(mgr, args[1:])
-			return
-		case "subscription":
-			cliSubscription(mgr, args[1:])
-			return
-		case "start":
-			cliSimpleOp(mgr.Start, "started")
-			return
-		case "stop":
-			cliSimpleOp(mgr.Stop, "stopped")
-			return
-		case "restart":
-			cliSimpleOp(mgr.Restart, "restarted")
-			return
-		case "reload":
-			cliSimpleOp(mgr.Reload, "reloaded")
-			return
-		case "uninstall":
-			keepBackup := false
-			for _, a := range args[1:] {
-				if a == "--keep-backup" {
-					keepBackup = true
-				}
-			}
-			cliUninstall(mgr, keepBackup)
-			return
-		case "upgrade":
-			version := "latest"
-			if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-				version = args[1]
-			}
-			cliUpgrade(mgr, version)
-			return
-		case "logs":
-			cliLogs(args[1:])
-			return
-		case "versions":
-			cliVersions(mgr)
-			return
+	if showVersion {
+		fmt.Println("mihomo-manager v0.1.0")
+		return
+	}
+	if showHelp {
+		printUsage()
+		return
+	}
+	if len(args) == 0 {
+		if err := startTUI(mgr); err != nil {
+			log.Fatal(err)
 		}
+		return
 	}
 
-	if err := startTUI(mgr); err != nil {
-		log.Fatal(err)
+	switch args[0] {
+	case "status":
+		cliStatus(mgr)
+		return
+	case "install":
+		version := "latest"
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			version = args[1]
+		}
+		cliInstall(mgr, version)
+		return
+	case "template":
+		cliEditFile(mgr, manager.ConfigTemplatePath, args[1:])
+		return
+	case "rules":
+		cliEditFile(mgr, manager.RoutingRulesPath, args[1:])
+		return
+	case "config":
+		cliConfig(mgr, args[1:])
+		return
+	case "subscription":
+		cliSubscription(mgr, args[1:])
+		return
+	case "start":
+		cliSimpleOp(mgr.Start, "started")
+		return
+	case "stop":
+		cliSimpleOp(mgr.Stop, "stopped")
+		return
+	case "restart":
+		cliSimpleOp(mgr.Restart, "restarted")
+		return
+	case "reload":
+		cliSimpleOp(mgr.Reload, "reloaded")
+		return
+	case "uninstall":
+		keepBackup := false
+		for _, a := range args[1:] {
+			if a == "--keep-backup" {
+				keepBackup = true
+			}
+		}
+		cliUninstall(mgr, keepBackup)
+		return
+	case "upgrade":
+		version := "latest"
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			version = args[1]
+		}
+		cliUpgrade(mgr, version)
+		return
+	case "logs":
+		cliLogs(args[1:])
+		return
+	case "versions":
+		cliVersions(mgr)
+		return
 	}
 }
 
@@ -333,6 +349,37 @@ func cliEditFile(mgr manager.Manager, path string, args []string) {
 }
 
 type simpleOp func(context.Context) error
+
+func printUsage() {
+	fmt.Println(`Usage: mihomo-manager [--quiet] <command> [args]
+
+Commands:
+  install [version]        Install mihomo (default: latest)
+  uninstall [--keep-backup] Remove mihomo
+  start                    Start mihomo
+  stop                     Stop mihomo
+  restart                  Restart mihomo
+  reload                   Reload config
+  status                   Show mihomo status
+  upgrade [version]        Upgrade mihomo (default: latest)
+  versions                 List available versions
+
+  config preview           Preview generated config
+  template edit            Edit config template ($EDITOR)
+  rules edit               Edit routing rules ($EDITOR)
+
+  subscription set <data>  Set subscription source
+  subscription update      Refresh and apply subscription
+  subscription schedule    View/configure auto-refresh
+
+  logs [--tail=N] [--follow] View mihomo logs
+
+  --help, -h               Show this help
+  --version, -v            Show version
+  --quiet, -q              Suppress non-error output
+
+Run without arguments to start the TUI.`)
+}
 
 func cliSimpleOp(op simpleOp, verb string) {
 	if err := op(context.Background()); err != nil {

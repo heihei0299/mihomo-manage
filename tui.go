@@ -463,10 +463,10 @@ func (m model) statusView() string {
 	}
 
 	return fmt.Sprintf(
-		"┌───────────────────┐\n"+
+		"┌────────────────────────┐\n"+
 			"│ mihomo: %-12s │\n"+
-			"│ version: %-10s │\n"+
-			"└───────────────────┘%s%s\n\n"+
+			"│ version: %-12s │\n"+
+			"└────────────────────────┘%s%s\n\n"+
 			"r) Refresh    q) Quit",
 		stateStr, version, actions, result,
 	)
