@@ -22,6 +22,7 @@ type mockSystem struct {
 	versionsErr    error
 	removed        []string
 	renamed        map[string]string
+	readFileErr    error
 }
 
 func (m *mockSystem) Download(ctx context.Context, url, dest string) error {
@@ -45,6 +46,9 @@ func (m *mockSystem) FileExists(path string) bool {
 }
 
 func (m *mockSystem) ReadFile(path string) ([]byte, error) {
+	if m.readFileErr != nil {
+		return nil, m.readFileErr
+	}
 	if m.written == nil {
 		return nil, assertError{"not found"}
 	}
@@ -451,6 +455,41 @@ func TestRenderConfigNoPlaceholders(t *testing.T) {
 	}
 	if got != tmpl {
 		t.Errorf("expected template unchanged, got %q", got)
+	}
+}
+
+func TestUpdateConfigReadURLError(t *testing.T) {
+	sys := &mockSystem{
+		fileExists: map[string]bool{
+			ConfigTemplatePath: true,
+			subscriptionURLFile: true,
+		},
+		written: map[string][]byte{
+			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+		},
+		readFileErr: assertError{"permission denied"},
+	}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	err := m.UpdateConfig(context.Background())
+	if err == nil {
+		t.Error("expected error when ReadFile fails on subscriptionURLFile")
+	}
+}
+
+func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
+	sys := &mockSystem{}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	m.SetSubscriptionSource(context.Background(), "https://example.com/sub")
+
+	if _, wroteData := sys.written[subscriptionDataFile]; wroteData {
+		t.Error("SetSubscriptionSource should not write to subscriptionDataFile — it's dead code, only subscriptionURLFile should be written")
+	}
+	if _, wroteURL := sys.written[subscriptionURLFile]; !wroteURL {
+		t.Error("SetSubscriptionSource should write to subscriptionURLFile")
 	}
 }
 

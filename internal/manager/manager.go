@@ -548,7 +548,7 @@ func (m *manager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
 
 func (m *manager) SetSubscriptionSource(ctx context.Context, url string) error {
 	if looksLikeURL(url) {
-		m.sys.WriteFile(subscriptionURLFile, []byte(url), 0644)
+		return m.sys.WriteFile(subscriptionURLFile, []byte(url), 0644)
 	}
 	return m.sys.WriteFile(subscriptionDataFile, []byte(url), 0644)
 }
@@ -584,7 +584,10 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 
 func (m *manager) UpdateConfig(ctx context.Context) error {
 	if m.sys.FileExists(subscriptionURLFile) {
-		data, _ := m.sys.ReadFile(subscriptionURLFile)
+		data, err := m.sys.ReadFile(subscriptionURLFile)
+		if err != nil {
+			return fmt.Errorf("reading subscription URL: %w", err)
+		}
 		url := strings.TrimSpace(string(data))
 		if url != "" {
 			tmpPath := subscriptionDataFile + ".tmp"
