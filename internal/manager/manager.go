@@ -582,7 +582,11 @@ func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
 
 func (m *manager) UpdateConfig(ctx context.Context) error {
 	data, err := m.sys.ReadFile(subscriptionURLFile)
-	if err == nil {
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("reading subscription URL: %w", err)
+		}
+	} else {
 		url := strings.TrimSpace(string(data))
 		if url != "" {
 			tmpPath := subscriptionDataFile + ".tmp"

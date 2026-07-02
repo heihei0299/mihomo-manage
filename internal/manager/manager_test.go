@@ -23,7 +23,7 @@ type mockSystem struct {
 	versionsErr    error
 	removed        []string
 	renamed        map[string]string
-	readFileErr    error
+	readFileErr    map[string]error
 }
 
 func (m *mockSystem) Download(ctx context.Context, url, dest string) error {
@@ -48,7 +48,9 @@ func (m *mockSystem) FileExists(path string) bool {
 
 func (m *mockSystem) ReadFile(path string) ([]byte, error) {
 	if m.readFileErr != nil {
-		return nil, m.readFileErr
+		if err, ok := m.readFileErr[path]; ok {
+			return nil, err
+		}
 	}
 	if m.written == nil {
 		return nil, os.ErrNotExist
@@ -468,7 +470,7 @@ func TestUpdateConfigReadURLError(t *testing.T) {
 		written: map[string][]byte{
 			ConfigTemplatePath: []byte(`test: {{subscription}}`),
 		},
-		readFileErr: assertError{"permission denied"},
+		readFileErr: map[string]error{subscriptionURLFile: assertError{"permission denied"}},
 	}
 	svc := &mockServiceManager{}
 	m := New(sys, svc)
@@ -516,6 +518,94 @@ func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	if !sys.downloadCalled {
 		t.Error("BUG 2: subscription set with URL should trigger Download but it was never called — URL literal is substituted verbatim")
 	}
+}
+
+func TestPreviewConfigSubscriptionReadError(t *testing.T) {
+	sys := &mockSystem{
+		written: map[string][]byte{
+			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+		},
+		readFileErr: map[string]error{subscriptionDataFile: assertError{"permission denied"}},
+	}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	_, err := m.PreviewConfig(context.Background())
+	if err == nil {
+		t.Error("expected error when ReadFile fails on subscriptionDataFile with non-ErrNotExist error")
+	}
+}
+
+func TestPreviewConfigRulesReadError(t *testing.T) {
+	sys := &mockSystem{
+		fileExists: map[string]bool{
+			ConfigTemplatePath: true,
+		},
+		written: map[string][]byte{
+			ConfigTemplatePath: []byte(`test`),
+		},
+		readFileErr: map[string]error{RoutingRulesPath: assertError{"permission denied"}},
+	}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	_, err := m.PreviewConfig(context.Background())
+	if err == nil {
+		t.Error("expected error when ReadFile fails on RoutingRulesPath with non-ErrNotExist error")
+	}
+}
+
+func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
+	sys := &mockSystem{
+		written: map[string][]byte{
+			ConfigTemplatePath: []byte(`proxies: {{subscription}}`),
+		},
+	}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	result, err := m.PreviewConfig(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "proxies: " {
+		t.Errorf("expected empty subscription data, got %q", result)
+	}
+}
+
+func TestUpdateConfigEmptyURL(t *testing.T) {
+	sys := &mockSystem{
+		written: map[string][]byte{
+			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+			subscriptionURLFile: []byte(``),
+		},
+	}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	err := m.UpdateConfig(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateConfigNoExistingConfig(t *testing.T) {
+	sys := &mockSystem{
+		fileExists: map[string]bool{
+			ConfigTemplatePath: true,
+		},
+		written: map[string][]byte{
+			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+		},
+	}
+	svc := &mockServiceManager{}
+	m := New(sys, svc)
+
+	err := m.UpdateConfig(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should succeed without creating a backup (no existing configYAML)
 }
 
 func TestUpdateConfigHappyPath(t *testing.T) {
