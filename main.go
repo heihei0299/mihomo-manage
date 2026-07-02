@@ -388,33 +388,61 @@ func cliEditFile(mgr manager.Manager, path string, args []string) {
 type commandFunc func(context.Context) error
 
 func printUsage() {
-	fmt.Println(`Usage: mihomo-manager [--quiet] <command> [args]
-
-Commands:
-  install [version]        Install mihomo (default: latest)    (alias: i)
-  uninstall [--keep-backup] Remove mihomo                     (alias: ui)
-  upgrade [version]        Upgrade mihomo (default: latest)    (alias: ug)
-  versions                 List available versions             (alias: v)
-
-  start                    Start mihomo
-  stop                     Stop mihomo
-  restart                  Restart mihomo
-  reload                   Reload config
-  status                   Show mihomo status
-
-  config preview           Preview generated config            (alias: -c)
-  template edit            Edit config template ($EDITOR)
-  rules edit               Edit routing rules ($EDITOR)
-
-  subscription set <data>  Set subscription source             (alias: -s)
-  subscription update      Refresh and apply subscription      (alias: -u)
-  subscription schedule    View/configure auto-refresh         (alias: -t)
-
-  logs [--tail=N] [--follow] View mihomo logs
-
-  --help, -h               Show this help
-  --version, -v            Show version
-  --quiet, -q              Suppress non-error output
+	fmt.Println(`Usage of mihomo-manager:
+  -c
+    	Preview generated config (alias: config preview)
+  -h, --help
+    	Show this help
+  -q, --quiet
+    	Suppress non-error output
+  -s string
+    	Set subscription source (alias: subscription set)
+  -t [--interval duration|--off]
+    	View/configure auto-refresh (alias: subscription schedule)
+  -u
+    	Refresh and apply subscription (alias: subscription update)
+  -v, --version
+    	Show version
+  config preview
+    	Preview generated config
+  i [version]
+    	Install mihomo (alias: install, default: latest)
+  install [version]
+    	Install mihomo (default: latest)
+  logs [--tail=N] [--follow]
+    	View mihomo logs
+  reload
+    	Reload config
+  restart
+    	Restart mihomo
+  rules edit
+    	Edit routing rules ($EDITOR)
+  start
+    	Start mihomo
+  status
+    	Show mihomo status
+  stop
+    	Stop mihomo
+  subscription schedule [--interval duration|--off]
+    	View/configure auto-refresh
+  subscription set string
+    	Set subscription source
+  subscription update
+    	Refresh and apply subscription
+  template edit
+    	Edit config template ($EDITOR)
+  ug [version]
+    	Upgrade mihomo (alias: upgrade, default: latest)
+  ui [--keep-backup]
+    	Uninstall mihomo (alias: uninstall)
+  uninstall [--keep-backup]
+    	Remove mihomo
+  upgrade [version]
+    	Upgrade mihomo (default: latest)
+  v
+    	List available versions (alias: versions)
+  versions
+    	List available versions
 
 Run without arguments to start the TUI.`)
 }
