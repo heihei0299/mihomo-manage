@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"fmt"
 	"runtime"
 	"strings"
@@ -14,6 +15,9 @@ type osStrategy interface {
 	stop(name string) error
 	restart(name string) error
 	reload(name string) error
+	isEnabled(name string) (bool, error)
+	enableAutoStart(name, serviceFilePath string) error
+	disableAutoStart(name string) error
 }
 
 type linuxSystemctl struct{ cmd CommandRunner }
@@ -29,9 +33,6 @@ func (l linuxSystemctl) isActive(name string) (bool, error) {
 func (l linuxSystemctl) enable(name, _ string) error {
 	if _, err := l.cmd.RunCommand("systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
-	}
-	if _, err := l.cmd.RunCommand("systemctl", "enable", name); err != nil {
-		return fmt.Errorf("systemctl enable %s: %w", name, err)
 	}
 	return nil
 }
@@ -71,7 +72,32 @@ func (l linuxSystemctl) reload(name string) error {
 	return nil
 }
 
-type darwinLaunchctl struct{ cmd CommandRunner }
+func (l linuxSystemctl) isEnabled(name string) (bool, error) {
+	out, err := l.cmd.RunCommandIgnoreExit("systemctl", "is-enabled", name)
+	if err != nil {
+		return false, nil
+	}
+	return strings.TrimSpace(out) == "enabled", nil
+}
+
+func (l linuxSystemctl) enableAutoStart(name, _ string) error {
+	if _, err := l.cmd.RunCommand("systemctl", "enable", name); err != nil {
+		return fmt.Errorf("systemctl enable %s: %w", name, err)
+	}
+	return nil
+}
+
+func (l linuxSystemctl) disableAutoStart(name string) error {
+	if _, err := l.cmd.RunCommand("systemctl", "disable", name); err != nil {
+		return fmt.Errorf("systemctl disable %s: %w", name, err)
+	}
+	return nil
+}
+
+type darwinLaunchctl struct {
+	cmd CommandRunner
+	fs  FileSystem
+}
 
 func (d darwinLaunchctl) isActive(name string) (bool, error) {
 	out, err := d.cmd.RunCommand("launchctl", "list", name)
@@ -117,12 +143,78 @@ func (d darwinLaunchctl) reload(name string) error {
 	return err
 }
 
-func strategyFor(cmd CommandRunner, os string) osStrategy {
+func (d darwinLaunchctl) isEnabled(name string) (bool, error) {
+	path := fmt.Sprintf("/Library/LaunchAgents/%s.plist", name)
+	data, err := d.fs.ReadFile(path)
+	if err != nil {
+		return false, nil
+	}
+	return bytes.Contains(data, []byte("<key>RunAtLoad</key>")), nil
+}
+
+func (d darwinLaunchctl) enableAutoStart(name, serviceFilePath string) error {
+	data, err := d.fs.ReadFile(serviceFilePath)
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(data, []byte("<key>RunAtLoad</key>")) {
+		return nil
+	}
+	// Insert RunAtLoad and KeepAlive before </dict>
+	insert := []byte("\t<key>KeepAlive</key>\n\t<true/>\n\t<key>RunAtLoad</key>\n\t<true/>\n")
+	data = bytes.ReplaceAll(data, []byte("</dict>"), append(insert, []byte("</dict>")...))
+	if err := d.fs.WriteFile(serviceFilePath, data, 0644); err != nil {
+		return err
+	}
+	if _, err := d.cmd.RunCommand("launchctl", "unload", serviceFilePath); err != nil {
+		return err
+	}
+	_, err = d.cmd.RunCommand("launchctl", "load", serviceFilePath)
+	return err
+}
+
+func (d darwinLaunchctl) disableAutoStart(name string) error {
+	path := fmt.Sprintf("/Library/LaunchAgents/%s.plist", name)
+	data, err := d.fs.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if !bytes.Contains(data, []byte("<key>RunAtLoad</key>")) {
+		return nil
+	}
+	// Remove KeepAlive and RunAtLoad lines
+	lines := strings.Split(string(data), "\n")
+	var out []string
+	skip := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "<key>KeepAlive</key>" || trimmed == "<key>RunAtLoad</key>" {
+			skip = true
+			continue
+		}
+		if skip {
+			skip = false
+			continue
+		}
+		out = append(out, line)
+	}
+	data = []byte(strings.Join(out, "\n"))
+	if err := d.fs.WriteFile(path, data, 0644); err != nil {
+		return err
+	}
+	if _, err := d.cmd.RunCommand("launchctl", "unload", path); err != nil {
+		return err
+	}
+	_, err = d.cmd.RunCommand("launchctl", "load", path)
+	return err
+}
+
+func strategyFor(cmd CommandRunner, fs FileSystem, os string) osStrategy {
 	switch os {
 	case "linux":
 		return linuxSystemctl{cmd: cmd}
 	case "darwin":
-		return darwinLaunchctl{cmd: cmd}
+		return darwinLaunchctl{cmd: cmd, fs: fs}
 	default:
 		return nil
 	}
@@ -136,7 +228,7 @@ func (s *OSServiceManager) goos() string {
 }
 
 func (s *OSServiceManager) strategy() (osStrategy, error) {
-	strat := strategyFor(s.cmd, s.goos())
+	strat := strategyFor(s.cmd, s.fs, s.goos())
 	if strat == nil {
 		return nil, errUnsupportedOS{s.goos()}
 	}
@@ -149,11 +241,28 @@ func (e errUnsupportedOS) Error() string { return fmt.Sprintf("unsupported OS: %
 
 type OSServiceManager struct {
 	cmd    CommandRunner
+	fs     FileSystem
 	osType string
 }
 
-func NewOSServiceManager(cmd CommandRunner) *OSServiceManager {
-	return &OSServiceManager{cmd: cmd}
+func NewOSServiceManager(cmd CommandRunner, fs FileSystem) *OSServiceManager {
+	return &OSServiceManager{cmd: cmd, fs: fs}
+}
+
+func (s *OSServiceManager) EnableAutoStart(name, serviceFilePath string) error {
+	return s.withStrategy(func(strat osStrategy) error { return strat.enableAutoStart(name, serviceFilePath) })
+}
+
+func (s *OSServiceManager) DisableAutoStart(name string) error {
+	return s.withStrategy(func(strat osStrategy) error { return strat.disableAutoStart(name) })
+}
+
+func (s *OSServiceManager) AutoStartEnabled(name string) (bool, error) {
+	strat, err := s.strategy()
+	if err != nil {
+		return false, err
+	}
+	return strat.isEnabled(name)
 }
 
 func (s *OSServiceManager) withStrategy(f func(osStrategy) error) error {

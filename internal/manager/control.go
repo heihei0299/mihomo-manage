@@ -24,12 +24,25 @@ func (m *manager) Status(ctx context.Context) (*Status, error) {
 	}
 
 	version, _ := parseVersion(m.cmd, binaryPath)
+	autostart, _ := m.svcMgr.AutoStartEnabled(serviceName)
 
 	return &Status{
-		Installed:     true,
-		InstanceState: state,
-		Version:       version,
+		Installed:        true,
+		InstanceState:     state,
+		Version:          version,
+		AutoStartEnabled: autostart,
 	}, nil
+}
+
+func (m *manager) SetAutoStart(ctx context.Context, enabled bool) error {
+	if !m.fs.FileExists(binaryPath) {
+		return fmt.Errorf("mihomo is not installed")
+	}
+	svcPath := serviceUnitPath()
+	if enabled {
+		return m.svcMgr.EnableAutoStart(serviceName, svcPath)
+	}
+	return m.svcMgr.DisableAutoStart(serviceName)
 }
 
 func (m *manager) Start(ctx context.Context) error {

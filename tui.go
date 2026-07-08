@@ -38,6 +38,8 @@ const (
 	actInstall
 	actUpgrade
 	actUninstall
+	actAutostartOn
+	actAutostartOff
 )
 
 type actionDef struct {
@@ -57,7 +59,9 @@ var actionRegistry = map[action]actionDef{
 }
 
 type model struct {
-	mgr            manager.Manager
+	control        manager.ServiceControl
+	lifecycle      manager.LifecycleManager
+	config         manager.ConfigManager
 	status         *manager.Status
 	statusErr      error
 	ready          bool
@@ -102,61 +106,65 @@ type configPreviewMsg struct {
 }
 
 func (m model) Init() tea.Cmd {
-	return fetchStatusCmd(m.mgr)
+	return fetchStatusCmd(m.control)
 }
 
-func fetchStatusCmd(mgr manager.Manager) tea.Cmd {
+func fetchStatusCmd(ctrl manager.ServiceControl) tea.Cmd {
 	return func() tea.Msg {
-		s, err := mgr.Status(context.Background())
+		s, err := ctrl.Status(context.Background())
 		return statusMsg{status: s, err: err}
 	}
 }
 
-func fetchConfigPreview(mgr manager.Manager) tea.Cmd {
+func fetchConfigPreview(cfg manager.ConfigManager) tea.Cmd {
 	return func() tea.Msg {
-		s, err := mgr.PreviewConfig(context.Background())
+		s, err := cfg.PreviewConfig(context.Background())
 		return configPreviewMsg{content: s, err: err}
 	}
 }
 
-func fetchVersionsCmd(mgr manager.Manager) tea.Cmd {
+func fetchVersionsCmd(lifecycle manager.LifecycleManager) tea.Cmd {
 	return func() tea.Msg {
-		v, err := mgr.ListVersions(context.Background())
+		v, err := lifecycle.ListVersions(context.Background())
 		return versionsMsg{versions: v, err: err}
 	}
 }
 
-func execActionCmd(mgr manager.Manager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
+func execActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		ctx := context.Background()
 		switch a {
 		case actStart:
-			err = mgr.Start(ctx)
+			err = ctrl.Start(ctx)
 		case actStop:
-			err = mgr.Stop(ctx)
+			err = ctrl.Stop(ctx)
 		case actRestart:
-			err = mgr.Restart(ctx)
+			err = ctrl.Restart(ctx)
 		case actReload:
-			err = mgr.Reload(ctx)
+			err = ctrl.Reload(ctx)
 		case actInstall:
-			err = mgr.Install(ctx, version, func(e manager.ProgressEvent) {
+			err = lifecycle.Install(ctx, version, true, func(e manager.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
 			})
 		case actUpgrade:
-			err = mgr.Upgrade(ctx, version, func(e manager.ProgressEvent) {
+			err = lifecycle.Upgrade(ctx, version, func(e manager.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
 			})
 		case actUninstall:
-			err = mgr.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
+			err = lifecycle.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
 			})
+		case actAutostartOn:
+			err = ctrl.SetAutoStart(ctx, true)
+		case actAutostartOff:
+			err = ctrl.SetAutoStart(ctx, false)
 		}
 		if progressCh != nil {
 			close(progressCh)
@@ -189,10 +197,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeConfig
 				m.configTab = configTabSubscription
 				m.previewContent = ""
-				return m, fetchConfigPreview(m.mgr)
-			}
-		case "r":
-			return m, fetchStatusCmd(m.mgr)
+			return m, fetchConfigPreview(m.config)
+		}
+	case "r":
+			return m, fetchStatusCmd(m.control)
 		case "1":
 			if isActionAllowed(m.status, actStart) {
 				return m.startAction(actStart, "latest")
@@ -214,11 +222,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeChooseVersion
 				m.versions = nil
 				m.selectedIdx = 0
-				return m, fetchVersionsCmd(m.mgr)
+				return m, fetchVersionsCmd(m.lifecycle)
 			}
 		case "i":
 			if !isInstalled(m.status) {
 				return m.startAction(actInstall, "latest")
+			}
+		case "a":
+			if isInstalled(m.status) {
+				if m.status.AutoStartEnabled {
+					return m.startAction(actAutostartOff, "")
+				}
+				return m.startAction(actAutostartOn, "")
 			}
 		case "u":
 			if isInstalled(m.status) {
@@ -264,7 +279,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.execResult = "success"
 			m.actionErr = nil
 		}
-		return m, fetchStatusCmd(m.mgr)
+		return m, fetchStatusCmd(m.control)
 	}
 	return m, nil
 }
@@ -320,7 +335,7 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.configTab = (m.configTab - 1 + 4) % 4
 		return m, nil
 	case "r":
-		return m, fetchConfigPreview(m.mgr)
+		return m, fetchConfigPreview(m.config)
 	}
 	return m, nil
 }
@@ -331,7 +346,7 @@ func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
 	ch := make(chan progressMsg, 20)
 	return m, tea.Batch(
 		progressReaderCmd(ch),
-		execActionCmd(m.mgr, a, ch, version, m.keepBackup),
+		execActionCmd(m.control, m.lifecycle, a, ch, version, m.keepBackup),
 	)
 }
 
@@ -403,6 +418,10 @@ func (m model) executingView() string {
 		label = "upgrading..."
 	case actUninstall:
 		label = "uninstalling..."
+	case actAutostartOn:
+		label = "enabling autostart..."
+	case actAutostartOff:
+		label = "disabling autostart..."
 	}
 	phase := ""
 	if m.phaseMsg != "" {
@@ -444,6 +463,11 @@ func (m model) statusView() string {
 		version = "unknown"
 	}
 
+	autostart := "off"
+	if s.AutoStartEnabled {
+		autostart = "on"
+	}
+
 	var actions string
 	if !s.Installed {
 		actions = "\ni) Install"
@@ -465,6 +489,7 @@ func (m model) statusView() string {
 			actions += "  (not running)"
 		}
 		actions += "\n5) Upgrade"
+		actions += "\na) Autostart: " + autostart + "  (toggle)"
 		actions += "\nu) Uninstall"
 	}
 
@@ -476,12 +501,13 @@ func (m model) statusView() string {
 	}
 
 	return fmt.Sprintf(
-		"┌────────────────────────┐\n"+
-			"│ mihomo: %-12s │\n"+
-			"│ version: %-12s │\n"+
-			"└────────────────────────┘%s%s\n\n"+
+		"┌────────────────────────────┐\n"+
+			"│ mihomo: %-18s │\n"+
+			"│ version: %-18s │\n"+
+			"│ autostart: %-15s │\n"+
+			"└────────────────────────────┘%s%s\n\n"+
 			"r) Refresh    q) Quit",
-		stateStr, version, actions, result,
+		stateStr, version, autostart, actions, result,
 	)
 }
 
@@ -525,8 +551,8 @@ func (m model) configView() string {
 	return tabLine + content + "\n\nTab/← → switch tab  r) refresh preview  q) back"
 }
 
-func startTUI(mgr manager.Manager) error {
-	p := tea.NewProgram(model{mgr: mgr})
+func startTUI(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager) error {
+	p := tea.NewProgram(model{control: ctrl, lifecycle: lifecycle, config: cfg})
 	_, err := p.Run()
 	return err
 }

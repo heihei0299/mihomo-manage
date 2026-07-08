@@ -147,16 +147,17 @@ func (m *fakeGitHubReleases) LatestVersion(ctx context.Context, owner, repo stri
 }
 
 type mockServiceManager struct {
-	running      bool
-	stopped      bool
-	err          error
-	registerErr  error
-	startErr     error
-	stopErr      error
-	restartErr   error
-	reloadErr    error
-	registered   string
-	reloadCalled bool
+	running          bool
+	stopped          bool
+	err              error
+	registerErr      error
+	startErr         error
+	stopErr          error
+	restartErr       error
+	reloadErr        error
+	registered       string
+	reloadCalled     bool
+	autoStartEnabled bool
 }
 
 func (m *mockServiceManager) IsRunning(name string) (bool, error) {
@@ -207,12 +208,26 @@ func (m *mockServiceManager) Reload(name string) error {
 	return nil
 }
 
+func (m *mockServiceManager) EnableAutoStart(name, serviceFilePath string) error {
+	m.autoStartEnabled = true
+	return nil
+}
+
+func (m *mockServiceManager) DisableAutoStart(name string) error {
+	m.autoStartEnabled = false
+	return nil
+}
+
+func (m *mockServiceManager) AutoStartEnabled(name string) (bool, error) {
+	return m.autoStartEnabled, nil
+}
+
 type testManager struct {
 	fs  *fakeFileSystem
 	cmd *fakeCmdRunner
 	gh  *fakeGitHubReleases
 	svc *mockServiceManager
-	m   Manager
+	m   *manager
 }
 
 func newTestManager() *testManager {
@@ -363,7 +378,7 @@ func TestInstallDownloadFails(t *testing.T) {
 	m := New(fs, cmd, gh, svc)
 
 	var events []ProgressEvent
-	err := m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {
+	err := m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {
 		events = append(events, e)
 	})
 
@@ -385,7 +400,7 @@ func TestInstallHappyPath(t *testing.T) {
 
 	var phases []InstallationPhase
 	var lastErr error
-	err := m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {
+	err := m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {
 		if e.Error == nil {
 			phases = append(phases, e.Phase)
 		}
@@ -415,7 +430,7 @@ func TestInstallCreatesServiceFile(t *testing.T) {
 	svc := &mockServiceManager{}
 	m := New(fs, cmd, gh, svc)
 
-	m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {})
+	m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {})
 
 	hasServiceFile := false
 	for path := range fs.written {
@@ -438,7 +453,7 @@ func TestInstallDeployFailsRollsBack(t *testing.T) {
 	m := New(fs, cmd, gh, svc)
 
 	var events []ProgressEvent
-	err := m.Install(context.Background(), "v1.18.0", func(e ProgressEvent) {
+	err := m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {
 		events = append(events, e)
 	})
 

@@ -11,13 +11,16 @@ import (
 )
 
 type Handler struct {
-	mgr    manager.Manager
-	stdout io.Writer
-	stderr io.Writer
+	control   manager.ServiceControl
+	lifecycle manager.LifecycleManager
+	config    manager.ConfigManager
+	schedule  manager.ScheduleManager
+	stdout    io.Writer
+	stderr    io.Writer
 }
 
-func New(mgr manager.Manager, stdout, stderr io.Writer) *Handler {
-	return &Handler{mgr: mgr, stdout: stdout, stderr: stderr}
+func New(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, config manager.ConfigManager, sched manager.ScheduleManager, stdout, stderr io.Writer) *Handler {
+	return &Handler{control: ctrl, lifecycle: lifecycle, config: config, schedule: sched, stdout: stdout, stderr: stderr}
 }
 
 func (h *Handler) printf(format string, a ...interface{}) {
@@ -33,7 +36,7 @@ func (h *Handler) errorf(format string, a ...interface{}) {
 }
 
 func (h *Handler) Status(ctx context.Context) int {
-	status, err := h.mgr.Status(ctx)
+	status, err := h.control.Status(ctx)
 	if err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
@@ -44,12 +47,17 @@ func (h *Handler) Status(ctx context.Context) int {
 		return 2
 	}
 
+	autostart := "off"
+	if status.AutoStartEnabled {
+		autostart = "on"
+	}
+
 	switch status.InstanceState {
 	case manager.Running:
-		h.printf("mihomo: running  (version: %s)\n", status.Version)
+		h.printf("mihomo: running  (version: %s)  autostart: %s\n", status.Version, autostart)
 		return 0
 	case manager.Stopped:
-		h.printf("mihomo: stopped  (version: %s)\n", status.Version)
+		h.printf("mihomo: stopped  (version: %s)  autostart: %s\n", status.Version, autostart)
 		return 1
 	case manager.Upgrading:
 		h.println("mihomo: upgrading")
@@ -60,8 +68,21 @@ func (h *Handler) Status(ctx context.Context) int {
 	}
 }
 
-func (h *Handler) Install(ctx context.Context, version string) int {
-	err := h.mgr.Install(ctx, version, func(e manager.ProgressEvent) {
+func (h *Handler) AutoStart(ctx context.Context, enabled bool) int {
+	if err := h.control.SetAutoStart(ctx, enabled); err != nil {
+		h.errorf("error: %v\n", err)
+		return 1
+	}
+	state := "off"
+	if enabled {
+		state = "on"
+	}
+	h.printf("auto-start set to %s\n", state)
+	return 0
+}
+
+func (h *Handler) Install(ctx context.Context, version string, autoStart bool) int {
+	err := h.lifecycle.Install(ctx, version, autoStart, func(e manager.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "
@@ -79,7 +100,7 @@ func (h *Handler) Install(ctx context.Context, version string) int {
 }
 
 func (h *Handler) Uninstall(ctx context.Context, keepBackup bool) int {
-	err := h.mgr.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
+	err := h.lifecycle.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "
@@ -95,7 +116,7 @@ func (h *Handler) Uninstall(ctx context.Context, keepBackup bool) int {
 }
 
 func (h *Handler) Upgrade(ctx context.Context, version string) int {
-	err := h.mgr.Upgrade(ctx, version, func(e manager.ProgressEvent) {
+	err := h.lifecycle.Upgrade(ctx, version, func(e manager.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "
@@ -111,7 +132,7 @@ func (h *Handler) Upgrade(ctx context.Context, version string) int {
 }
 
 func (h *Handler) Start(ctx context.Context) int {
-	if err := h.mgr.Start(ctx); err != nil {
+	if err := h.control.Start(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -120,7 +141,7 @@ func (h *Handler) Start(ctx context.Context) int {
 }
 
 func (h *Handler) Stop(ctx context.Context) int {
-	if err := h.mgr.Stop(ctx); err != nil {
+	if err := h.control.Stop(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -129,7 +150,7 @@ func (h *Handler) Stop(ctx context.Context) int {
 }
 
 func (h *Handler) Restart(ctx context.Context) int {
-	if err := h.mgr.Restart(ctx); err != nil {
+	if err := h.control.Restart(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -138,7 +159,7 @@ func (h *Handler) Restart(ctx context.Context) int {
 }
 
 func (h *Handler) Reload(ctx context.Context) int {
-	if err := h.mgr.Reload(ctx); err != nil {
+	if err := h.control.Reload(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -147,7 +168,7 @@ func (h *Handler) Reload(ctx context.Context) int {
 }
 
 func (h *Handler) PreviewConfig(ctx context.Context) int {
-	preview, err := h.mgr.PreviewConfig(ctx)
+	preview, err := h.config.PreviewConfig(ctx)
 	if err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
@@ -157,7 +178,7 @@ func (h *Handler) PreviewConfig(ctx context.Context) int {
 }
 
 func (h *Handler) SetSubscription(ctx context.Context, data string) int {
-	if err := h.mgr.SetSubscriptionSource(ctx, data); err != nil {
+	if err := h.config.SetSubscriptionSource(ctx, data); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -166,7 +187,7 @@ func (h *Handler) SetSubscription(ctx context.Context, data string) int {
 }
 
 func (h *Handler) UpdateConfig(ctx context.Context) int {
-	if err := h.mgr.UpdateConfig(ctx); err != nil {
+	if err := h.config.UpdateConfig(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -175,7 +196,7 @@ func (h *Handler) UpdateConfig(ctx context.Context) int {
 }
 
 func (h *Handler) ScheduleStatus(ctx context.Context) int {
-	interval, active, err := h.mgr.ScheduleStatus(ctx)
+	interval, active, err := h.schedule.ScheduleStatus(ctx)
 	if err != nil {
 		// not treated as error — the file may not exist
 	}
@@ -188,7 +209,7 @@ func (h *Handler) ScheduleStatus(ctx context.Context) int {
 }
 
 func (h *Handler) SetSchedule(ctx context.Context, interval time.Duration) int {
-	if err := h.mgr.SetSchedule(ctx, interval); err != nil {
+	if err := h.schedule.SetSchedule(ctx, interval); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -197,7 +218,7 @@ func (h *Handler) SetSchedule(ctx context.Context, interval time.Duration) int {
 }
 
 func (h *Handler) StopSchedule(ctx context.Context) int {
-	if err := h.mgr.StopSchedule(ctx); err != nil {
+	if err := h.schedule.StopSchedule(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
@@ -206,7 +227,7 @@ func (h *Handler) StopSchedule(ctx context.Context) int {
 }
 
 func (h *Handler) Versions(ctx context.Context) int {
-	versions, err := h.mgr.ListVersions(ctx)
+	versions, err := h.lifecycle.ListVersions(ctx)
 	if err != nil {
 		h.errorf("error: %v\n", err)
 		return 1

@@ -75,14 +75,68 @@ func TestOSServiceManagerRegisterLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(rec.captured) != 2 {
-		t.Fatalf("expected 2 commands, got %d", len(rec.captured))
+	if len(rec.captured) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(rec.captured))
 	}
 	if rec.captured[0].name != "systemctl" || rec.captured[0].args[0] != "daemon-reload" {
 		t.Errorf("expected systemctl daemon-reload, got %v", rec.captured[0])
 	}
-	if rec.captured[1].name != "systemctl" || rec.captured[1].args[0] != "enable" {
-		t.Errorf("expected systemctl enable, got %v", rec.captured[1])
+}
+
+func TestOSServiceManagerEnableAutoStartLinux(t *testing.T) {
+	rec := &commandRecorder{}
+	svc := &OSServiceManager{cmd: rec, osType: "linux"}
+
+	err := svc.EnableAutoStart("mihomo", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.captured) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(rec.captured))
+	}
+	if rec.captured[0].name != "systemctl" || rec.captured[0].args[0] != "enable" {
+		t.Errorf("expected systemctl enable, got %v", rec.captured[0])
+	}
+}
+
+func TestOSServiceManagerDisableAutoStartLinux(t *testing.T) {
+	rec := &commandRecorder{}
+	svc := &OSServiceManager{cmd: rec, osType: "linux"}
+
+	err := svc.DisableAutoStart("mihomo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.captured) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(rec.captured))
+	}
+	if rec.captured[0].name != "systemctl" || rec.captured[0].args[0] != "disable" {
+		t.Errorf("expected systemctl disable, got %v", rec.captured[0])
+	}
+}
+
+func TestOSServiceManagerAutoStartEnabledLinux(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		expected bool
+	}{
+		{"enabled", "enabled", true},
+		{"disabled", "disabled", false},
+		{"error", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &commandRecorder{output: tt.output}
+			svc := &OSServiceManager{cmd: rec, osType: "linux"}
+			enabled, err := svc.AutoStartEnabled("mihomo")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if enabled != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, enabled)
+			}
+		})
 	}
 }
 

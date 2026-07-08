@@ -16,9 +16,10 @@ func serviceUnitPath() string {
 	return "/etc/systemd/system/mihomo.service"
 }
 
-func serviceUnitContent() []byte {
+func serviceUnitContent(autoStart bool) []byte {
 	if runtime.GOOS == "darwin" {
-		return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+		if autoStart {
+			return []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -34,6 +35,22 @@ func serviceUnitContent() []byte {
   <true/>
   <key>RunAtLoad</key>
   <true/>
+</dict>
+</plist>
+`)
+		}
+		return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>mihomo</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/mihomo/bin/mihomo</string>
+    <string>-d</string>
+    <string>/opt/mihomo/etc</string>
+  </array>
 </dict>
 </plist>
 `)
@@ -116,7 +133,7 @@ func (m *manager) rollbackInstall(ctx context.Context, phase string, err error) 
 	return fmt.Errorf("install failed at %s: %w", phase, err)
 }
 
-func (m *manager) Install(ctx context.Context, version string, onProgress ProgressCallback) error {
+func (m *manager) Install(ctx context.Context, version string, autoStart bool, onProgress ProgressCallback) error {
 	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress)
 	if err != nil {
 		return err
@@ -143,7 +160,7 @@ func (m *manager) Install(ctx context.Context, version string, onProgress Progre
 		return m.rollbackInstall(ctx, "bootstrap config", err)
 	}
 	svcPath := serviceUnitPath()
-	svcContent := serviceUnitContent()
+	svcContent := serviceUnitContent(autoStart)
 	if err := m.fs.WriteFile(svcPath, svcContent, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap service unit", err)
 	}
@@ -154,6 +171,14 @@ func (m *manager) Install(ctx context.Context, version string, onProgress Progre
 		return m.rollbackInstall(ctx, "service register", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseRegister, Message: "Service registered"})
+
+	if autoStart {
+		onProgress(ProgressEvent{Phase: PhaseEnableAutoStart, Message: "Enabling auto-start"})
+		if err := m.svcMgr.EnableAutoStart(serviceName, svcPath); err != nil {
+			return m.rollbackInstall(ctx, "enable auto-start", err)
+		}
+		onProgress(ProgressEvent{Phase: PhaseEnableAutoStart, Message: "Auto-start enabled"})
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseStart, Message: "Starting mihomo"})
 	if err := m.svcMgr.Start(serviceName); err != nil {

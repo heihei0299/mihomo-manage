@@ -22,7 +22,7 @@ var (
 
 func main() {
 	oss := &manager.OSSystem{}
-	svc := manager.NewOSServiceManager(oss)
+	svc := manager.NewOSServiceManager(oss, oss)
 	mgr := manager.New(oss, oss, oss, svc)
 
 	var args []string
@@ -50,6 +50,8 @@ func main() {
 			args = append(args, "subscription", "set", raw[i])
 		case "-u":
 			args = append(args, "subscription", "update")
+		case "-i":
+			args = append(args, "install")
 		case "-c":
 			args = append(args, "config", "preview")
 		case "-t":
@@ -80,10 +82,10 @@ func main() {
 	if quietMode {
 		stdout = io.Discard
 	}
-	h := cli.New(mgr, stdout, os.Stderr)
+	h := cli.New(mgr, mgr, mgr, mgr, stdout, os.Stderr)
 
 	if len(args) == 0 {
-		if err := startTUI(mgr); err != nil {
+		if err := startTUI(mgr, mgr, mgr); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -108,23 +110,49 @@ func main() {
 		exitCode = h.Status(ctx)
 	case "install":
 		ver := "latest"
-		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-			ver = args[1]
+		autoStart := true
+		for _, a := range args[1:] {
+			if a == "--no-autostart" {
+				autoStart = false
+			} else if !strings.HasPrefix(a, "-") {
+				ver = a
+			}
 		}
-		exitCode = h.Install(ctx, ver)
-	case "template", "rules":
-		path := manager.ConfigTemplatePath
-		if args[0] == "rules" {
-			path = manager.RoutingRulesPath
-		}
-		cliEditFile(mgr, path, args[1:])
-		return
-	case "config":
-		if len(args) == 1 || args[1] != "preview" {
-			fmt.Fprintln(os.Stderr, "usage: mihomo-manager config preview")
+		exitCode = h.Install(ctx, ver, autoStart)
+	case "autostart":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: mihomo-manager autostart on|off")
 			os.Exit(1)
 		}
-		exitCode = h.PreviewConfig(ctx)
+		switch args[1] {
+		case "on":
+			exitCode = h.AutoStart(ctx, true)
+		case "off":
+			exitCode = h.AutoStart(ctx, false)
+		default:
+			fmt.Fprintf(os.Stderr, "usage: mihomo-manager autostart on|off\n")
+			exitCode = 1
+		}
+	case "config":
+		if len(args) < 2 {
+			printUsage()
+			exitCode = 1
+			break
+		}
+		switch args[1] {
+		case "preview":
+			exitCode = h.PreviewConfig(ctx)
+		case "template", "rules":
+			path := manager.ConfigTemplatePath
+			if args[1] == "rules" {
+				path = manager.RoutingRulesPath
+			}
+			cliEditFile(mgr, path, args[2:])
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[1])
+			exitCode = 1
+		}
 	case "subscription":
 		exitCode = handleSubscription(h, ctx, args[1:])
 	case "start":
@@ -235,7 +263,7 @@ func cliLogs(args []string) {
 	}
 }
 
-func cliEditFile(mgr manager.Manager, path string, args []string) {
+func cliEditFile(cfg manager.ConfigManager, path string, args []string) {
 	if len(args) != 1 || args[0] != "edit" {
 		fmt.Fprintf(os.Stderr, "usage: mihomo-manager %s edit\n", path)
 		os.Exit(1)
@@ -252,7 +280,7 @@ func cliEditFile(mgr manager.Manager, path string, args []string) {
 		fmt.Fprintf(os.Stderr, "editor failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := mgr.UpdateConfig(context.Background()); err != nil {
+	if err := cfg.UpdateConfig(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "config update failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -262,34 +290,43 @@ func cliEditFile(mgr manager.Manager, path string, args []string) {
 }
 
 func printUsage() {
-	fmt.Println(`Usage of mihomo-manager:
-  -c	Preview generated config (alias: config preview)
-  -h, --help	Show this help
-  -q, --quiet	Suppress non-error output
-  -s string	Set subscription source (alias: subscription set)
-  -t [--interval|--off]	View/configure auto-refresh (alias: subscription schedule)
-  -u	Refresh and apply subscription (alias: subscription update)
-  -v, --version	Show version
-  config preview	Preview generated config
-  i [version]	Install mihomo (alias: install, default: latest)
-  install [version]	Install mihomo (default: latest)
-  logs [--tail=N] [--follow]	View mihomo logs
-  reload	Reload config
-  restart	Restart mihomo
-  rules edit	Edit routing rules ($EDITOR)
-  start	Start mihomo
-  status	Show mihomo status
-  stop	Stop mihomo
-  subscription schedule [--interval|--off]	View/configure auto-refresh
-  subscription set string	Set subscription source
-  subscription update	Refresh and apply subscription
-  template edit	Edit config template ($EDITOR)
-  ug [version]	Upgrade mihomo (alias: upgrade, default: latest)
-  ui [--keep-backup]	Uninstall mihomo (alias: uninstall)
-  uninstall [--keep-backup]	Remove mihomo
-  upgrade [version]	Upgrade mihomo (default: latest)
-  v	List available versions (alias: versions)
-  versions	List available versions
+	fmt.Println(`Usage: mihomo-manager [command]
+
+Flags:
+  -c              Preview generated config
+  -h, --help      Show this help
+  -i              Install mihomo (alias: install)
+  -q, --quiet     Suppress non-error output
+  -s <url>        Set subscription source
+  -t [--interval|--off]  View/configure auto-refresh
+  -u              Refresh and apply subscription
+  -v, --version   Show version
+
+Basic operations:
+  status                  Show mihomo status
+  start                   Start mihomo
+  stop                    Stop mihomo
+  restart                 Restart mihomo
+  reload                  Reload config
+  logs [--tail=N] [--follow]  View mihomo logs
+
+Subscription:
+  subscription set <s>        Set subscription source
+  subscription update         Refresh and apply subscription
+  subscription schedule [--interval|--off]  View/configure auto-refresh
+
+Config:
+  config preview              Preview generated config
+  config template             Edit config template ($EDITOR)
+  config rules                Edit routing rules ($EDITOR)
+
+Lifecycle:
+  install/i [ver] [--no-autostart]   Install mihomo (default: latest)
+  upgrade/ug [ver]                    Upgrade mihomo (default: latest)
+  uninstall/ui [--keep-backup]        Remove mihomo
+  autostart on|off                    Toggle auto-start on boot
+  versions/v                          List available versions
+
 Run without arguments to start the TUI.`)
 }
 

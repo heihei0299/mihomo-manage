@@ -36,6 +36,7 @@ const (
 	PhaseDeploy
 	PhaseBootstrap
 	PhaseRegister
+	PhaseEnableAutoStart
 	PhaseStart
 	PhaseUpgradeCheck
 	PhaseUpgradeFetch
@@ -57,6 +58,8 @@ func (p InstallationPhase) String() string {
 		return "bootstrap"
 	case PhaseRegister:
 		return "register"
+	case PhaseEnableAutoStart:
+		return "enable-auto-start"
 	case PhaseStart:
 		return "start"
 	case PhaseUpgradeCheck:
@@ -93,9 +96,10 @@ type VersionInfo struct {
 }
 
 type Status struct {
-	InstanceState InstanceState
-	Installed     bool
-	Version       string
+	InstanceState     InstanceState
+	Installed         bool
+	Version           string
+	AutoStartEnabled  bool
 }
 
 type ServiceManager interface {
@@ -106,28 +110,12 @@ type ServiceManager interface {
 	Stop(name string) error
 	Restart(name string) error
 	Reload(name string) error
+	EnableAutoStart(name, serviceFilePath string) error
+	DisableAutoStart(name string) error
+	AutoStartEnabled(name string) (bool, error)
 }
 
-type Manager interface {
-	Status(ctx context.Context) (*Status, error)
-	Install(ctx context.Context, version string, onProgress ProgressCallback) error
-	Uninstall(ctx context.Context, keepBackup bool, onProgress ProgressCallback) error
-	Start(ctx context.Context) error
-	Stop(ctx context.Context) error
-	Restart(ctx context.Context) error
-	Reload(ctx context.Context) error
-	Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error
-	ListVersions(ctx context.Context) ([]VersionInfo, error)
-	SetSubscriptionSource(ctx context.Context, url string) error
-	SetRoutingRules(ctx context.Context, rules string) error
-	PreviewConfig(ctx context.Context) (string, error)
-	UpdateConfig(ctx context.Context) error
-	SetSchedule(ctx context.Context, interval time.Duration) error
-	StopSchedule(ctx context.Context) error
-	ScheduleStatus(ctx context.Context) (time.Duration, bool, error)
-}
-
-func New(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager) Manager {
+func New(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager) *manager {
 	pipe := newConfigPipeline(fs, gh, ConfigPipelineOptions{
 		OnReload:  func(ctx context.Context) error { return svcMgr.Reload(serviceName) },
 		Validator: &configValidator{},

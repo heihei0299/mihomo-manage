@@ -16,7 +16,7 @@ func TestLifecycleInstall(t *testing.T) {
 	svc := &mockServiceManager{}
 	m := New(fs, cmd, gh, svc)
 
-	err := m.Install(context.Background(), "v1.18.0", noopProgress)
+	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err != nil {
 		t.Fatalf("Install failed: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 	svc := &mockServiceManager{}
 	m := New(fs, cmd, gh, svc)
 
-	m.Install(context.Background(), "v1.18.0", noopProgress)
+	m.Install(context.Background(), "v1.18.0", true, noopProgress)
 
 	status, err := m.Status(context.Background())
 	if err != nil {
@@ -98,7 +98,7 @@ func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 	svc := &mockServiceManager{}
 	m := New(fs, cmd, gh, svc)
 
-	err := m.Install(context.Background(), "v1.18.0", noopProgress)
+	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err == nil {
 		t.Fatal("expected Install to fail")
 	}
