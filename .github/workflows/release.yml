@@ -105,8 +105,7 @@ jobs:
 
           {
             echo "pkgname = mihomo-manager"
-            echo "pkgver = $VERSION"
-            echo "pkgrel = 1"
+            echo "pkgver = ${VERSION}-1"
             echo "pkgdesc = mihomo (Clash Meta) proxy manager"
             echo "url = https://github.com/${{ github.repository }}"
             echo "builddate = $(date +%s)"
