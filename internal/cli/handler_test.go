@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/manager"
 )
 
 type mockControl struct {
