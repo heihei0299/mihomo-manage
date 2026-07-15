@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/manager"
 )
 
 type Handler struct {

@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+"github.com/anomalyco/mihomo-manager/internal/cli"
 
-	"mihomo-manager/internal/cli"
-	"mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/manager"
 )
 
 var (
@@ -22,11 +22,11 @@ var (
 
 func main() {
 	oss := &manager.OSSystem{}
-	svc := manager.NewOSServiceManager(oss, oss)
-	ctrl := manager.NewServiceController(oss, oss, svc)
-	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svc)
+	svcMgr := manager.NewOSServiceManager(oss, oss)
+	ctrl := manager.NewServiceControl(oss, oss, svcMgr)
+	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svcMgr)
 	cfg := manager.NewConfigManager(oss, oss, manager.NewConfigValidator(), func(ctx context.Context) error {
-		return svc.Reload(manager.ServiceName)
+		return svcMgr.Reload(manager.ServiceName)
 	})
 	sched := manager.NewScheduleManager(oss, func(ctx context.Context) {
 		if err := cfg.UpdateConfig(ctx); err != nil {

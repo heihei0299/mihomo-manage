@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/manager"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

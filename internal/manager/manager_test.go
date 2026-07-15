@@ -244,7 +244,7 @@ func newTestManager() *testManager {
 		cmd:   cmd,
 		gh:    gh,
 		svc:   svc,
-		ctrl:  NewServiceController(fs, cmd, svc),
+		ctrl:  NewServiceControl(fs, cmd, svc),
 		life:  NewLifecycleManager(fs, cmd, gh, svc),
 		cfg:   NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error { return svc.Reload(serviceName) }),
 		sched: NewScheduleManager(fs, func(ctx context.Context) {}),
@@ -259,7 +259,7 @@ func TestStatusNotInstalled(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	status, err := m.Status(context.Background())
 
@@ -281,7 +281,7 @@ func TestStatusInstalledStopped(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
 	svc := &mockServiceManager{running: false}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	status, err := m.Status(context.Background())
 
@@ -303,7 +303,7 @@ func TestStatusInstalledRunning(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
 	svc := &mockServiceManager{running: true}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	status, err := m.Status(context.Background())
 
@@ -322,7 +322,7 @@ func TestStatusServiceManagerError(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{err: testError{"service not found"}}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	_, err := m.Status(context.Background())
 
@@ -769,7 +769,7 @@ func TestStartNotInstalled(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Start(context.Background())
 	if err == nil {
@@ -781,7 +781,7 @@ func TestStartStopped(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: false}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Start(context.Background())
 	if err != nil {
@@ -796,7 +796,7 @@ func TestStartAlreadyRunning(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Start(context.Background())
 	if err == nil {
@@ -808,7 +808,7 @@ func TestStopNotInstalled(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Stop(context.Background())
 	if err == nil {
@@ -820,7 +820,7 @@ func TestStopRunning(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Stop(context.Background())
 	if err != nil {
@@ -835,7 +835,7 @@ func TestStopAlreadyStopped(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: false}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Stop(context.Background())
 	if err == nil {
@@ -847,7 +847,7 @@ func TestRestartNotInstalled(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Restart(context.Background())
 	if err == nil {
@@ -859,7 +859,7 @@ func TestRestartRunning(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Restart(context.Background())
 	if err != nil {
@@ -871,7 +871,7 @@ func TestReloadNotInstalled(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Reload(context.Background())
 	if err == nil {
@@ -883,7 +883,7 @@ func TestReloadRunning(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Reload(context.Background())
 	if err != nil {
@@ -895,7 +895,7 @@ func TestReloadStopped(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: false}
-	m := NewServiceController(fs, cmd, svc)
+	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Reload(context.Background())
 	if err == nil {

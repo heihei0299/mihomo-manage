@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"mihomo-manager/internal/scheduler"
+	"github.com/anomalyco/mihomo-manager/internal/scheduler"
 )
 
 type scheduleManager struct {

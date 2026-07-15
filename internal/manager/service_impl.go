@@ -11,7 +11,7 @@ type serviceController struct {
 	svcMgr ServiceManager
 }
 
-func NewServiceController(fs FileSystem, cmd CommandRunner, svcMgr ServiceManager) ServiceControl {
+func NewServiceControl(fs FileSystem, cmd CommandRunner, svcMgr ServiceManager) ServiceControl {
 	return &serviceController{fs: fs, cmd: cmd, svcMgr: svcMgr}
 }
 
