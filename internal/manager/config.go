@@ -194,21 +194,3 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 
 	return nil
 }
-
-// manager delegation methods
-
-func (m *manager) SetSubscriptionSource(ctx context.Context, source string) error {
-	return m.pipeline.SetSubscriptionSource(ctx, source)
-}
-
-func (m *manager) SetRoutingRules(ctx context.Context, rules string) error {
-	return m.pipeline.SetRoutingRules(ctx, rules)
-}
-
-func (m *manager) PreviewConfig(ctx context.Context) (string, error) {
-	return m.pipeline.Preview(ctx)
-}
-
-func (m *manager) UpdateConfig(ctx context.Context) error {
-	return m.pipeline.Apply(ctx)
-}

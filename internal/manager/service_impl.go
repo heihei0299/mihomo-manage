@@ -5,7 +5,17 @@ import (
 	"fmt"
 )
 
-func (m *manager) Status(ctx context.Context) (*Status, error) {
+type serviceController struct {
+	fs     FileSystem
+	cmd    CommandRunner
+	svcMgr ServiceManager
+}
+
+func NewServiceController(fs FileSystem, cmd CommandRunner, svcMgr ServiceManager) ServiceControl {
+	return &serviceController{fs: fs, cmd: cmd, svcMgr: svcMgr}
+}
+
+func (m *serviceController) Status(ctx context.Context) (*Status, error) {
 	if !m.fs.FileExists(binaryPath) {
 		return &Status{
 			Installed:     false,
@@ -13,7 +23,7 @@ func (m *manager) Status(ctx context.Context) (*Status, error) {
 		}, nil
 	}
 
-	running, err := m.svcMgr.IsRunning("mihomo")
+	running, err := m.svcMgr.IsRunning(serviceName)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +44,7 @@ func (m *manager) Status(ctx context.Context) (*Status, error) {
 	}, nil
 }
 
-func (m *manager) SetAutoStart(ctx context.Context, enabled bool) error {
+func (m *serviceController) SetAutoStart(ctx context.Context, enabled bool) error {
 	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
@@ -45,7 +55,7 @@ func (m *manager) SetAutoStart(ctx context.Context, enabled bool) error {
 	return m.svcMgr.DisableAutoStart(serviceName)
 }
 
-func (m *manager) Start(ctx context.Context) error {
+func (m *serviceController) Start(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
@@ -59,7 +69,7 @@ func (m *manager) Start(ctx context.Context) error {
 	return m.svcMgr.Start(serviceName)
 }
 
-func (m *manager) Stop(ctx context.Context) error {
+func (m *serviceController) Stop(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
@@ -73,14 +83,14 @@ func (m *manager) Stop(ctx context.Context) error {
 	return m.svcMgr.Stop(serviceName)
 }
 
-func (m *manager) Restart(ctx context.Context) error {
+func (m *serviceController) Restart(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
 	return m.svcMgr.Restart(serviceName)
 }
 
-func (m *manager) Reload(ctx context.Context) error {
+func (m *serviceController) Reload(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
 	}
@@ -92,8 +102,4 @@ func (m *manager) Reload(ctx context.Context) error {
 		return fmt.Errorf("mihomo is not running")
 	}
 	return m.svcMgr.Reload(serviceName)
-}
-
-func (m *manager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
-	return m.gh.ListVersions(ctx, "MetaCubeX", "mihomo", 5)
 }

@@ -23,7 +23,16 @@ var (
 func main() {
 	oss := &manager.OSSystem{}
 	svc := manager.NewOSServiceManager(oss, oss)
-	mgr := manager.New(oss, oss, oss, svc)
+	ctrl := manager.NewServiceController(oss, oss, svc)
+	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svc)
+	cfg := manager.NewConfigManager(oss, oss, manager.NewConfigValidator(), func(ctx context.Context) error {
+		return svc.Reload(manager.ServiceName)
+	})
+	sched := manager.NewScheduleManager(oss, func(ctx context.Context) {
+		if err := cfg.UpdateConfig(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "schedule: update failed: %v\n", err)
+		}
+	})
 
 	var args []string
 	showHelp := false
@@ -82,10 +91,10 @@ func main() {
 	if quietMode {
 		stdout = io.Discard
 	}
-	h := cli.New(mgr, mgr, mgr, mgr, stdout, os.Stderr)
+	h := cli.New(ctrl, lifecycle, cfg, sched, stdout, os.Stderr)
 
 	if len(args) == 0 {
-		if err := startTUI(mgr, mgr, mgr); err != nil {
+		if err := startTUI(ctrl, lifecycle, cfg); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -147,7 +156,7 @@ func main() {
 			if args[1] == "rules" {
 				path = manager.RoutingRulesPath
 			}
-			cliEditFile(mgr, path, args[2:])
+			cliEditFile(cfg, path, args[2:])
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[1])

@@ -1,10 +1,8 @@
 package manager
 
 import (
-	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -115,30 +113,8 @@ type ServiceManager interface {
 	AutoStartEnabled(name string) (bool, error)
 }
 
-func New(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager) *manager {
-	pipe := newConfigPipeline(fs, gh, ConfigPipelineOptions{
-		OnReload:  func(ctx context.Context) error { return svcMgr.Reload(serviceName) },
-		Validator: &configValidator{},
-	})
-	return &manager{
-		fs:       fs,
-		cmd:      cmd,
-		gh:       gh,
-		svcMgr:   svcMgr,
-		pipeline: pipe,
-	}
-}
-
-type manager struct {
-	fs       FileSystem
-	cmd      CommandRunner
-	gh       GitHubReleases
-	svcMgr   ServiceManager
-	pipeline *configPipeline
-
-	mu     sync.Mutex
-	ticker *time.Ticker
-	stopCh chan struct{}
+func NewConfigValidator() ConfigValidator {
+	return &configValidator{}
 }
 
 func looksLikeURL(s string) bool {
@@ -177,18 +153,20 @@ const (
 	filePermUserRW   = 0644
 	filePermUserRWX  = 0755
 
-	binaryPath           = "/opt/mihomo/bin/mihomo"
-	configDir            = "/opt/mihomo/etc"
-	ConfigTemplatePath   = "/opt/mihomo/etc/config-template.yaml"
-	configYAML           = "/opt/mihomo/etc/config.yaml"
-	serviceName          = "mihomo"
+	binaryPath            = "/opt/mihomo/bin/mihomo"
+	configDir             = "/opt/mihomo/etc"
+	ConfigTemplatePath    = "/opt/mihomo/etc/config-template.yaml"
+	configYAML            = "/opt/mihomo/etc/config.yaml"
 	defaultServiceUnitPath = "/etc/systemd/system/mihomo.service"
-	stateDir             = "/opt/mihomo-manager/state"
-	subscriptionDataFile = "/opt/mihomo-manager/state/subscription-data.txt"
-	subscriptionURLFile  = "/opt/mihomo-manager/state/subscription-url.txt"
-	RoutingRulesPath     = "/opt/mihomo/etc/rules.txt"
-	scheduleFile         = "/opt/mihomo-manager/state/schedule.txt"
+	ServiceName           = "mihomo"
+	stateDir              = "/opt/mihomo-manager/state"
+	subscriptionDataFile  = "/opt/mihomo-manager/state/subscription-data.txt"
+	subscriptionURLFile   = "/opt/mihomo-manager/state/subscription-url.txt"
+	RoutingRulesPath      = "/opt/mihomo/etc/rules.txt"
+	scheduleFile          = "/opt/mihomo-manager/state/schedule.txt"
 )
+
+var serviceName = ServiceName
 
 var defaultTemplate = []byte(`port: 7890
 socks-port: 7891

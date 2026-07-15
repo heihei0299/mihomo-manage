@@ -14,7 +14,7 @@ func TestLifecycleInstall(t *testing.T) {
 	gh := &fakeGitHubReleases{}
 	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(fs, cmd, gh, svc)
+	m := NewLifecycleManager(fs, cmd, gh, svc)
 
 	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err != nil {
@@ -36,11 +36,12 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 	gh := &fakeGitHubReleases{}
 	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(fs, cmd, gh, svc)
+	life := NewLifecycleManager(fs, cmd, gh, svc)
+	ctrl := NewServiceController(fs, cmd, svc)
 
-	m.Install(context.Background(), "v1.18.0", true, noopProgress)
+	life.Install(context.Background(), "v1.18.0", true, noopProgress)
 
-	status, err := m.Status(context.Background())
+	status, err := ctrl.Status(context.Background())
 	if err != nil {
 		t.Fatalf("Status after install: %v", err)
 	}
@@ -68,11 +69,12 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 			configYAML:          []byte(`old config`),
 		},
 	}
-	cmd := &fakeCmdRunner{}
 	gh := &fakeGitHubReleases{}
 	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(fs, cmd, gh, svc)
+	m := NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error {
+		return svc.Reload(serviceName)
+	})
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -96,7 +98,7 @@ func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 	gh := &fakeGitHubReleases{}
 	linkStorage(fs, gh)
 	svc := &mockServiceManager{}
-	m := New(fs, cmd, gh, svc)
+	m := NewLifecycleManager(fs, cmd, gh, svc)
 
 	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err == nil {
@@ -109,18 +111,8 @@ func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 }
 
 func TestScheduleSetAndStop(t *testing.T) {
-	fs := &fakeFileSystem{
-		fileExists: map[string]bool{
-			ConfigTemplatePath: true,
-		},
-		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test: {{subscription}}`),
-		},
-	}
-	cmd := &fakeCmdRunner{}
-	gh := &fakeGitHubReleases{}
-	svc := &mockServiceManager{}
-	m := New(fs, cmd, gh, svc)
+	fs := &fakeFileSystem{}
+	m := NewScheduleManager(fs, func(ctx context.Context) {})
 
 	err := m.SetSchedule(context.Background(), time.Hour)
 	if err != nil {
@@ -154,10 +146,7 @@ func TestScheduleSetAndStop(t *testing.T) {
 
 func TestScheduleRejectsShortInterval(t *testing.T) {
 	fs := &fakeFileSystem{}
-	cmd := &fakeCmdRunner{}
-	gh := &fakeGitHubReleases{}
-	svc := &mockServiceManager{}
-	m := New(fs, cmd, gh, svc)
+	m := NewScheduleManager(fs, func(ctx context.Context) {})
 
 	err := m.SetSchedule(context.Background(), time.Minute)
 	if err == nil {
