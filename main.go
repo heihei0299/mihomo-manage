@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-"github.com/anomalyco/mihomo-manager/internal/cli"
 
+	"github.com/anomalyco/mihomo-manager/internal/cli"
 	"github.com/anomalyco/mihomo-manager/internal/manager"
 )
 
@@ -94,6 +94,9 @@ func main() {
 	h := cli.New(ctrl, lifecycle, cfg, sched, stdout, os.Stderr)
 
 	if len(args) == 0 {
+		if tryElevate(nil) {
+			return
+		}
 		if err := startTUI(ctrl, lifecycle, cfg); err != nil {
 			log.Fatal(err)
 		}
@@ -109,6 +112,10 @@ func main() {
 		args[0] = "upgrade"
 	case "v":
 		args[0] = "versions"
+	}
+
+	if tryElevate(args) {
+		return
 	}
 
 	ctx := context.Background()
@@ -354,6 +361,47 @@ Lifecycle:
   versions/v                          List available versions
 
 Run without arguments to start the TUI.`)
+}
+
+func needsElevation(args []string) bool {
+	if len(args) == 0 {
+		return true // TUI
+	}
+	switch args[0] {
+	case "status", "versions", "v", "logs":
+		return false
+	case "config":
+		if len(args) > 1 && args[1] == "preview" {
+			return false
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+func tryElevate(args []string) bool {
+	if os.Geteuid() == 0 {
+		return false
+	}
+	if !needsElevation(args) {
+		return false
+	}
+	sudoPath, err := exec.LookPath("sudo")
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command(sudoPath, os.Args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			os.Exit(exit.ExitCode())
+		}
+		os.Exit(1)
+	}
+	return true
 }
 
 
