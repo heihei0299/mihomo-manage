@@ -39,8 +39,11 @@ go build -ldflags "-X main.version=v20260715" -o mihomo-manager .
 ## 快速开始
 
 ```bash
-# 安装 mihomo
+# 安装 mihomo（在线下载）
 sudo mihomo-manager install
+
+# 安装 mihomo（从本地 .gz 或二进制文件）
+sudo mihomo-manager install --from ./mihomo-linux-amd64-v1.19.27.gz
 
 # 设置订阅
 sudo mihomo-manager subscription set https://example.com/sub
@@ -55,6 +58,36 @@ mihomo-manager status
 mihomo-manager
 ```
 
+## 下载加速
+
+### 代理下载（MIHOMO_DOWNLOAD_PROXY）
+
+当系统设置的 `HTTP_PROXY` 指向 mihomo 自身时，首次安装会陷入先有鸡还是先有蛋的困境。设置 `MIHOMO_DOWNLOAD_PROXY` 可指定一个独立代理专门用于下载 mihomo 核心：
+
+```bash
+# 走 SOCKS5 代理下载
+export MIHOMO_DOWNLOAD_PROXY=socks5://127.0.0.1:10808
+sudo mihomo-manager install
+
+# 走 HTTP 代理下载
+export MIHOMO_DOWNLOAD_PROXY=http://127.0.0.1:10809
+sudo mihomo-manager install
+```
+
+### 镜像加速（MIHOMO_RELEASE_URL）
+
+国内无法直连 GitHub 时，可通过镜像下载。URL 模板支持 `{os}`、`{arch}`、`{version}` 占位符：
+
+```bash
+# 使用 ghproxy.com（推荐）
+export MIHOMO_RELEASE_URL="https://ghproxy.com/https://github.com/MetaCubeX/mihomo/releases/download/{version}/mihomo-{os}-{arch}-{version}.gz"
+sudo mihomo-manager install
+
+# 自建镜像
+export MIHOMO_RELEASE_URL="https://cdn.example.com/mihomo/{version}/mihomo-{os}-{arch}-{version}.gz"
+sudo mihomo-manager install
+```
+
 ## 命令
 
 ```
@@ -66,7 +99,7 @@ Usage of mihomo-manager:
   -t [--interval|--off]  View/configure auto-refresh (alias: subscription schedule)
   -u                Refresh and apply subscription (alias: subscription update)
   -v, --version     Show version
-  i [version]       Install mihomo (alias: install)
+  i/i [ver] [--no-autostart] [--from <path>]  Install mihomo
   ui [--keep-backup]  Uninstall mihomo (alias: uninstall)
   ug [version]      Upgrade mihomo (alias: upgrade)
   v                 List available versions (alias: versions)
@@ -83,6 +116,13 @@ Usage of mihomo-manager:
   template edit     Edit config template ($EDITOR)
   rules edit        Edit routing rules ($EDITOR)
 ```
+
+## 环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `MIHOMO_DOWNLOAD_PROXY` | 用于下载 mihomo 核心的代理（绕过系统 HTTP_PROXY） |
+| `MIHOMO_RELEASE_URL` | GitHub Release 下载 URL 模板，支持 `{os}` `{arch}` `{version}` 占位符 |
 
 ## 验收测试
 

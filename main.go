@@ -120,14 +120,27 @@ func main() {
 	case "install":
 		ver := "latest"
 		autoStart := true
-		for _, a := range args[1:] {
+		fromPath := ""
+		for i := 0; i < len(args[1:]); i++ {
+			a := args[1:][i]
 			if a == "--no-autostart" {
 				autoStart = false
+			} else if a == "--from" {
+				if i+1 >= len(args[1:]) {
+					fmt.Fprintln(os.Stderr, "usage: mihomo-manager install --from <path>")
+					os.Exit(1)
+				}
+				i++
+				fromPath = args[1:][i]
 			} else if !strings.HasPrefix(a, "-") {
 				ver = a
 			}
 		}
-		exitCode = h.Install(ctx, ver, autoStart)
+		if fromPath != "" {
+			exitCode = h.InstallFromLocal(ctx, fromPath, autoStart)
+		} else {
+			exitCode = h.Install(ctx, ver, autoStart)
+		}
 	case "autostart":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: mihomo-manager autostart on|off")
@@ -329,8 +342,12 @@ Config:
   config template             Edit config template ($EDITOR)
   config rules                Edit routing rules ($EDITOR)
 
+Environments:
+  MIHOMO_DOWNLOAD_PROXY=<url>   Proxy for GitHub core download (e.g. http://127.0.0.1:10809)
+  MIHOMO_RELEASE_URL=<tmpl>     Download URL template with {os} {arch} {version} placeholders
+
 Lifecycle:
-  install/i [ver] [--no-autostart]   Install mihomo (default: latest)
+  install/i [ver] [--no-autostart] [--from <path>]   Install mihomo (default: latest; --from for local .gz/binary)
   upgrade/ug [ver]                    Upgrade mihomo (default: latest)
   uninstall/ui [--keep-backup]        Remove mihomo
   autostart on|off                    Toggle auto-start on boot

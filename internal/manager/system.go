@@ -6,11 +6,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+var downloadClient *http.Client
+
+func init() {
+	transport := &http.Transport{
+		Proxy: nil,
+	}
+	if p := os.Getenv("MIHOMO_DOWNLOAD_PROXY"); p != "" {
+		if parsed, err := url.Parse(p); err == nil {
+			transport.Proxy = http.ProxyURL(parsed)
+		}
+	}
+	downloadClient = &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Minute,
+	}
+}
 
 type FileSystem interface {
 	FileExists(path string) bool
@@ -85,18 +104,18 @@ func (OSSystem) RunCommandIgnoreExit(name string, args ...string) (string, error
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (OSSystem) Download(ctx context.Context, url, dest string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+func (OSSystem) Download(ctx context.Context, rawURL, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("downloading %s: %w", url, err)
+		return fmt.Errorf("downloading %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading %s: status %d", url, resp.StatusCode)
+		return fmt.Errorf("downloading %s: status %d", rawURL, resp.StatusCode)
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return fmt.Errorf("creating directory for %s: %w", dest, err)
@@ -121,7 +140,7 @@ func (OSSystem) ListVersions(ctx context.Context, owner, repo string, limit int)
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching releases: %w", err)
 	}
@@ -149,7 +168,7 @@ func (OSSystem) LatestVersion(ctx context.Context, owner, repo string) (string, 
 		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching latest release: %w", err)
 	}

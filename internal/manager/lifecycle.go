@@ -1,8 +1,9 @@
 package manager
 
 import (
-	"fmt"
+	"os"
 	"runtime"
+	"strings"
 )
 
 func serviceUnitPath() string {
@@ -67,6 +68,17 @@ WantedBy=multi-user.target
 `)
 }
 
+var defaultReleaseTemplate = "https://github.com/MetaCubeX/mihomo/releases/download/{version}/mihomo-{os}-{arch}-{version}.gz"
+
 func releaseURL(goos, goarch, version string) string {
-	return fmt.Sprintf("https://github.com/MetaCubeX/mihomo/releases/download/%s/mihomo-%s-%s-%s.gz", version, goos, goarch, version)
+	tmpl := os.Getenv("MIHOMO_RELEASE_URL")
+	if tmpl == "" {
+		tmpl = defaultReleaseTemplate
+	}
+	r := strings.NewReplacer(
+		"{os}", goos,
+		"{arch}", goarch,
+		"{version}", version,
+	)
+	return r.Replace(tmpl)
 }

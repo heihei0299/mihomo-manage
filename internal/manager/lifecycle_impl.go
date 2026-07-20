@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strings"
 )
 
 type lifecycleManager struct {
@@ -83,10 +84,40 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 	if err != nil {
 		return err
 	}
+	return m.installBinary(ctx, tempPath, autoStart, onProgress)
+}
 
+func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress ProgressCallback) error {
+	tempPath, err := m.resolveLocalBinary(localPath)
+	if err != nil {
+		return fmt.Errorf("local binary: %w", err)
+	}
+	defer func() {
+		if tempPath != localPath {
+			m.fs.Remove(tempPath)
+		}
+	}()
+	return m.installBinary(ctx, tempPath, autoStart, onProgress)
+}
+
+func (m *lifecycleManager) resolveLocalBinary(localPath string) (string, error) {
+	if strings.HasSuffix(localPath, ".gz") {
+		tempPath := binaryPath + ".tmp.local"
+		if err := m.decompressGzip(localPath, tempPath); err != nil {
+			return "", err
+		}
+		return tempPath, nil
+	}
+	if !m.fs.FileExists(localPath) {
+		return "", fmt.Errorf("file not found: %s", localPath)
+	}
+	return localPath, nil
+}
+
+func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, autoStart bool, onProgress ProgressCallback) error {
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Deploying binary"})
-	if err := m.fs.Rename(tempPath, binaryPath); err != nil {
-		m.fs.Remove(tempPath)
+	if err := m.fs.Rename(binarySrc, binaryPath); err != nil {
+		m.fs.Remove(binarySrc)
 		return m.rollbackInstall(ctx, "deploy rename", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Binary deployed"})

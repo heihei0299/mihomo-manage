@@ -62,6 +62,13 @@ func (m *mockLifecycle) Install(ctx context.Context, version string, autoStart b
 	return nil
 }
 
+func (m *mockLifecycle) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress manager.ProgressCallback) error {
+	if m.installFn != nil {
+		return m.installFn(localPath, autoStart, onProgress)
+	}
+	return nil
+}
+
 func (m *mockLifecycle) Uninstall(ctx context.Context, keepBackup bool, onProgress manager.ProgressCallback) error {
 	return nil
 }

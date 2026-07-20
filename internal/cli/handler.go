@@ -82,7 +82,19 @@ func (h *Handler) AutoStart(ctx context.Context, enabled bool) int {
 }
 
 func (h *Handler) Install(ctx context.Context, version string, autoStart bool) int {
-	err := h.lifecycle.Install(ctx, version, autoStart, func(e manager.ProgressEvent) {
+	return h.installWithCallback(ctx, func(cb manager.ProgressCallback) error {
+		return h.lifecycle.Install(ctx, version, autoStart, cb)
+	})
+}
+
+func (h *Handler) InstallFromLocal(ctx context.Context, localPath string, autoStart bool) int {
+	return h.installWithCallback(ctx, func(cb manager.ProgressCallback) error {
+		return h.lifecycle.InstallFromLocal(ctx, localPath, autoStart, cb)
+	})
+}
+
+func (h *Handler) installWithCallback(ctx context.Context, do func(manager.ProgressCallback) error) int {
+	err := do(func(e manager.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "
