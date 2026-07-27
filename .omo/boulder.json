@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "active_work_id": null,
+  "works": {
+    "decouple-architecture": {
+      "work_id": "decouple-architecture",
+      "active_plan": ".omo/plans/decouple-architecture.md",
+      "plan_name": "decouple-architecture",
+      "session_ids": ["codex:current"],
+      "status": "completed",
+      "worktree_path": null
+    }
+  }
+}

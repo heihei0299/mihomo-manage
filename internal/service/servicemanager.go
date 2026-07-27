@@ -1,10 +1,12 @@
-package manager
+package service
 
 import (
 	"bytes"
 	"fmt"
 	"runtime"
 	"strings"
+
+	"github.com/anomalyco/mihomo-manager/internal/infra"
 )
 
 type osStrategy interface {
@@ -20,7 +22,7 @@ type osStrategy interface {
 	disableAutoStart(name string) error
 }
 
-type linuxSystemctl struct{ cmd CommandRunner }
+type linuxSystemctl struct{ cmd infra.CommandRunner }
 
 func (l linuxSystemctl) isActive(name string) (bool, error) {
 	out, err := l.cmd.RunCommandIgnoreExit("systemctl", "is-active", name)
@@ -95,8 +97,8 @@ func (l linuxSystemctl) disableAutoStart(name string) error {
 }
 
 type darwinLaunchctl struct {
-	cmd CommandRunner
-	fs  FileSystem
+	cmd infra.CommandRunner
+	fs  infra.FileSystem
 }
 
 func (d darwinLaunchctl) isActive(name string) (bool, error) {
@@ -209,7 +211,7 @@ func (d darwinLaunchctl) disableAutoStart(name string) error {
 	return err
 }
 
-func strategyFor(cmd CommandRunner, fs FileSystem, os string) osStrategy {
+func strategyFor(cmd infra.CommandRunner, fs infra.FileSystem, os string) osStrategy {
 	switch os {
 	case "linux":
 		return linuxSystemctl{cmd: cmd}
@@ -240,12 +242,12 @@ type errUnsupportedOS struct{ os string }
 func (e errUnsupportedOS) Error() string { return fmt.Sprintf("unsupported OS: %s", e.os) }
 
 type OSServiceManager struct {
-	cmd    CommandRunner
-	fs     FileSystem
+	cmd    infra.CommandRunner
+	fs     infra.FileSystem
 	osType string
 }
 
-func NewOSServiceManager(cmd CommandRunner, fs FileSystem) *OSServiceManager {
+func NewOSServiceManager(cmd infra.CommandRunner, fs infra.FileSystem) *OSServiceManager {
 	return &OSServiceManager{cmd: cmd, fs: fs}
 }
 

@@ -12,7 +12,11 @@ import (
 	"time"
 
 	"github.com/anomalyco/mihomo-manager/internal/cli"
-	"github.com/anomalyco/mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/config"
+	"github.com/anomalyco/mihomo-manager/internal/domain"
+	"github.com/anomalyco/mihomo-manager/internal/infra"
+	"github.com/anomalyco/mihomo-manager/internal/schedmgr"
+	"github.com/anomalyco/mihomo-manager/internal/service"
 )
 
 var (
@@ -21,14 +25,16 @@ var (
 )
 
 func main() {
-	oss := &manager.OSSystem{}
-	svcMgr := manager.NewOSServiceManager(oss, oss)
-	ctrl := manager.NewServiceControl(oss, oss, svcMgr)
-	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svcMgr)
-	cfg := manager.NewConfigManager(oss, oss, manager.NewConfigValidator(), func(ctx context.Context) error {
-		return svcMgr.Reload(manager.ServiceName)
+	fs := &infra.OSFileSystem{}
+	cmd := &infra.OSCommandRunner{}
+	release := &infra.GitHubRepo{}
+	svcMgr := service.NewOSServiceManager(cmd, fs)
+	ctrl := service.NewController(fs, cmd, svcMgr)
+	lifecycle := service.NewLifecycle(fs, cmd, release, svcMgr)
+	cfg := config.NewManager(fs, release, config.NewValidator(cmd), func(ctx context.Context) error {
+		return svcMgr.Reload(config.ServiceName)
 	})
-	sched := manager.NewScheduleManager(oss, func(ctx context.Context) {
+	sched := schedmgr.NewManager(fs, func(ctx context.Context) {
 		if err := cfg.UpdateConfig(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "schedule: update failed: %v\n", err)
 		}
@@ -172,9 +178,9 @@ func main() {
 		case "preview":
 			exitCode = h.PreviewConfig(ctx)
 		case "template", "rules":
-			path := manager.ConfigTemplatePath
+			path := config.ConfigTemplatePath
 			if args[1] == "rules" {
-				path = manager.RoutingRulesPath
+				path = config.RoutingRulesPath
 			}
 			cliEditFile(cfg, path, args[2:])
 			return
@@ -292,7 +298,7 @@ func cliLogs(args []string) {
 	}
 }
 
-func cliEditFile(cfg manager.ConfigManager, path string, args []string) {
+func cliEditFile(cfg domain.ConfigManager, path string, args []string) {
 	if len(args) != 1 || args[0] != "edit" {
 		fmt.Fprintf(os.Stderr, "usage: mihomo-manager %s edit\n", path)
 		os.Exit(1)

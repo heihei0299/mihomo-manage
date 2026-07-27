@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/anomalyco/mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/domain"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -43,12 +43,12 @@ const (
 )
 
 type actionDef struct {
-	enabled func(*manager.Status) bool
+	enabled func(*domain.Status) bool
 }
 
 var (
-	installedStopped = func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Stopped }
-	installedRunning = func(s *manager.Status) bool { return s != nil && s.Installed && s.InstanceState == manager.Running }
+	installedStopped = func(s *domain.Status) bool { return s != nil && s.Installed && s.InstanceState == domain.Stopped }
+	installedRunning = func(s *domain.Status) bool { return s != nil && s.Installed && s.InstanceState == domain.Running }
 )
 
 var actionRegistry = map[action]actionDef{
@@ -59,10 +59,10 @@ var actionRegistry = map[action]actionDef{
 }
 
 type model struct {
-	control        manager.ServiceControl
-	lifecycle      manager.LifecycleManager
-	config         manager.ConfigManager
-	status         *manager.Status
+	control        domain.ServiceControl
+	lifecycle      domain.LifecycleManager
+	config         domain.ConfigManager
+	status         *domain.Status
 	statusErr      error
 	ready          bool
 	executing      action
@@ -73,14 +73,14 @@ type model struct {
 
 	mode           viewMode
 	keepBackup     bool
-	versions       []manager.VersionInfo
+	versions       []domain.VersionInfo
 	selectedIdx    int
 	configTab      configTab
 	previewContent string
 }
 
 type statusMsg struct {
-	status *manager.Status
+	status *domain.Status
 	err    error
 }
 
@@ -90,13 +90,13 @@ type actionDoneMsg struct {
 }
 
 type progressMsg struct {
-	phase   manager.InstallationPhase
+	phase   domain.InstallationPhase
 	message string
 	err     error
 }
 
 type versionsMsg struct {
-	versions []manager.VersionInfo
+	versions []domain.VersionInfo
 	err      error
 }
 
@@ -109,28 +109,28 @@ func (m model) Init() tea.Cmd {
 	return fetchStatusCmd(m.control)
 }
 
-func fetchStatusCmd(ctrl manager.ServiceControl) tea.Cmd {
+func fetchStatusCmd(ctrl domain.ServiceControl) tea.Cmd {
 	return func() tea.Msg {
 		s, err := ctrl.Status(context.Background())
 		return statusMsg{status: s, err: err}
 	}
 }
 
-func fetchConfigPreview(cfg manager.ConfigManager) tea.Cmd {
+func fetchConfigPreview(cfg domain.ConfigManager) tea.Cmd {
 	return func() tea.Msg {
 		s, err := cfg.PreviewConfig(context.Background())
 		return configPreviewMsg{content: s, err: err}
 	}
 }
 
-func fetchVersionsCmd(lifecycle manager.LifecycleManager) tea.Cmd {
+func fetchVersionsCmd(lifecycle domain.LifecycleManager) tea.Cmd {
 	return func() tea.Msg {
 		v, err := lifecycle.ListVersions(context.Background())
 		return versionsMsg{versions: v, err: err}
 	}
 }
 
-func execActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
+func execActionCmd(ctrl domain.ServiceControl, lifecycle domain.LifecycleManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		ctx := context.Background()
@@ -144,19 +144,19 @@ func execActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManag
 		case actReload:
 			err = ctrl.Reload(ctx)
 		case actInstall:
-			err = lifecycle.Install(ctx, version, true, func(e manager.ProgressEvent) {
+			err = lifecycle.Install(ctx, version, true, func(e domain.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
 			})
 		case actUpgrade:
-			err = lifecycle.Upgrade(ctx, version, func(e manager.ProgressEvent) {
+			err = lifecycle.Upgrade(ctx, version, func(e domain.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
 			})
 		case actUninstall:
-			err = lifecycle.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
+			err = lifecycle.Uninstall(ctx, keepBackup, func(e domain.ProgressEvent) {
 				if progressCh != nil {
 					progressCh <- progressMsg{phase: e.Phase, message: e.Message, err: e.Error}
 				}
@@ -360,11 +360,11 @@ func progressReaderCmd(ch <-chan progressMsg) tea.Cmd {
 	}
 }
 
-func isInstalled(s *manager.Status) bool {
+func isInstalled(s *domain.Status) bool {
 	return s != nil && s.Installed
 }
 
-func isActionAllowed(s *manager.Status, a action) bool {
+func isActionAllowed(s *domain.Status, a action) bool {
 	if s == nil {
 		return false
 	}
@@ -551,7 +551,7 @@ func (m model) configView() string {
 	return tabLine + content + "\n\nTab/← → switch tab  r) refresh preview  q) back"
 }
 
-func startTUI(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager) error {
+func startTUI(ctrl domain.ServiceControl, lifecycle domain.LifecycleManager, cfg domain.ConfigManager) error {
 	p := tea.NewProgram(model{control: ctrl, lifecycle: lifecycle, config: cfg})
 	_, err := p.Run()
 	return err

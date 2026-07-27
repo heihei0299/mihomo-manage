@@ -1,50 +1,51 @@
-package manager
+package config
 
 import (
 	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	"github.com/anomalyco/mihomo-manager/internal/domain"
+	"github.com/anomalyco/mihomo-manager/internal/infra"
 )
 
-type ConfigValidator interface {
-	Validate(ctx context.Context, configPath string) error
+// validator implements domain.ConfigValidator using infra.CommandRunner.
+type validator struct {
+	cmd infra.CommandRunner
 }
 
-type configValidator struct{}
+// NewValidator returns a domain.ConfigValidator that validates mihomo config via the binary.
+func NewValidator(cmd infra.CommandRunner) domain.ConfigValidator {
+	return &validator{cmd: cmd}
+}
 
-func (v *configValidator) Validate(ctx context.Context, configPath string) error {
-	cmd := exec.Command(binaryPath, "-t", "-d", configDir)
-	out, err := cmd.CombinedOutput()
+func (v *validator) Validate(ctx context.Context, configPath string) error {
+	out, err := v.cmd.RunCommand(BinaryPath, "-t", "-d", ConfigDir)
 	if err != nil {
-		return fmt.Errorf("config validation failed:\n%s", string(out))
+		return fmt.Errorf("config validation failed:\n%s", out)
 	}
 	return nil
 }
 
-type ConfigPipeline interface {
-	SetSubscriptionSource(ctx context.Context, source string) error
-	SetRoutingRules(ctx context.Context, rules string) error
-	Preview(ctx context.Context) (string, error)
-	Apply(ctx context.Context) error
-}
-
+// ConfigPipelineOptions configures the config pipeline behaviour.
 type ConfigPipelineOptions struct {
 	OnReload  func(ctx context.Context) error
-	Validator ConfigValidator
+	Validator domain.ConfigValidator
 }
 
-type configPipeline struct {
-	fs       FileSystem
-	gh       GitHubReleases
+// pipeline implements domain.ConfigPipeline.
+type pipeline struct {
+	fs       infra.FileSystem
+	gh       infra.ReleaseRepo
 	onReload func(ctx context.Context) error
-	validate ConfigValidator
+	validate domain.ConfigValidator
 }
 
-func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOptions) *configPipeline {
-	p := &configPipeline{fs: fs, gh: gh}
+// NewPipeline returns a domain.ConfigPipeline that generates and applies mihomo config.
+func NewPipeline(fs infra.FileSystem, gh infra.ReleaseRepo, opts ConfigPipelineOptions) domain.ConfigPipeline {
+	p := &pipeline{fs: fs, gh: gh}
 	if opts.OnReload != nil {
 		p.onReload = opts.OnReload
 	}
@@ -76,22 +77,22 @@ func hasTopLevelKeys(data []byte) bool {
 	return false
 }
 
-func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
-	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
+func (p *pipeline) SetSubscriptionSource(ctx context.Context, source string) error {
+	if err := p.fs.MkdirAll(StateDir, FilePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
-	if looksLikeURL(source) {
-		return p.fs.WriteFile(subscriptionURLFile, []byte(source), filePermUserRW)
+	if domain.LooksLikeURL(source) {
+		return p.fs.WriteFile(SubscriptionURLFile, []byte(source), FilePermUserRW)
 	}
-	return p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW)
+	return p.fs.WriteFile(SubscriptionDataFile, []byte(source), FilePermUserRW)
 }
 
-func (p *configPipeline) SetRoutingRules(ctx context.Context, rules string) error {
-	return p.fs.WriteFile(RoutingRulesPath, []byte(rules), filePermUserRW)
+func (p *pipeline) SetRoutingRules(ctx context.Context, rules string) error {
+	return p.fs.WriteFile(RoutingRulesPath, []byte(rules), FilePermUserRW)
 }
 
-func (p *configPipeline) Preview(ctx context.Context) (string, error) {
-	subData, err := p.fs.ReadFile(subscriptionDataFile)
+func (p *pipeline) Preview(ctx context.Context) (string, error) {
+	subData, err := p.fs.ReadFile(SubscriptionDataFile)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
@@ -117,8 +118,8 @@ func (p *configPipeline) Preview(ctx context.Context) (string, error) {
 	return renderConfig(string(tmpl), subStr, string(rulesData))
 }
 
-func (p *configPipeline) Apply(ctx context.Context) error {
-	data, err := p.fs.ReadFile(subscriptionURLFile)
+func (p *pipeline) Apply(ctx context.Context) error {
+	data, err := p.fs.ReadFile(SubscriptionURLFile)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("reading subscription URL: %w", err)
@@ -126,7 +127,7 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 	} else {
 		url := strings.TrimSpace(string(data))
 		if url != "" {
-			tmpPath := subscriptionDataFile + ".tmp"
+			tmpPath := SubscriptionDataFile + ".tmp"
 			if err := p.gh.Download(ctx, url, tmpPath); err != nil {
 				return fmt.Errorf("fetching subscription: %w", err)
 			}
@@ -138,16 +139,16 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 				p.fs.Remove(tmpPath)
 				return fmt.Errorf("fetched subscription content is empty")
 			}
-			p.fs.WriteFile(subscriptionDataFile, fetched, filePermUserRW)
+			p.fs.WriteFile(SubscriptionDataFile, fetched, FilePermUserRW)
 			p.fs.Remove(tmpPath)
 		}
 	}
 
 	if !p.fs.FileExists(ConfigTemplatePath) {
-		if err := p.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
+		if err := p.fs.MkdirAll(ConfigDir, FilePermUserRWX); err != nil {
 			return err
 		}
-		if err := p.fs.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(ConfigTemplatePath, DefaultTemplate, FilePermUserRW); err != nil {
 			return err
 		}
 	}
@@ -162,26 +163,26 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 	}
 
 	var backupPath string
-	if p.fs.FileExists(configYAML) {
-		backupPath = configYAML + ".bak." + timestamp()
-		existing, err := p.fs.ReadFile(configYAML)
+	if p.fs.FileExists(ConfigYAML) {
+		backupPath = ConfigYAML + ".bak." + domain.Timestamp()
+		existing, err := p.fs.ReadFile(ConfigYAML)
 		if err != nil {
 			return err
 		}
-		if err := p.fs.WriteFile(backupPath, existing, filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(backupPath, existing, FilePermUserRW); err != nil {
 			return err
 		}
 	}
 
-	if err := p.fs.WriteFile(configYAML, []byte(preview), filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(ConfigYAML, []byte(preview), FilePermUserRW); err != nil {
 		return err
 	}
 
 	if p.validate != nil {
-		if err := p.validate.Validate(ctx, configYAML); err != nil {
+		if err := p.validate.Validate(ctx, ConfigYAML); err != nil {
 			if backupPath != "" {
 				if bak, rErr := p.fs.ReadFile(backupPath); rErr == nil {
-					p.fs.WriteFile(configYAML, bak, filePermUserRW)
+					p.fs.WriteFile(ConfigYAML, bak, FilePermUserRW)
 				}
 			}
 			return err

@@ -8,21 +8,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anomalyco/mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/domain"
 )
 
 type mockControl struct {
-	statusFn    func() (*manager.Status, error)
+	statusFn    func() (*domain.Status, error)
 	startFn     func() error
 	stopFn      func() error
 	autoStartFn func(enabled bool) error
 }
 
-func (m *mockControl) Status(ctx context.Context) (*manager.Status, error) {
+func (m *mockControl) Status(ctx context.Context) (*domain.Status, error) {
 	if m.statusFn != nil {
 		return m.statusFn()
 	}
-	return &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v1.0.0", AutoStartEnabled: true}, nil
+	return &domain.Status{Installed: true, InstanceState: domain.Running, Version: "v1.0.0", AutoStartEnabled: true}, nil
 }
 
 func (m *mockControl) Start(ctx context.Context) error {
@@ -51,37 +51,37 @@ func (m *mockControl) SetAutoStart(ctx context.Context, enabled bool) error {
 }
 
 type mockLifecycle struct {
-	installFn      func(version string, autoStart bool, cb manager.ProgressCallback) error
-	listVersionsFn func() ([]manager.VersionInfo, error)
+	installFn      func(version string, autoStart bool, cb domain.ProgressCallback) error
+	listVersionsFn func() ([]domain.VersionInfo, error)
 }
 
-func (m *mockLifecycle) Install(ctx context.Context, version string, autoStart bool, onProgress manager.ProgressCallback) error {
+func (m *mockLifecycle) Install(ctx context.Context, version string, autoStart bool, onProgress domain.ProgressCallback) error {
 	if m.installFn != nil {
 		return m.installFn(version, autoStart, onProgress)
 	}
 	return nil
 }
 
-func (m *mockLifecycle) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress manager.ProgressCallback) error {
+func (m *mockLifecycle) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress domain.ProgressCallback) error {
 	if m.installFn != nil {
 		return m.installFn(localPath, autoStart, onProgress)
 	}
 	return nil
 }
 
-func (m *mockLifecycle) Uninstall(ctx context.Context, keepBackup bool, onProgress manager.ProgressCallback) error {
+func (m *mockLifecycle) Uninstall(ctx context.Context, keepBackup bool, onProgress domain.ProgressCallback) error {
 	return nil
 }
 
-func (m *mockLifecycle) Upgrade(ctx context.Context, version string, onProgress manager.ProgressCallback) error {
+func (m *mockLifecycle) Upgrade(ctx context.Context, version string, onProgress domain.ProgressCallback) error {
 	return nil
 }
 
-func (m *mockLifecycle) ListVersions(ctx context.Context) ([]manager.VersionInfo, error) {
+func (m *mockLifecycle) ListVersions(ctx context.Context) ([]domain.VersionInfo, error) {
 	if m.listVersionsFn != nil {
 		return m.listVersionsFn()
 	}
-	return []manager.VersionInfo{{Tag: "v1.0.0"}}, nil
+	return []domain.VersionInfo{{Tag: "v1.0.0"}}, nil
 }
 
 type mockConfig struct {
@@ -157,8 +157,8 @@ func TestStatusRunning(t *testing.T) {
 func TestStatusNotInstalled(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	h := New(&mockControl{
-		statusFn: func() (*manager.Status, error) {
-			return &manager.Status{Installed: false}, nil
+		statusFn: func() (*domain.Status, error) {
+			return &domain.Status{Installed: false}, nil
 		},
 	}, &mockLifecycle{}, &mockConfig{}, &mockSchedule{}, &stdout, &stderr)
 
@@ -175,7 +175,7 @@ func TestStatusNotInstalled(t *testing.T) {
 func TestStatusError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	h := New(&mockControl{
-		statusFn: func() (*manager.Status, error) {
+		statusFn: func() (*domain.Status, error) {
 			return nil, errors.New("service not found")
 		},
 	}, &mockLifecycle{}, &mockConfig{}, &mockSchedule{}, &stdout, &stderr)

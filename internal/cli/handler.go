@@ -7,19 +7,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anomalyco/mihomo-manager/internal/manager"
+	"github.com/anomalyco/mihomo-manager/internal/domain"
 )
 
 type Handler struct {
-	control   manager.ServiceControl
-	lifecycle manager.LifecycleManager
-	config    manager.ConfigManager
-	schedule  manager.ScheduleManager
+	control   domain.ServiceControl
+	lifecycle domain.LifecycleManager
+	config    domain.ConfigManager
+	schedule  domain.ScheduleManager
 	stdout    io.Writer
 	stderr    io.Writer
 }
 
-func New(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, config manager.ConfigManager, sched manager.ScheduleManager, stdout, stderr io.Writer) *Handler {
+func New(ctrl domain.ServiceControl, lifecycle domain.LifecycleManager, config domain.ConfigManager, sched domain.ScheduleManager, stdout, stderr io.Writer) *Handler {
 	return &Handler{control: ctrl, lifecycle: lifecycle, config: config, schedule: sched, stdout: stdout, stderr: stderr}
 }
 
@@ -53,13 +53,13 @@ func (h *Handler) Status(ctx context.Context) int {
 	}
 
 	switch status.InstanceState {
-	case manager.Running:
+	case domain.Running:
 		h.printf("mihomo: running  (version: %s)  autostart: %s\n", status.Version, autostart)
 		return 0
-	case manager.Stopped:
+	case domain.Stopped:
 		h.printf("mihomo: stopped  (version: %s)  autostart: %s\n", status.Version, autostart)
 		return 1
-	case manager.Upgrading:
+	case domain.Upgrading:
 		h.println("mihomo: upgrading")
 		return 1
 	default:
@@ -82,19 +82,19 @@ func (h *Handler) AutoStart(ctx context.Context, enabled bool) int {
 }
 
 func (h *Handler) Install(ctx context.Context, version string, autoStart bool) int {
-	return h.installWithCallback(ctx, func(cb manager.ProgressCallback) error {
+	return h.installWithCallback(ctx, func(cb domain.ProgressCallback) error {
 		return h.lifecycle.Install(ctx, version, autoStart, cb)
 	})
 }
 
 func (h *Handler) InstallFromLocal(ctx context.Context, localPath string, autoStart bool) int {
-	return h.installWithCallback(ctx, func(cb manager.ProgressCallback) error {
+	return h.installWithCallback(ctx, func(cb domain.ProgressCallback) error {
 		return h.lifecycle.InstallFromLocal(ctx, localPath, autoStart, cb)
 	})
 }
 
-func (h *Handler) installWithCallback(ctx context.Context, do func(manager.ProgressCallback) error) int {
-	err := do(func(e manager.ProgressEvent) {
+func (h *Handler) installWithCallback(ctx context.Context, do func(domain.ProgressCallback) error) int {
+	err := do(func(e domain.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "
@@ -112,7 +112,7 @@ func (h *Handler) installWithCallback(ctx context.Context, do func(manager.Progr
 }
 
 func (h *Handler) Uninstall(ctx context.Context, keepBackup bool) int {
-	err := h.lifecycle.Uninstall(ctx, keepBackup, func(e manager.ProgressEvent) {
+	err := h.lifecycle.Uninstall(ctx, keepBackup, func(e domain.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "
@@ -128,7 +128,7 @@ func (h *Handler) Uninstall(ctx context.Context, keepBackup bool) int {
 }
 
 func (h *Handler) Upgrade(ctx context.Context, version string) int {
-	err := h.lifecycle.Upgrade(ctx, version, func(e manager.ProgressEvent) {
+	err := h.lifecycle.Upgrade(ctx, version, func(e domain.ProgressEvent) {
 		prefix := "  "
 		if e.Error != nil {
 			prefix = "✗ "

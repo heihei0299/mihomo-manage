@@ -1,22 +1,25 @@
-package manager
+package schedmgr
 
 import (
 	"context"
 	"time"
 
+	"github.com/anomalyco/mihomo-manager/internal/config"
+	"github.com/anomalyco/mihomo-manager/internal/domain"
+	"github.com/anomalyco/mihomo-manager/internal/infra"
 	"github.com/anomalyco/mihomo-manager/internal/scheduler"
 )
 
 type scheduleManager struct {
-	fs        FileSystem
+	fs        infra.FileSystem
 	scheduler scheduler.Scheduler
 	taskFn    func(ctx context.Context)
 }
 
-func NewScheduleManager(fs FileSystem, task func(ctx context.Context)) ScheduleManager {
+func NewManager(fs infra.FileSystem, task func(ctx context.Context)) domain.ScheduleManager {
 	return &scheduleManager{
 		fs:        fs,
-		scheduler: scheduler.New(fs, scheduleFile),
+		scheduler: scheduler.New(fs, config.ScheduleFile),
 		taskFn:    task,
 	}
 }

@@ -1,9 +1,11 @@
-package manager
+package service
 
 import (
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/anomalyco/mihomo-manager/internal/config"
 )
 
 func serviceUnitPath() string {
@@ -68,12 +70,10 @@ WantedBy=multi-user.target
 `)
 }
 
-var defaultReleaseTemplate = "https://github.com/MetaCubeX/mihomo/releases/download/{version}/mihomo-{os}-{arch}-{version}.gz"
-
 func releaseURL(goos, goarch, version string) string {
 	tmpl := os.Getenv("MIHOMO_RELEASE_URL")
 	if tmpl == "" {
-		tmpl = defaultReleaseTemplate
+		tmpl = config.DefaultReleaseTemplate
 	}
 	r := strings.NewReplacer(
 		"{os}", goos,
