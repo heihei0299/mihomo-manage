@@ -27,3 +27,7 @@ func (m *configManager) PreviewConfig(ctx context.Context) (string, error) {
 func (m *configManager) UpdateConfig(ctx context.Context) error {
 	return m.pipeline.Apply(ctx)
 }
+
+func (m *configManager) AdoptConfig(ctx context.Context, force bool) (AdoptReport, error) {
+	return m.pipeline.Adopt(ctx, force)
+}

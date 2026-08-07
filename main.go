@@ -171,6 +171,14 @@ func main() {
 		switch args[1] {
 		case "preview":
 			exitCode = h.PreviewConfig(ctx)
+		case "adopt":
+			force := false
+			for _, a := range args[2:] {
+				if a == "--force" {
+					force = true
+				}
+			}
+			exitCode = h.AdoptConfig(ctx, force)
 		case "template":
 			cliEditFile(cfg, manager.OverrideFilePath, args[2:])
 			return
@@ -352,6 +360,7 @@ Subscription:
 
 Config:
   config preview              Preview generated config
+  config adopt [--force]      Adopt manual config.yaml changes into override
   config template             Edit config template ($EDITOR)
   config rules                Edit routing rules ($EDITOR)
 

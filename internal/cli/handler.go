@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -204,6 +205,30 @@ func (h *Handler) UpdateConfig(ctx context.Context) int {
 		return 1
 	}
 	h.println("config updated")
+	return 0
+}
+
+func (h *Handler) AdoptConfig(ctx context.Context, force bool) int {
+	report, err := h.config.AdoptConfig(ctx, force)
+	if err != nil {
+		if errors.Is(err, manager.ErrAdoptNeedsConfirmation) {
+			h.printf("large diff: %d field(s) differ: %s\n", len(report.Fields), strings.Join(report.Fields, ", "))
+			h.errorf("run 'config adopt --force' to apply\n")
+			return 1
+		}
+		h.errorf("error: %v\n", err)
+		return 1
+	}
+	if report.NoChanges {
+		h.println("no changes to adopt")
+		return 0
+	}
+	if len(report.Fields) > 0 {
+		h.printf("adopted %d field(s): %s\n", len(report.Fields), strings.Join(report.Fields, ", "))
+	}
+	if len(report.ArrayDiff) > 0 {
+		h.printf("array differences skipped (not adopted): %s\n", strings.Join(report.ArrayDiff, ", "))
+	}
 	return 0
 }
 

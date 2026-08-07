@@ -88,6 +88,14 @@ type mockConfig struct {
 	previewFn         func() (string, error)
 	setSubscriptionFn func(url string) error
 	updateConfigFn    func() error
+	adoptConfigFn     func(force bool) (manager.AdoptReport, error)
+}
+
+func (m *mockConfig) AdoptConfig(ctx context.Context, force bool) (manager.AdoptReport, error) {
+	if m.adoptConfigFn != nil {
+		return m.adoptConfigFn(force)
+	}
+	return manager.AdoptReport{NoChanges: true}, nil
 }
 
 func (m *mockConfig) SetSubscriptionSource(ctx context.Context, url string) error {
@@ -277,5 +285,58 @@ func TestPreviewConfig(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "example") {
 		t.Errorf("stdout should contain config content, got %q", stdout.String())
+	}
+}
+
+func TestHandlerAdoptConfigNoChanges(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		adoptConfigFn: func(bool) (manager.AdoptReport, error) {
+			return manager.AdoptReport{NoChanges: true}, nil
+		},
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.AdoptConfig(context.Background(), false)
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "no changes") {
+		t.Errorf("stdout should report no changes, got %q", stdout.String())
+	}
+}
+
+func TestHandlerAdoptConfigLargeDiff(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		adoptConfigFn: func(bool) (manager.AdoptReport, error) {
+			return manager.AdoptReport{Fields: []string{"a", "b", "c", "d", "e"}, LargeDiff: true}, manager.ErrAdoptNeedsConfirmation
+		},
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.AdoptConfig(context.Background(), false)
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "--force") {
+		t.Errorf("stderr should suggest --force, got %q", stderr.String())
+	}
+}
+
+func TestHandlerAdoptConfigAdopts(t *testing.T) {
+	var stdout, stderr strings.Builder
+	report := manager.AdoptReport{Fields: []string{"port", "mode"}, ArrayDiff: []string{"proxies"}}
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		adoptConfigFn: func(bool) (manager.AdoptReport, error) { return report, nil },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.AdoptConfig(context.Background(), false)
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "port") || !strings.Contains(stdout.String(), "mode") {
+		t.Errorf("stdout should list adopted fields, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "proxies") {
+		t.Errorf("stdout should list skipped arrays, got %q", stdout.String())
 	}
 }

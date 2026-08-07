@@ -110,6 +110,7 @@ Usage of mihomo-manager:
   status            Show mihomo status
   logs [--tail=N] [--follow]  View mihomo logs
   config preview    Preview generated config
+  config adopt [--force]  Adopt manual config.yaml changes into override
   subscription set string  Set subscription source
   subscription update     Refresh and apply subscription
   subscription schedule [--interval|--off]  View/configure auto-refresh
