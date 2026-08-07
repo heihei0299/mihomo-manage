@@ -402,12 +402,12 @@ mihomo-manager config preview | head -5 | grep -q "^port:"
 
 ---
 
-## AT-12：编辑模板
+## AT-12：编辑覆写文件
 
 | 项目 | 内容 |
 |------|------|
 | **前置** | mihomo 已安装 |
-| **命令** | `mihomo-manager template edit` |
+| **命令** | `mihomo-manager config override edit` |
 | **通过条件** | 全部满足 |
 
 ### 行为
@@ -786,7 +786,7 @@ AT-22 保留 `/opt/mihomo/etc/config.yaml`（或 `.bak.*`）和 `/opt/mihomo-man
 | 09 | 订阅源 | ⬜ | |
 | 10 | 订阅更新 | ⬜ | |
 | 11 | 预览配置 | ⬜ | |
-| 12 | 编辑模板 | ⬜ | |
+| 12 | 编辑覆写文件 | ⬜ | |
 | 13 | 编辑规则 | ⬜ | |
 | 14 | 版本列表 | ⬜ | |
 | 15 | 升级 | ⬜ | |

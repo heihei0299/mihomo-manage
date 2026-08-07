@@ -22,7 +22,7 @@ type configTab int
 
 const (
 	configTabSubscription configTab = iota
-	configTabTemplate
+	configTabOverride
 	configTabPreview
 )
 
@@ -519,7 +519,7 @@ func (m model) statusView() string {
 }
 
 func (m model) configView() string {
-	tabs := []string{"Subscription", "Template", "Preview"}
+	tabs := []string{"Subscription", "Override", "Preview"}
 	tabLine := ""
 	for i, t := range tabs {
 		sep := "  "
@@ -539,10 +539,10 @@ func (m model) configView() string {
 	case configTabSubscription:
 		content = "Subscription: /opt/mihomo-manager/state/subscription-data.txt\n"
 		content += "Edit with: mihomo-manager subscription set <url-or-data>\n"
-	case configTabTemplate:
-		content = "Config template: /opt/mihomo/etc/config-template.yaml\n"
-		content += "Edit with: mihomo-manager config template edit\n"
-		content += "\nRules are embedded in the template's 'rules:' field.\n"
+	case configTabOverride:
+		content = fmt.Sprintf("Override file: %s\n", manager.OverrideFilePath)
+		content += "Edit with: mihomo-manager config override edit\n"
+		content += "\nRules are embedded in the override file's 'rules:' field.\n"
 	case configTabPreview:
 		if m.previewContent == "" {
 			content = "Loading preview...\n"

@@ -114,7 +114,7 @@ Usage of mihomo-manager:
   subscription set string  Set subscription source
   subscription update     Refresh and apply subscription
   subscription schedule [--interval|--off]  View/configure auto-refresh
-  template edit     Edit config template ($EDITOR)
+  config override edit  Edit override file ($EDITOR)
   rules edit        Edit routing rules ($EDITOR)
 ```
 
