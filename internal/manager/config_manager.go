@@ -7,4 +7,5 @@ type ConfigManager interface {
 	SetRoutingRules(ctx context.Context, rules string) error
 	PreviewConfig(ctx context.Context) (string, error)
 	UpdateConfig(ctx context.Context) error
+	ValidateConfig(ctx context.Context) error
 }

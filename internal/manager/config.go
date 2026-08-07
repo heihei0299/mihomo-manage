@@ -182,3 +182,12 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 
 	return nil
 }
+
+// Validate runs the configured ConfigValidator against the generated config.
+// A nil validator means validation is a no-op (validation not configured).
+func (p *configPipeline) Validate(ctx context.Context) error {
+	if p.validate == nil {
+		return nil
+	}
+	return p.validate.Validate(ctx, configYAML)
+}
