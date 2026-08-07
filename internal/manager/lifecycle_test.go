@@ -65,7 +65,7 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 			configYAML:          true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath:  []byte("mode: rule\n"),
+			OverrideFilePath:     []byte("mode: rule\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},

@@ -75,6 +75,12 @@ func (p *configPipeline) migrateLegacyTemplate() {
 	p.warn("migrated config-template.yaml to override.yaml. The old file name is no longer recognized.")
 }
 
+func renderConfig(template, subscription, routingRules string) (string, error) {
+	result := strings.ReplaceAll(template, "{{subscription}}", subscription)
+	result = strings.ReplaceAll(result, "{{routing_rules}}", routingRules)
+	return result, nil
+}
+
 func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
 	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
@@ -100,6 +106,7 @@ func (p *configPipeline) Preview(ctx context.Context) (string, error) {
 	if tmplErr == nil {
 		tmplStr = string(tmpl)
 	}
+
 	subStr := ""
 	if err == nil {
 		subStr = string(subData)
@@ -180,4 +187,13 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Validate runs the configured ConfigValidator against the generated config.
+// A nil validator means validation is a no-op (validation not configured).
+func (p *configPipeline) Validate(ctx context.Context) error {
+	if p.validate == nil {
+		return nil
+	}
+	return p.validate.Validate(ctx, configYAML)
 }

@@ -145,6 +145,10 @@ func (h *Handler) Upgrade(ctx context.Context, version string) int {
 }
 
 func (h *Handler) Start(ctx context.Context) int {
+	if err := h.config.ValidateConfig(ctx); err != nil {
+		h.errorf("error: %v\n", err)
+		return 1
+	}
 	if err := h.control.Start(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
@@ -163,6 +167,10 @@ func (h *Handler) Stop(ctx context.Context) int {
 }
 
 func (h *Handler) Restart(ctx context.Context) int {
+	if err := h.config.ValidateConfig(ctx); err != nil {
+		h.errorf("error: %v\n", err)
+		return 1
+	}
 	if err := h.control.Restart(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1

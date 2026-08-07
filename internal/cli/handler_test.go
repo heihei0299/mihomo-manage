@@ -15,6 +15,7 @@ type mockControl struct {
 	statusFn    func() (*manager.Status, error)
 	startFn     func() error
 	stopFn      func() error
+	restartFn   func() error
 	autoStartFn func(enabled bool) error
 }
 
@@ -39,8 +40,12 @@ func (m *mockControl) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockControl) Restart(ctx context.Context) error { return nil }
-
+func (m *mockControl) Restart(ctx context.Context) error {
+	if m.restartFn != nil {
+		return m.restartFn()
+	}
+	return nil
+}
 func (m *mockControl) Reload(ctx context.Context) error { return nil }
 
 func (m *mockControl) SetAutoStart(ctx context.Context, enabled bool) error {
@@ -89,6 +94,7 @@ type mockConfig struct {
 	setSubscriptionFn func(url string) error
 	updateConfigFn    func() error
 	adoptConfigFn     func(force bool) (manager.AdoptReport, error)
+	validateConfigFn  func() error
 }
 
 func (m *mockConfig) AdoptConfig(ctx context.Context, force bool) (manager.AdoptReport, error) {
@@ -115,6 +121,13 @@ func (m *mockConfig) PreviewConfig(ctx context.Context) (string, error) {
 func (m *mockConfig) UpdateConfig(ctx context.Context) error {
 	if m.updateConfigFn != nil {
 		return m.updateConfigFn()
+	}
+	return nil
+}
+
+func (m *mockConfig) ValidateConfig(ctx context.Context) error {
+	if m.validateConfigFn != nil {
+		return m.validateConfigFn()
 	}
 	return nil
 }
@@ -223,6 +236,94 @@ func TestStartError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "error") {
 		t.Errorf("stderr should contain 'error', got %q", stderr.String())
+	}
+}
+
+func TestStartRejectedWhenValidationFails(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	started := false
+	h := New(&mockControl{
+		startFn: func() error { started = true; return nil },
+	}, &mockLifecycle{}, &mockConfig{
+		validateConfigFn: func() error { return errors.New("config invalid") },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.Start(context.Background())
+
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if started {
+		t.Error("Start should not be called when config validation fails")
+	}
+	if !strings.Contains(stderr.String(), "config invalid") {
+		t.Errorf("stderr should contain validation error, got %q", stderr.String())
+	}
+}
+
+func TestStartProceedsWhenValidationPasses(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	started := false
+	h := New(&mockControl{
+		startFn: func() error { started = true; return nil },
+	}, &mockLifecycle{}, &mockConfig{
+		validateConfigFn: func() error { return nil },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.Start(context.Background())
+
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if !started {
+		t.Error("Start should be called when config validation passes")
+	}
+	if !strings.Contains(stdout.String(), "started") {
+		t.Errorf("stdout should contain 'started', got %q", stdout.String())
+	}
+}
+
+func TestRestartRejectedWhenValidationFails(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	restarted := false
+	h := New(&mockControl{
+		restartFn: func() error { restarted = true; return nil },
+	}, &mockLifecycle{}, &mockConfig{
+		validateConfigFn: func() error { return errors.New("config invalid") },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.Restart(context.Background())
+
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if restarted {
+		t.Error("Restart should not be called when config validation fails")
+	}
+	if !strings.Contains(stderr.String(), "config invalid") {
+		t.Errorf("stderr should contain validation error, got %q", stderr.String())
+	}
+}
+
+func TestRestartProceedsWhenValidationPasses(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	restarted := false
+	h := New(&mockControl{
+		restartFn: func() error { restarted = true; return nil },
+	}, &mockLifecycle{}, &mockConfig{
+		validateConfigFn: func() error { return nil },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	code := h.Restart(context.Background())
+
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if !restarted {
+		t.Error("Restart should be called when config validation passes")
+	}
+	if !strings.Contains(stdout.String(), "restarted") {
+		t.Errorf("stdout should contain 'restarted', got %q", stdout.String())
 	}
 }
 

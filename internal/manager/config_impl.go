@@ -31,3 +31,7 @@ func (m *configManager) UpdateConfig(ctx context.Context) error {
 func (m *configManager) AdoptConfig(ctx context.Context, force bool) (AdoptReport, error) {
 	return m.pipeline.Adopt(ctx, force)
 }
+
+func (m *configManager) ValidateConfig(ctx context.Context) error {
+	return m.pipeline.Validate(ctx)
+}
