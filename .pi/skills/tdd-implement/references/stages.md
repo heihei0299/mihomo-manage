@@ -128,7 +128,8 @@
    - **Standards 轴**：改动是否符合仓库文档化的编码标准（含 smell baseline 判断）
    - **Spec 轴**：改动是否忠实实现来源 spec/issue（逐条对照验收要求）
    - 两轴独立报告、**互不掩盖**——一轴通过另一轴失败时仍须修复后重审
-2. 审查发现的问题按 [SKILL.md 回退路由](../SKILL.md#回退路由) 处理
+2. **派发方式（强制）**：两轴必须用 subagent **single 模式**（`agent`+`task`）或 `subagent_consult` 逐个派发；**禁止 parallel `tasks` 数组**——pi-subagents 对 parallel 结果只保留前 160 字节摘要（`truncateUtf8(summary, 160)`），中文/多行报告必被截断（标记 `… [truncated by pi-subagents]`）。需要更完整输出时，要求子代理把报告写入临时文件，主代理再读取
+3. 审查发现的问题按 [SKILL.md 回退路由](../SKILL.md#回退路由) 处理
 ### 出口条件
 - Code review 通过
 
