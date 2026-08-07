@@ -23,7 +23,6 @@ type configTab int
 const (
 	configTabSubscription configTab = iota
 	configTabTemplate
-	configTabRules
 	configTabPreview
 )
 
@@ -329,10 +328,10 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeStatus
 		return m, nil
 	case "tab", "right":
-		m.configTab = (m.configTab + 1) % 4
+		m.configTab = (m.configTab + 1) % 3
 		return m, nil
 	case "left":
-		m.configTab = (m.configTab - 1 + 4) % 4
+		m.configTab = (m.configTab - 1 + 3) % 3
 		return m, nil
 	case "r":
 		return m, fetchConfigPreview(m.config)
@@ -512,7 +511,7 @@ func (m model) statusView() string {
 }
 
 func (m model) configView() string {
-	tabs := []string{"Subscription", "Template", "Rules", "Preview"}
+	tabs := []string{"Subscription", "Template", "Preview"}
 	tabLine := ""
 	for i, t := range tabs {
 		sep := "  "
@@ -534,10 +533,8 @@ func (m model) configView() string {
 		content += "Edit with: mihomo-manager subscription set <url-or-data>\n"
 	case configTabTemplate:
 		content = "Config template: /opt/mihomo/etc/config-template.yaml\n"
-		content += "Edit with: mihomo-manager template edit\n"
-	case configTabRules:
-		content = "Routing rules: /opt/mihomo/etc/rules.txt\n"
-		content += "Edit with: mihomo-manager rules edit\n"
+		content += "Edit with: mihomo-manager config template edit\n"
+		content += "\nRules are embedded in the template's 'rules:' field.\n"
 	case configTabPreview:
 		if m.previewContent == "" {
 			content = "Loading preview...\n"

@@ -97,8 +97,6 @@ func (m *mockConfig) SetSubscriptionSource(ctx context.Context, url string) erro
 	return nil
 }
 
-func (m *mockConfig) SetRoutingRules(ctx context.Context, rules string) error { return nil }
-
 func (m *mockConfig) PreviewConfig(ctx context.Context) (string, error) {
 	if m.previewFn != nil {
 		return m.previewFn()

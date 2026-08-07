@@ -20,10 +20,6 @@ func (m *configManager) SetSubscriptionSource(ctx context.Context, source string
 	return m.pipeline.SetSubscriptionSource(ctx, source)
 }
 
-func (m *configManager) SetRoutingRules(ctx context.Context, rules string) error {
-	return m.pipeline.SetRoutingRules(ctx, rules)
-}
-
 func (m *configManager) PreviewConfig(ctx context.Context) (string, error) {
 	return m.pipeline.Preview(ctx)
 }
