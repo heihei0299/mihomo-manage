@@ -19,16 +19,22 @@ mihomo-instance 从无到有再到正常运行所经历的阶段序列，依次�
 5. **enable-auto-start** — 条件执行，仅当用户选择开机自启时启用（Linux: `systemctl enable`；Darwin: plist 含 `RunAtLoad`/`KeepAlive`）
 6. **start** — 首次启动服务
 
-## routing-rule
-
-用户自定义的分流规则，以原始 mihomo 兼容语法编写（如 `DOMAIN-SUFFIX,google.com,Proxy`）。模板在渲染时直接拼接到最终配置文件中。
+用户自定义的分流规则，以原始 mihomo 兼容语法编写（如 `DOMAIN-SUFFIX,google.com,Proxy`）。routes 直接内嵌在 override-file 的 `rules:` 字段中，不再有独立的 rules.txt 文件。
 
 ## subscription-source
 
-订阅配置的数据来源。支持两种：
+订阅配置的数据来源，同时也是 config-pipeline 的**基础配置（base）**。支持两种：
 
 - **remote** — 从 URL 订阅链接拉取
 - **local** — 用户手动粘贴的配置内容
+
+config-pipeline 以订阅数据为 base、override-file 为 overlay 进行 YAML 深层合并。
+_Avoid_: filler, 填充物
+
+## subscription-data
+
+订阅内容落地文件（`/opt/mihomo-manager/state/subscription-data.txt`）。remote 来源由 URL 拉取后写入，local 来源为用户粘贴内容直接写入。config-pipeline 合并时作为 base。
+_Avoid_: 被拉去的文件, 拉取文件
 
 ## subscription-update
 
@@ -44,11 +50,13 @@ mihomo-instance 从无到有再到正常运行所经历的阶段序列，依次�
 从原始订阅数据到 mihomo 最终配置文件的转换流水线，封装为一个独立的模块（`ConfigPipeline` 接口）：
 
 1. 从 subscription-source 获取原始数据（remote URL → HTTP 下载，local → 直接读取）
-2. 经过模板渲染（`renderConfig` 简单字符串替换），合并 routing-rule
+2. 经过 **YAML 深层合并**（`mergeConfig`），以订阅数据为 base、override-file 为 overlay 合并
 3. 备份当前配置文件
 4. 输出最终 mihomo 配置文件
 5. 调用 `mihomo -t` 验证配置合法性；失败则自动回滚至备份
 6. 通过 `OnReload` 回调信号通知重载实例
+
+**合并策略：** 覆写文件可覆盖订阅中任意已有字段；订阅缺失的字段由覆写文件补充；特定数组字段（`proxies`、`proxy-groups`、`rules`、`proxy-providers`、`rule-providers`）默认追加到订阅数组末尾，标以 `!replace` 时整体替换。详见 ADR-0007（演进自 ADR-0002）。
 
 **模块边界：** 仅覆盖转换管道本身，不含 install 引导阶段的初始配置写入。
 **重载信号：** 通过注入回调（`OnReload func(ctx) error`）离开模块，不直接依赖 ServiceManager。
@@ -74,14 +82,17 @@ mihomo-instance 从无到有再到正常运行所经历的阶段序列，依次�
 6. **start** — 启动新版本实例
 7. **rollback-on-fail** — 如启动失败，自动回滚至备份的旧版本并恢复运行
 
-## config-template
+## override-file
 
-用户可编辑的模板文件，使用**简单字符串替换**（非 Jinja2/Go template 等引擎）。模板中预留替换点位：
+本地覆写文件（`/opt/mihomo/etc/override.yaml`），用户在订阅之外维护的配置来源，作为 config-pipeline 中的 **overlay** 与订阅数据（base）进行 YAML 深层合并。
 
-- `{{subscription}}` — 订阅数据的占位
-- `{{routing_rules}}` — 用户自定义分流规则占位
+合并语义（见 ADR-0007）：
+- 任意字段可覆盖订阅中已有的同名值（标量、映射均直接替换）
+- 订阅缺失的字段直接补充
+- 数组字段（`proxies`、`proxy-groups`、`rules`、`proxy-providers`、`rule-providers`）默认追加到订阅数组末尾；标以 `!replace` 时整体替换订阅数组
 
-模板文件存放于实例的配置目录中。
+`config.yaml` 是纯生成物（每次刷新重写）；本地定制一律写入覆写文件，`config adopt` 可从既有 `config.yaml` 提取差异迁移。
+_Avoid_: config-template, 模板, config-template.yaml
 
 ## auto-start
 
@@ -113,9 +124,9 @@ manager 在文件系统中的目录结构：
   ├── bin/
   │   └── mihomo                ← mihomo 二进制
   ├── etc/
-  │   ├── config-template.yaml  ← 用户可编辑的模板
-  │   ├── config.yaml           ← 最终生成配置
-  │   └── rules.txt             ← 用户自定义分流规则
+  │   ├── override.yaml           ← 本地覆写文件（YAML overlay）
+  │   ├── config.yaml           ← 最终生成配置（纯生成物）
+  │   └── rules.txt             ← （已废弃）路由规则现内嵌在覆写文件中
   └── run/                      ← 运行时文件（pid 等）
 ```
 
