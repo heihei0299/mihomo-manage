@@ -2,3 +2,4 @@ mihomo-manager
 config-template.yaml
 test.sh
 dist/
+04-issue/
