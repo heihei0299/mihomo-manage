@@ -163,33 +163,7 @@ func main() {
 			exitCode = 1
 		}
 	case "config":
-		if len(args) < 2 {
-			printUsage()
-			exitCode = 1
-			break
-		}
-		switch args[1] {
-		case "preview":
-			exitCode = h.PreviewConfig(ctx)
-		case "adopt":
-			force := false
-			for _, a := range args[2:] {
-				if a == "--force" {
-					force = true
-				}
-			}
-			exitCode = h.AdoptConfig(ctx, force)
-		case "template":
-			cliEditFile(cfg, manager.OverrideFilePath, args[2:])
-			return
-		case "rules":
-			fmt.Fprintln(os.Stderr, "warning: 'config rules' is deprecated. Add routing rules to the 'rules:' field in config-template.yaml instead.")
-			cliEditFile(cfg, manager.RoutingRulesPath, args[2:])
-			return
-		default:
-			fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[1])
-			exitCode = 1
-		}
+		exitCode = handleConfigCommand(h, cfg, ctx, args[1:])
 	case "subscription":
 		exitCode = handleSubscription(h, ctx, args[1:])
 	case "start":
@@ -220,8 +194,7 @@ func main() {
 	case "versions":
 		exitCode = h.Versions(ctx)
 	case "template":
-		fmt.Fprintln(os.Stderr, "error: 'template' is now a config subcommand. Use 'mihomo-manager config template edit' instead.")
-		exitCode = 1
+		exitCode = handleLegacyTemplate()
 	case "rules":
 		fmt.Fprintln(os.Stderr, "error: 'rules' is now a config subcommand. Use 'mihomo-manager config rules edit' instead.")
 		exitCode = 1
@@ -233,11 +206,50 @@ func main() {
 	os.Exit(exitCode)
 }
 
+func deprecatedError(msg string) int {
+	fmt.Fprintln(os.Stderr, "error: "+msg)
+	return 1
+}
+
+func handleConfigCommand(h *cli.Handler, cfg manager.ConfigManager, ctx context.Context, args []string) int {
+	if len(args) == 0 {
+		printUsage()
+		return 1
+	}
+	switch args[0] {
+	case "preview":
+		return h.PreviewConfig(ctx)
+	case "adopt":
+		force := false
+		for _, a := range args[1:] {
+			if a == "--force" {
+				force = true
+			}
+		}
+		return h.AdoptConfig(ctx, force)
+	case "override":
+		return cliEditFile(cfg, manager.OverrideFilePath, args[1:])
+	case "template":
+		return deprecatedError("'config template' is deprecated. Use 'mihomo-manager config override edit' instead.")
+	case "rules":
+		fmt.Fprintln(os.Stderr, "warning: 'config rules' is deprecated. Add routing rules to the 'rules:' field in override.yaml instead.")
+		return cliEditFile(cfg, manager.RoutingRulesPath, args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[0])
+		return 1
+	}
+}
+
+func handleLegacyTemplate() int {
+	return deprecatedError("'template' is deprecated. Use 'mihomo-manager config override edit' instead.")
+}
+
 func handleSubscription(h *cli.Handler, ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: mihomo-manager subscription <set|update|schedule>")
 		return 1
 	}
+
 	switch args[0] {
 	case "set":
 		if len(args) < 2 {
@@ -306,10 +318,10 @@ func cliLogs(args []string) {
 	}
 }
 
-func cliEditFile(cfg manager.ConfigManager, path string, args []string) {
+func cliEditFile(cfg manager.ConfigManager, path string, args []string) int {
 	if len(args) != 1 || args[0] != "edit" {
 		fmt.Fprintf(os.Stderr, "usage: mihomo-manager %s edit\n", path)
-		os.Exit(1)
+		return 1
 	}
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -321,19 +333,24 @@ func cliEditFile(cfg manager.ConfigManager, path string, args []string) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "editor failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := cfg.UpdateConfig(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "config update failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	if !quietMode {
 		fmt.Println("config updated")
 	}
+	return 0
 }
 
 func printUsage() {
-	fmt.Println(`Usage: mihomo-manager [command]
+	fmt.Println(usageText())
+}
+
+func usageText() string {
+return `Usage: mihomo-manager [command]
 
 Flags:
   -c              Preview generated config
@@ -361,7 +378,7 @@ Subscription:
 Config:
   config preview              Preview generated config
   config adopt [--force]      Adopt manual config.yaml changes into override
-  config template             Edit config template ($EDITOR)
+  config override             Edit override file ($EDITOR)
   config rules                Edit routing rules ($EDITOR)
 
 Environments:
@@ -375,48 +392,48 @@ Lifecycle:
   autostart on|off                    Toggle auto-start on boot
   versions/v                          List available versions
 
-Run without arguments to start the TUI.`)
+Run without arguments to start the TUI.`
 }
 
 func needsElevation(args []string) bool {
-	if len(args) == 0 {
-		return true // TUI
-	}
-	switch args[0] {
-	case "status", "versions", "v", "logs":
-		return false
-	case "config":
-		if len(args) > 1 && args[1] == "preview" {
-			return false
-		}
-		return true
-	default:
-		return true
-	}
+if len(args) == 0 {
+return true // TUI
+}
+switch args[0] {
+case "status", "versions", "v", "logs":
+return false
+case "config":
+if len(args) > 1 && args[1] == "preview" {
+return false
+}
+return true
+default:
+return true
+}
 }
 
 func tryElevate(args []string) bool {
-	if os.Geteuid() == 0 {
-		return false
-	}
-	if !needsElevation(args) {
-		return false
-	}
-	sudoPath, err := exec.LookPath("sudo")
-	if err != nil {
-		return false
-	}
-	cmd := exec.Command(sudoPath, os.Args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			os.Exit(exit.ExitCode())
-		}
-		os.Exit(1)
-	}
-	return true
+if os.Geteuid() == 0 {
+return false
+}
+if !needsElevation(args) {
+return false
+}
+sudoPath, err := exec.LookPath("sudo")
+if err != nil {
+return false
+}
+cmd := exec.Command(sudoPath, os.Args...)
+cmd.Stdin = os.Stdin
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+if err := cmd.Run(); err != nil {
+if exit, ok := err.(*exec.ExitError); ok {
+os.Exit(exit.ExitCode())
+}
+os.Exit(1)
+}
+return true
 }
 
 
