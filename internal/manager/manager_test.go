@@ -608,24 +608,6 @@ func TestPreviewConfigSubscriptionReadError(t *testing.T) {
 	}
 }
 
-func TestPreviewConfigRulesReadError(t *testing.T) {
-	fs := &fakeFileSystem{
-		fileExists: map[string]bool{
-			ConfigTemplatePath: true,
-		},
-		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test`),
-		},
-		readFileErr: map[string]error{RoutingRulesPath: testError{"permission denied"}},
-	}
-	gh := &fakeGitHubReleases{}
-	m := NewConfigManager(fs, gh, &configValidator{}, nil)
-
-	_, err := m.PreviewConfig(context.Background())
-	if err == nil {
-		t.Error("expected error when ReadFile fails on RoutingRulesPath with non-ErrNotExist error")
-	}
-}
 
 func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 	fs := &fakeFileSystem{
@@ -640,8 +622,8 @@ func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "proxies: " {
-		t.Errorf("expected empty subscription data, got %q", result)
+	if result != "proxies: {{subscription}}" {
+		t.Errorf("expected overlay template returned as-is, got %q", result)
 	}
 }
 
@@ -685,17 +667,15 @@ func TestUpdateConfigHappyPath(t *testing.T) {
 		fileExists: map[string]bool{
 			"/opt/mihomo/etc/config-template.yaml":            true,
 			"/opt/mihomo-manager/state/subscription-data.txt": true,
-			"/opt/mihomo/etc/rules.txt":                       true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte(`proxies:
-{{subscription}}
-rules:
-{{routing_rules}}`),
-			"/opt/mihomo-manager/state/subscription-data.txt": []byte(`  - name: node1
+			"/opt/mihomo/etc/config-template.yaml": []byte(`rules:
+  - DOMAIN-KEYWORD,google,Proxy
+  - MATCH,DIRECT`),
+			"/opt/mihomo-manager/state/subscription-data.txt": []byte(`proxies:
+  - name: node1
     type: ss
     server: example.com`),
-			"/opt/mihomo/etc/rules.txt": []byte(`DOMAIN-KEYWORD,google,Proxy`),
 		},
 	}
 	gh := &fakeGitHubReleases{}

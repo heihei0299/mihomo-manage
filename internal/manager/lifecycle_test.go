@@ -64,13 +64,14 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 			configYAML:          true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath:  []byte(`proxies: {{subscription}}`),
+			ConfigTemplatePath: []byte(`rules:
+  - MATCH,DIRECT`),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},
 	}
-	gh := &fakeGitHubReleases{}
-	linkStorage(fs, gh)
+	gh := &fakeDownloader{content: "proxies:\n  - name: node1\n    type: ss\n    server: example.com"}
+	linkStorage(fs, &gh.fakeGitHubReleases)
 	svc := &mockServiceManager{}
 	m := NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error {
 		return svc.Reload(serviceName)

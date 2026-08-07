@@ -34,6 +34,7 @@ type ConfigPipeline interface {
 type ConfigPipelineOptions struct {
 	OnReload  func(ctx context.Context) error
 	Validator ConfigValidator
+	Warn      func(msg string)
 }
 
 type configPipeline struct {
@@ -41,6 +42,7 @@ type configPipeline struct {
 	gh       GitHubReleases
 	onReload func(ctx context.Context) error
 	validate ConfigValidator
+	warn     func(msg string)
 }
 
 func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOptions) *configPipeline {
@@ -51,6 +53,11 @@ func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOpti
 	if opts.Validator != nil {
 		p.validate = opts.Validator
 	}
+	if opts.Warn != nil {
+		p.warn = opts.Warn
+	} else {
+		p.warn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
+	}
 	return p
 }
 
@@ -58,22 +65,6 @@ func renderConfig(template, subscription, routingRules string) (string, error) {
 	result := strings.ReplaceAll(template, "{{subscription}}", subscription)
 	result = strings.ReplaceAll(result, "{{routing_rules}}", routingRules)
 	return result, nil
-}
-
-func hasTopLevelKeys(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continue
-		}
-		if strings.Contains(trimmed, ":") {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
@@ -95,26 +86,23 @@ func (p *configPipeline) Preview(ctx context.Context) (string, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
-	if err == nil && hasTopLevelKeys(subData) {
-		return string(subData), nil
+
+	tmpl, tmplErr := p.fs.ReadFile(ConfigTemplatePath)
+	if tmplErr != nil {
+		return "", tmplErr
 	}
 
-	tmpl, err := p.fs.ReadFile(ConfigTemplatePath)
-	if err != nil {
-		return "", err
-	}
-
-	var subStr string
+	tmplStr := string(tmpl)
+	subStr := ""
 	if err == nil {
 		subStr = string(subData)
 	}
 
-	rulesData, err := p.fs.ReadFile(RoutingRulesPath)
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
+	if strings.Contains(tmplStr, "{{subscription}}") || strings.Contains(tmplStr, "{{routing_rules}}") {
+		p.warn("config-template.yaml uses old placeholder format. Please migrate to YAML overlay format.")
 	}
 
-	return renderConfig(string(tmpl), subStr, string(rulesData))
+	return mergeConfig(subStr, tmplStr)
 }
 
 func (p *configPipeline) Apply(ctx context.Context) error {
