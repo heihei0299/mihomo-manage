@@ -2,7 +2,10 @@ module github.com/anomalyco/mihomo-manager
 
 go 1.24.0
 
-require github.com/charmbracelet/bubbletea v1.3.10
+require (
+	github.com/charmbracelet/bubbletea v1.3.10
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

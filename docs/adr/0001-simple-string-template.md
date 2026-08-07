@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0002
+---
+
 # Simple string substitution for config templates
 
 The config-template uses simple string substitution (`{{placeholder}}`) rather than a full template engine like Jinja2 or Go templates.
