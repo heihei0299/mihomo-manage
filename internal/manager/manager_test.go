@@ -470,76 +470,14 @@ func TestInstallDeployFailsRollsBack(t *testing.T) {
 	}
 }
 
-func TestRenderConfigBasicSubstitution(t *testing.T) {
-	tmpl := `proxies:
-{{subscription}}
-rules:
-{{routing_rules}}`
-	sub := `  - name: node1
-    type: ss
-    server: example.com`
-	rules := `DOMAIN-SUFFIX,google.com,Proxy`
-
-	got, err := renderConfig(tmpl, sub, rules)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(got, sub) {
-		t.Errorf("output should contain subscription data")
-	}
-	if !strings.Contains(got, rules) {
-		t.Errorf("output should contain routing rules")
-	}
-	if strings.Contains(got, "{{subscription}}") {
-		t.Errorf("output should not contain unsubstituted placeholder")
-	}
-	if strings.Contains(got, "{{routing_rules}}") {
-		t.Errorf("output should not contain unsubstituted placeholder")
-	}
-}
-
-func TestRenderConfigEmptySubscription(t *testing.T) {
-	tmpl := `proxies: {{subscription}}`
-	got, err := renderConfig(tmpl, "", "rules: all")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "proxies: " {
-		t.Errorf("expected empty subscription, got %q", got)
-	}
-}
-
-func TestRenderConfigEmptyRules(t *testing.T) {
-	tmpl := `rules: {{routing_rules}}`
-	got, err := renderConfig(tmpl, "proxies: x", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "rules: " {
-		t.Errorf("expected empty rules, got %q", got)
-	}
-}
-
-func TestRenderConfigNoPlaceholders(t *testing.T) {
-	tmpl := `static config`
-	got, err := renderConfig(tmpl, "sub", "rules")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != tmpl {
-		t.Errorf("expected template unchanged, got %q", got)
-	}
-}
-
 func TestUpdateConfigReadURLError(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:  true,
+			OverrideFilePath:  true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+			OverrideFilePath: []byte(`test: {{subscription}}`),
 		},
 		readFileErr: map[string]error{subscriptionURLFile: testError{"permission denied"}},
 	}
@@ -573,11 +511,11 @@ func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:                        true,
+			OverrideFilePath:                        true,
 			"/opt/mihomo-manager/state/subscription-url.txt": true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`proxies: {{subscription}}`),
+			OverrideFilePath: []byte(`proxies: {{subscription}}`),
 			"/opt/mihomo-manager/state/subscription-url.txt": []byte(`https://example.com/sub`),
 		},
 	}
@@ -595,7 +533,7 @@ func TestSubscriptionRemoteURLFetched(t *testing.T) {
 func TestPreviewConfigSubscriptionReadError(t *testing.T) {
 	fs := &fakeFileSystem{
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+			OverrideFilePath: []byte(`test: {{subscription}}`),
 		},
 		readFileErr: map[string]error{subscriptionDataFile: testError{"permission denied"}},
 	}
@@ -608,29 +546,10 @@ func TestPreviewConfigSubscriptionReadError(t *testing.T) {
 	}
 }
 
-func TestPreviewConfigRulesReadError(t *testing.T) {
-	fs := &fakeFileSystem{
-		fileExists: map[string]bool{
-			ConfigTemplatePath: true,
-		},
-		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test`),
-		},
-		readFileErr: map[string]error{RoutingRulesPath: testError{"permission denied"}},
-	}
-	gh := &fakeGitHubReleases{}
-	m := NewConfigManager(fs, gh, &configValidator{}, nil)
-
-	_, err := m.PreviewConfig(context.Background())
-	if err == nil {
-		t.Error("expected error when ReadFile fails on RoutingRulesPath with non-ErrNotExist error")
-	}
-}
-
 func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 	fs := &fakeFileSystem{
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`proxies: {{subscription}}`),
+			OverrideFilePath: []byte("socks-port: 7891\n"),
 		},
 	}
 	gh := &fakeGitHubReleases{}
@@ -640,15 +559,15 @@ func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "proxies: " {
-		t.Errorf("expected empty subscription data, got %q", result)
+	if !strings.Contains(result, "socks-port: 7891") {
+		t.Errorf("expected template content in result, got %q", result)
 	}
 }
 
 func TestUpdateConfigEmptyURL(t *testing.T) {
 	fs := &fakeFileSystem{
 		written: map[string][]byte{
-			ConfigTemplatePath:  []byte(`test: {{subscription}}`),
+			OverrideFilePath:  []byte(`test: {{subscription}}`),
 			subscriptionURLFile: []byte(``),
 		},
 	}
@@ -664,10 +583,10 @@ func TestUpdateConfigEmptyURL(t *testing.T) {
 func TestUpdateConfigNoExistingConfig(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath: true,
+			OverrideFilePath: true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`test: {{subscription}}`),
+			OverrideFilePath: []byte(`test: {{subscription}}`),
 		},
 	}
 	gh := &fakeGitHubReleases{}
@@ -683,19 +602,19 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 func TestUpdateConfigHappyPath(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			"/opt/mihomo/etc/config-template.yaml":            true,
-			"/opt/mihomo-manager/state/subscription-data.txt": true,
-			"/opt/mihomo/etc/rules.txt":                       true,
+			OverrideFilePath:                     true,
+			subscriptionDataFile: true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte(`proxies:
-{{subscription}}
+			OverrideFilePath: []byte(`proxy-groups:
+  - name: Proxy
+    type: select
 rules:
-{{routing_rules}}`),
-			"/opt/mihomo-manager/state/subscription-data.txt": []byte(`  - name: node1
+  - MATCH,DIRECT`),
+			subscriptionDataFile: []byte(`proxies:
+  - name: node1
     type: ss
     server: example.com`),
-			"/opt/mihomo/etc/rules.txt": []byte(`DOMAIN-KEYWORD,google,Proxy`),
 		},
 	}
 	gh := &fakeGitHubReleases{}
@@ -705,11 +624,14 @@ rules:
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(preview, "DOMAIN-KEYWORD,google,Proxy") {
-		t.Errorf("preview should contain routing rules")
+	if !strings.Contains(preview, "MATCH,DIRECT") {
+		t.Errorf("preview should contain rules from template")
 	}
 	if !strings.Contains(preview, "node1") {
 		t.Errorf("preview should contain subscription data")
+	}
+	if !strings.Contains(preview, "Proxy") {
+		t.Errorf("preview should contain template proxy-groups")
 	}
 }
 

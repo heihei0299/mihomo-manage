@@ -44,7 +44,7 @@ mihomo installed successfully
 | 路径 | 要求 |
 |------|------|
 | `/opt/mihomo/bin/mihomo` | 存在，权限包含 execute |
-| `/opt/mihomo/etc/config-template.yaml` | 存在，内容包含 `{{subscription}}` |
+| `/opt/mihomo/etc/override.yaml` | 存在，内容包含 `mode: rule` |
 | `/opt/mihomo/etc/config.yaml` | 存在，内容包含 `port: 7890` |
 | `/opt/mihomo-manager/state/subscription-data.txt` | 存在 |
 
@@ -412,7 +412,7 @@ mihomo-manager config preview | head -5 | grep -q "^port:"
 
 ### 行为
 
-1. 打开 `$EDITOR`（默认 `vi`）编辑 `/opt/mihomo/etc/config-template.yaml`
+1. 打开 `$EDITOR`（默认 `vi`）编辑 `/opt/mihomo/etc/override.yaml`
 2. 保存并退出编辑器后，自动执行订阅更新
 3. 输出 `config updated`
 
@@ -425,7 +425,7 @@ mihomo-manager config preview | head -5 | grep -q "^port:"
 
 ```
 # 编辑前/后对比
-md5sum /opt/mihomo/etc/config-template.yaml
+md5sum /opt/mihomo/etc/override.yaml
 # 修改模板文件，保存退出后
 mihomo-manager status  # 服务仍正常运行
 ```

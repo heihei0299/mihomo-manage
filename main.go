@@ -171,12 +171,12 @@ func main() {
 		switch args[1] {
 		case "preview":
 			exitCode = h.PreviewConfig(ctx)
-		case "template", "rules":
-			path := manager.ConfigTemplatePath
-			if args[1] == "rules" {
-				path = manager.RoutingRulesPath
-			}
-			cliEditFile(cfg, path, args[2:])
+		case "template":
+			cliEditFile(cfg, manager.OverrideFilePath, args[2:])
+			return
+		case "rules":
+			fmt.Fprintln(os.Stderr, "warning: 'config rules' is deprecated. Add routing rules to the 'rules:' field in config-template.yaml instead.")
+			cliEditFile(cfg, manager.RoutingRulesPath, args[2:])
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", args[1])
@@ -211,6 +211,12 @@ func main() {
 		return
 	case "versions":
 		exitCode = h.Versions(ctx)
+	case "template":
+		fmt.Fprintln(os.Stderr, "error: 'template' is now a config subcommand. Use 'mihomo-manager config template edit' instead.")
+		exitCode = 1
+	case "rules":
+		fmt.Fprintln(os.Stderr, "error: 'rules' is now a config subcommand. Use 'mihomo-manager config rules edit' instead.")
+		exitCode = 1
 	default:
 		exitCode = 1
 		printUsage()
@@ -327,7 +333,7 @@ Flags:
   -i              Install mihomo (alias: install)
   -q, --quiet     Suppress non-error output
   -s <url>        Set subscription source
-  -t [--interval|--off]  View/configure auto-refresh
+  -t [opt]        View/configure auto-refresh (--interval|--off)
   -u              Refresh and apply subscription
   -v, --version   Show version
 
@@ -342,7 +348,7 @@ Basic operations:
 Subscription:
   subscription set <s>        Set subscription source
   subscription update         Refresh and apply subscription
-  subscription schedule [--interval|--off]  View/configure auto-refresh
+  subscription schedule [opt] View/configure auto-refresh (--interval|--off)
 
 Config:
   config preview              Preview generated config

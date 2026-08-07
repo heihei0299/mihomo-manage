@@ -26,7 +26,6 @@ func (v *configValidator) Validate(ctx context.Context, configPath string) error
 
 type ConfigPipeline interface {
 	SetSubscriptionSource(ctx context.Context, source string) error
-	SetRoutingRules(ctx context.Context, rules string) error
 	Preview(ctx context.Context) (string, error)
 	Apply(ctx context.Context) error
 }
@@ -34,6 +33,7 @@ type ConfigPipeline interface {
 type ConfigPipelineOptions struct {
 	OnReload  func(ctx context.Context) error
 	Validator ConfigValidator
+	Warn      func(msg string)
 }
 
 type configPipeline struct {
@@ -41,6 +41,7 @@ type configPipeline struct {
 	gh       GitHubReleases
 	onReload func(ctx context.Context) error
 	validate ConfigValidator
+	warn     func(msg string)
 }
 
 func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOptions) *configPipeline {
@@ -51,29 +52,27 @@ func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOpti
 	if opts.Validator != nil {
 		p.validate = opts.Validator
 	}
+	if opts.Warn != nil {
+		p.warn = opts.Warn
+	} else {
+		p.warn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
+	}
+	p.migrateLegacyTemplate()
 	return p
 }
 
-func renderConfig(template, subscription, routingRules string) (string, error) {
-	result := strings.ReplaceAll(template, "{{subscription}}", subscription)
-	result = strings.ReplaceAll(result, "{{routing_rules}}", routingRules)
-	return result, nil
-}
-
-func hasTopLevelKeys(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continue
-		}
-		if strings.Contains(trimmed, ":") {
-			return true
-		}
+// migrateLegacyTemplate renames the old config-template.yaml to the override
+// file on first use, so existing setups carry over without manual steps. It
+// runs once: after a successful rename the legacy path no longer exists.
+func (p *configPipeline) migrateLegacyTemplate() {
+	if !p.fs.FileExists(legacyTemplatePath) || p.fs.FileExists(OverrideFilePath) {
+		return
 	}
-	return false
+	if err := p.fs.Rename(legacyTemplatePath, OverrideFilePath); err != nil {
+		p.warn(fmt.Sprintf("failed to migrate %s: %v", legacyTemplatePath, err))
+		return
+	}
+	p.warn("migrated config-template.yaml to override.yaml. The old file name is no longer recognized.")
 }
 
 func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
@@ -86,35 +85,31 @@ func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source strin
 	return p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW)
 }
 
-func (p *configPipeline) SetRoutingRules(ctx context.Context, rules string) error {
-	return p.fs.WriteFile(RoutingRulesPath, []byte(rules), filePermUserRW)
-}
-
 func (p *configPipeline) Preview(ctx context.Context) (string, error) {
 	subData, err := p.fs.ReadFile(subscriptionDataFile)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
-	if err == nil && hasTopLevelKeys(subData) {
-		return string(subData), nil
+
+	tmpl, tmplErr := p.fs.ReadFile(OverrideFilePath)
+	if tmplErr != nil && !os.IsNotExist(tmplErr) {
+		return "", tmplErr
 	}
 
-	tmpl, err := p.fs.ReadFile(ConfigTemplatePath)
-	if err != nil {
-		return "", err
+	tmplStr := ""
+	if tmplErr == nil {
+		tmplStr = string(tmpl)
 	}
-
-	var subStr string
+	subStr := ""
 	if err == nil {
 		subStr = string(subData)
 	}
 
-	rulesData, err := p.fs.ReadFile(RoutingRulesPath)
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
+	if strings.Contains(tmplStr, "{{subscription}}") || strings.Contains(tmplStr, "{{routing_rules}}") {
+		p.warn("config-template.yaml uses old placeholder format. Please migrate to YAML overlay format.")
 	}
 
-	return renderConfig(string(tmpl), subStr, string(rulesData))
+	return mergeConfig(subStr, tmplStr)
 }
 
 func (p *configPipeline) Apply(ctx context.Context) error {
@@ -143,14 +138,6 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 		}
 	}
 
-	if !p.fs.FileExists(ConfigTemplatePath) {
-		if err := p.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
-			return err
-		}
-		if err := p.fs.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
-			return err
-		}
-	}
 
 	preview, err := p.Preview(ctx)
 	if err != nil {

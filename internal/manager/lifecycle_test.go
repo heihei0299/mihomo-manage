@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,7 +23,7 @@ func TestLifecycleInstall(t *testing.T) {
 	}
 
 	assertFileExists(t, fs, binaryPath, "binary should be deployed")
-	assertFileExists(t, fs, ConfigTemplatePath, "template should be created")
+	assertFileExists(t, fs, OverrideFilePath, "template should be created")
 	assertFileExists(t, fs, configYAML, "config should be created")
 	assertFileExists(t, fs, defaultServiceUnitPath, "BUG 1: service unit file should be created")
 	if !svc.running {
@@ -59,20 +60,20 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 func TestLifecycleSubscriptionUpdate(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:  true,
+			OverrideFilePath:  true,
 			subscriptionURLFile: true,
 			configYAML:          true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath:  []byte(`proxies: {{subscription}}`),
+			OverrideFilePath:  []byte("mode: rule\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},
 	}
-	gh := &fakeGitHubReleases{}
-	linkStorage(fs, gh)
+	dl := &fakeDownloader{content: "proxies:\n  - name: node1\n    type: ss"}
+	linkStorage(fs, &dl.fakeGitHubReleases)
 	svc := &mockServiceManager{}
-	m := NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error {
+	m := NewConfigManager(fs, dl, &configValidator{}, func(ctx context.Context) error {
 		return svc.Reload(serviceName)
 	})
 
@@ -82,7 +83,7 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 	}
 
 	assertFileExists(t, fs, configYAML, "config should be updated")
-	if !gh.downloadCalled {
+	if !dl.downloadCalled {
 		t.Error("BUG 2: remote subscription URL should have been fetched via Download")
 	}
 	if !svc.reloadCalled {
@@ -151,6 +152,32 @@ func TestScheduleRejectsShortInterval(t *testing.T) {
 	err := m.SetSchedule(context.Background(), time.Minute)
 	if err == nil {
 		t.Fatal("expected error for interval < 1h")
+	}
+}
+
+func TestLifecycleInstallWritesDefaultOverride(t *testing.T) {
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
+	svc := &mockServiceManager{}
+	m := NewLifecycleManager(fs, cmd, gh, svc)
+
+	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+
+	data, err := fs.ReadFile(OverrideFilePath)
+	if err != nil {
+		t.Fatalf("override file should be written: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "!replace") {
+		t.Errorf("default override should document !replace usage, got: %s", content)
+	}
+	if !strings.Contains(content, "mode: rule") {
+		t.Errorf("default override should carry example config, got: %s", content)
 	}
 }
 

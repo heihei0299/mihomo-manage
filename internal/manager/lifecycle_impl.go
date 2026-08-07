@@ -129,7 +129,7 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 	if err := m.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap mkdir state", err)
 	}
-	if err := m.fs.WriteFile(ConfigTemplatePath, defaultTemplate, filePermUserRW); err != nil {
+	if err := m.fs.WriteFile(OverrideFilePath, defaultOverride, filePermUserRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap template", err)
 	}
 	if err := m.fs.WriteFile(configYAML, defaultConfig, filePermUserRW); err != nil {

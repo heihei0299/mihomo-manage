@@ -29,11 +29,11 @@ func (m *fakeDownloader) Download(ctx context.Context, url, dest string) error {
 func TestRemoteSubscriptionDataAppearsInConfig(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:  true,
+			OverrideFilePath:  true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`proxy-groups:
+			OverrideFilePath: []byte(`proxy-groups:
   - name: Proxy
     type: select
 rules:
@@ -81,10 +81,10 @@ rules:
 func TestLocalSubscriptionDataAppearsInConfig(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath: true,
+			OverrideFilePath: true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath:  []byte("proxy-groups:\n  - name: Proxy\n    type: select\n"),
+			OverrideFilePath:  []byte("proxy-groups:\n  - name: Proxy\n    type: select\n"),
 			subscriptionDataFile: []byte("proxies:\n  - name: local-node\n    type: ss\n    server: local.example.com\n"),
 		},
 	}
@@ -109,11 +109,11 @@ func TestSubscriptionWithTopLevelKeysViaUpdate(t *testing.T) {
 	// Template overlays supplement missing fields only
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:  true,
+			OverrideFilePath:  true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte("log-level: debug\n"),
+			OverrideFilePath: []byte("log-level: debug\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 		},
 	}
@@ -153,12 +153,12 @@ func TestUpdateConfigWithValidatorPassesSubscriptionData(t *testing.T) {
 	// Full flow with a no-op validator
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			ConfigTemplatePath:  true,
+			OverrideFilePath:  true,
 			subscriptionURLFile: true,
 			configYAML:          true,
 		},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte("log-level: debug\n"),
+			OverrideFilePath: []byte("log-level: debug\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},
@@ -182,9 +182,9 @@ func TestUpdateConfigWithValidatorPassesSubscriptionData(t *testing.T) {
 
 func TestPipelineMergeOverridesBaseScalar(t *testing.T) {
 	fs := &fakeFileSystem{
-		fileExists: map[string]bool{ConfigTemplatePath: true},
+		fileExists: map[string]bool{OverrideFilePath: true},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte("port: 8888\nmode: global\n"),
+			OverrideFilePath: []byte("port: 8888\nmode: global\n"),
 			subscriptionDataFile: []byte("port: 7890\nmode: rule\nsocks-port: 7891\n"),
 		},
 	}
@@ -208,9 +208,9 @@ func TestPipelineMergeOverridesBaseScalar(t *testing.T) {
 
 func TestPipelineMergeAppendsArrays(t *testing.T) {
 	fs := &fakeFileSystem{
-		fileExists: map[string]bool{ConfigTemplatePath: true},
+		fileExists: map[string]bool{OverrideFilePath: true},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`proxy-groups:
+			OverrideFilePath: []byte(`proxy-groups:
   - name: Custom
     type: select
 rules:
@@ -251,9 +251,9 @@ rules:
 
 func TestPipelineMergeOverridesNonAppendArrays(t *testing.T) {
 	fs := &fakeFileSystem{
-		fileExists: map[string]bool{ConfigTemplatePath: true},
+		fileExists: map[string]bool{OverrideFilePath: true},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte("listen:\n  - 0.0.0.0:8080\n"),
+			OverrideFilePath: []byte("listen:\n  - 0.0.0.0:8080\n"),
 			subscriptionDataFile: []byte("listen:\n  - 0.0.0.0:9090\n  - 127.0.0.1:9091\n"),
 		},
 	}
@@ -278,9 +278,9 @@ func TestPipelineMergeOverridesNonAppendArrays(t *testing.T) {
 func TestOldTemplatePlaceholderWarning(t *testing.T) {
 	var warned string
 	fs := &fakeFileSystem{
-		fileExists: map[string]bool{ConfigTemplatePath: true},
+		fileExists: map[string]bool{OverrideFilePath: true},
 		written: map[string][]byte{
-			ConfigTemplatePath: []byte(`proxies: {{subscription}}`),
+			OverrideFilePath: []byte(`proxies: {{subscription}}`),
 		},
 	}
 	p := newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{
@@ -293,6 +293,72 @@ func TestOldTemplatePlaceholderWarning(t *testing.T) {
 	}
 	if !strings.Contains(warned, "old placeholder") {
 		t.Errorf("expected deprecation warning, got: %q", warned)
+	}
+}
+
+func TestPipelineMigratesLegacyTemplate(t *testing.T) {
+	var warned string
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{legacyTemplatePath: true},
+		written:    map[string][]byte{legacyTemplatePath: []byte("port: 8888\n")},
+	}
+	newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{Warn: func(msg string) { warned = msg }})
+
+	if !fs.FileExists(OverrideFilePath) {
+		t.Errorf("legacy template should be migrated to %s", OverrideFilePath)
+	}
+	if fs.FileExists(legacyTemplatePath) {
+		t.Errorf("legacy template should no longer exist after migration")
+	}
+	data, err := fs.ReadFile(OverrideFilePath)
+	if err != nil || string(data) != "port: 8888\n" {
+		t.Errorf("migrated override should carry legacy content, got %q err %v", data, err)
+	}
+	if !strings.Contains(warned, "migrat") {
+		t.Errorf("expected migration warning, got: %q", warned)
+	}
+}
+
+func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{legacyTemplatePath: true, OverrideFilePath: true},
+		written:    map[string][]byte{OverrideFilePath: []byte("port: 9999\n")},
+	}
+	newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{})
+
+	if len(fs.renamed) != 0 {
+		t.Errorf("no rename should happen when override already exists, got: %v", fs.renamed)
+	}
+}
+
+func TestPipelineMigrationNoopWhenNothingExists(t *testing.T) {
+	fs := &fakeFileSystem{}
+	newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{})
+	if len(fs.renamed) != 0 {
+		t.Errorf("no rename should happen when neither file exists, got: %v", fs.renamed)
+	}
+}
+
+func TestPipelinePureSubscriptionWithoutOverride(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{subscriptionDataFile: true},
+		written: map[string][]byte{subscriptionDataFile: []byte("port: 7890\nmode: rule\n")},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	preview, err := m.PreviewConfig(context.Background())
+	if err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
+	if !strings.Contains(preview, "port: 7890") {
+		t.Errorf("pure subscription should pass through without override file, got: %s", preview)
+	}
+
+	if err := m.UpdateConfig(context.Background()); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	if fs.FileExists(OverrideFilePath) {
+		t.Errorf("Apply should not auto-create the override file (pure-subscription mode)")
 	}
 }
 

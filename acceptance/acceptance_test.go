@@ -12,7 +12,7 @@ import (
 const (
 	binaryPath          = "/opt/mihomo/bin/mihomo"
 	configDir           = "/opt/mihomo/etc"
-	configTemplatePath  = "/opt/mihomo/etc/config-template.yaml"
+	overrideFilePath     = "/opt/mihomo/etc/override.yaml"
 	configYAML          = "/opt/mihomo/etc/config.yaml"
 	backupsDir          = "/opt/mihomo-manager/backups"
 	subscriptionURLFile = "/opt/mihomo-manager/state/subscription-url.txt"
@@ -42,12 +42,15 @@ func TestAcceptanceInstall(t *testing.T) {
 	if !fileExists(binaryPath) {
 		t.Error("expected /opt/mihomo/bin/mihomo to exist after install")
 	}
-	if !fileExists(configTemplatePath) {
-		t.Error("expected /opt/mihomo/etc/config-template.yaml to exist after install")
+	if !fileExists(overrideFilePath) {
+		t.Error("expected /opt/mihomo/etc/override.yaml to exist after install")
 	}
-	tmpl := readFileSudo(t, configTemplatePath)
-	if !strings.Contains(tmpl, "{{subscription}}") {
-		t.Error("expected config-template.yaml to contain {{subscription}}")
+	ovr := readFileSudo(t, overrideFilePath)
+	if !strings.Contains(ovr, "mode: rule") {
+		t.Errorf("expected override.yaml to contain example config, got:\n%s", ovr)
+	}
+	if !strings.Contains(ovr, "!replace") {
+		t.Error("expected override.yaml to document !replace usage")
 	}
 	if !fileExists(configYAML) {
 		t.Error("expected /opt/mihomo/etc/config.yaml to exist after install")
