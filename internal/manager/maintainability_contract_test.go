@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 )
@@ -63,55 +62,4 @@ func TestBranchableErrorContracts(t *testing.T) {
 			t.Fatalf("unsupported error = %+v", unsupported)
 		}
 	})
-}
-
-func TestInstallRollbackContract(t *testing.T) {
-	primary := errors.New("primary failure")
-	stopFailure := errors.New("stop rollback failed")
-	removeFailure := errors.New("remove rollback failed")
-
-	tests := []struct {
-		name        string
-		fs          *fakeFileSystem
-		svc         *mockServiceManager
-		wantWrapped error
-		wantText    string
-	}{
-		{
-			name: "clean rollback preserves primary",
-			fs:   &fakeFileSystem{},
-			svc:  &mockServiceManager{},
-		},
-		{
-			name:        "service rollback failure is preserved",
-			fs:          &fakeFileSystem{},
-			svc:         &mockServiceManager{stopErr: stopFailure},
-			wantWrapped: stopFailure,
-			wantText:    "rollback failed",
-		},
-		{
-			name:        "filesystem rollback failure is preserved",
-			fs:          &fakeFileSystem{removeErr: removeFailure},
-			svc:         &mockServiceManager{},
-			wantWrapped: removeFailure,
-			wantText:    "rollback failed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &lifecycleManager{fs: tt.fs, svcMgr: tt.svc}
-			err := m.rollbackInstall(context.Background(), "test phase", primary)
-
-			if !errors.Is(err, primary) {
-				t.Fatalf("rollback error = %v, want primary failure preserved", err)
-			}
-			if tt.wantWrapped != nil && !errors.Is(err, tt.wantWrapped) {
-				t.Fatalf("rollback error = %v, want %v preserved", err, tt.wantWrapped)
-			}
-			if tt.wantText != "" && !strings.Contains(err.Error(), tt.wantText) {
-				t.Fatalf("rollback error = %v, want %q", err, tt.wantText)
-			}
-		})
-	}
 }

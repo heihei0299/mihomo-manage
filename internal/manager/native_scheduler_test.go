@@ -388,6 +388,50 @@ func TestNativeScheduleManagerReportsLegacySchedule(t *testing.T) {
 	}
 }
 
+func TestScheduleSetAndStop(t *testing.T) {
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	m := NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager")
+
+	err := m.SetSchedule(context.Background(), time.Hour)
+	if err != nil {
+		t.Fatalf("SetSchedule failed: %v", err)
+	}
+
+	interval, active, err := m.ScheduleStatus(context.Background())
+	if err != nil {
+		t.Fatalf("ScheduleStatus failed: %v", err)
+	}
+	if !active {
+		t.Error("expected schedule to be active")
+	}
+	if interval != time.Hour {
+		t.Errorf("expected interval 1h, got %v", interval)
+	}
+
+	err = m.StopSchedule(context.Background())
+	if err != nil {
+		t.Fatalf("StopSchedule failed: %v", err)
+	}
+
+	_, active, err = m.ScheduleStatus(context.Background())
+	if err != nil {
+		t.Fatalf("ScheduleStatus after stop failed: %v", err)
+	}
+	if active {
+		t.Error("expected schedule to be inactive after stop")
+	}
+}
+
+func TestScheduleRejectsShortInterval(t *testing.T) {
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	m := NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager")
+
+	err := m.SetSchedule(context.Background(), time.Minute)
+	if err == nil {
+		t.Fatal("expected error for interval < 1h")
+	}
+}
+
 type fakePlatformScheduler struct {
 	interval time.Duration
 	active   bool
