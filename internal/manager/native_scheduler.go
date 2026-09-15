@@ -62,11 +62,11 @@ func (s *linuxPlatformScheduler) Set(ctx context.Context, interval time.Duration
 }
 
 func (s *linuxPlatformScheduler) Stop(ctx context.Context) error {
-	active, exists, enabled, err := s.timerState(ctx)
+	state, err := s.timerState(ctx)
 	if err != nil {
 		return err
 	}
-	if exists && (active || enabled) {
+	if state.exists && (state.active || state.enabled) {
 		if _, err := s.cmd.RunCommand(ctx, "systemctl", "disable", "--now", systemdScheduleName); err != nil {
 			return fmt.Errorf("disabling systemd schedule: %w", err)
 		}
@@ -83,10 +83,16 @@ func (s *linuxPlatformScheduler) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (s *linuxPlatformScheduler) timerState(ctx context.Context) (active bool, exists bool, enabled bool, err error) {
+type systemdTimerState struct {
+	active  bool
+	exists  bool
+	enabled bool
+}
+
+func (s *linuxPlatformScheduler) timerState(ctx context.Context) (systemdTimerState, error) {
 	out, err := s.cmd.RunCommand(ctx, "systemctl", "show", systemdScheduleName, "--property=ActiveState,LoadState,UnitFileState")
 	if err != nil {
-		return false, false, false, fmt.Errorf("querying systemd schedule: %w", err)
+		return systemdTimerState{}, fmt.Errorf("querying systemd schedule: %w", err)
 	}
 	states := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
@@ -98,21 +104,25 @@ func (s *linuxPlatformScheduler) timerState(ctx context.Context) (active bool, e
 	loadState := states["LoadState"]
 	activeState := states["ActiveState"]
 	if loadState == "" || activeState == "" {
-		return false, false, false, fmt.Errorf("invalid systemd schedule state: %q", out)
+		return systemdTimerState{}, fmt.Errorf("invalid systemd schedule state: %q", out)
 	}
 	if loadState == "not-found" {
-		return false, false, false, nil
+		return systemdTimerState{}, nil
 	}
 	unitFileState := states["UnitFileState"]
-	return activeState == "active", true, unitFileState == "enabled" || unitFileState == "enabled-runtime", nil
+	return systemdTimerState{
+		active:  activeState == "active",
+		exists:  true,
+		enabled: unitFileState == "enabled" || unitFileState == "enabled-runtime",
+	}, nil
 }
 
 func (s *linuxPlatformScheduler) Status(ctx context.Context) (time.Duration, bool, error) {
-	active, _, _, err := s.timerState(ctx)
+	state, err := s.timerState(ctx)
 	if err != nil {
 		return 0, false, err
 	}
-	if !active {
+	if !state.active {
 		return 0, false, nil
 	}
 	data, err := s.fs.ReadFile(systemdScheduleTimer)
@@ -178,7 +188,7 @@ func NewNativeScheduleManager(fs FileSystem, cmd CommandRunner) ScheduleManager 
 
 func (m *nativeScheduleManager) SetSchedule(ctx context.Context, interval time.Duration) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	return m.platform.Set(ctx, interval, m.commandPath)
 }
@@ -211,6 +221,16 @@ func (m *nativeScheduleManager) ScheduleStatus(ctx context.Context) (time.Durati
 	return 0, false, nil
 }
 
+// Darwin scheduler state is two-dimensional. The launchd runtime job and the
+// plist on disk are independent and must never be inferred from one another.
+//
+// Runtime  Plist    Meaning
+// loaded   present  normal active schedule
+// loaded   missing  orphan runtime job; active with unknown persisted interval
+// unloaded present  stale persisted configuration; inactive
+// unloaded missing  fully stopped
+//
+// Set, Stop, and Status must preserve this matrix.
 type darwinPlatformScheduler struct {
 	fs  FileSystem
 	cmd CommandRunner
@@ -347,13 +367,13 @@ func (s *darwinPlatformScheduler) Status(ctx context.Context) (time.Duration, bo
 type unsupportedPlatformScheduler struct{ os string }
 
 func (s unsupportedPlatformScheduler) Set(context.Context, time.Duration, string) error {
-	return fmt.Errorf("unsupported scheduler platform: %s", s.os)
+	return UnsupportedPlatformError{Feature: "scheduler", GOOS: s.os}
 }
 
 func (s unsupportedPlatformScheduler) Stop(context.Context) error {
-	return fmt.Errorf("unsupported scheduler platform: %s", s.os)
+	return UnsupportedPlatformError{Feature: "scheduler", GOOS: s.os}
 }
 
 func (s unsupportedPlatformScheduler) Status(context.Context) (time.Duration, bool, error) {
-	return 0, false, fmt.Errorf("unsupported scheduler platform: %s", s.os)
+	return 0, false, UnsupportedPlatformError{Feature: "scheduler", GOOS: s.os}
 }
