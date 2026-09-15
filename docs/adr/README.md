@@ -12,3 +12,4 @@ This page is the navigation index for the repository's architecture decisions. R
 | [0006](./0006-auto-start-separation.md) | Auto-start separation | Accepted |
 | [0007](./0007-override-file-semantics.md) | Override-file semantics | Accepted |
 | [0008](./0008-yaml-deep-merge.md) | YAML deep merge | Superseded by ADR-0007 |
+| [0009](./0009-native-scheduler-boundary.md) | Native scheduler package boundary | Accepted |
