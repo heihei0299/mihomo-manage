@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"fmt"
 )
 
 type serviceController struct {
