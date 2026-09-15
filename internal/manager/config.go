@@ -342,6 +342,107 @@ func (p *configPipeline) recordConfigApply(state ConfigApplyState, preview strin
 	return p.writeConfigApplyStatus(status)
 }
 
+type stagedConfig struct {
+	dir  string
+	path string
+}
+
+func (p *configPipeline) refreshSubscription(ctx context.Context) error {
+	source, err := p.subscriptionSource()
+	if err != nil {
+		return err
+	}
+	if source == "" {
+		return fmt.Errorf("subscription source is not configured")
+	}
+	if source != remoteSubscriptionSource {
+		return nil
+	}
+
+	data, err := p.fs.ReadFile(subscriptionURLFile)
+	if err != nil {
+		return fmt.Errorf("reading subscription URL: %w", err)
+	}
+	url := strings.TrimSpace(string(data))
+	if url == "" {
+		return nil
+	}
+
+	tmpPath := subscriptionDataFile + ".tmp"
+	cleanupDownload := func(primary error) error {
+		return errors.Join(primary, p.fs.Remove(tmpPath))
+	}
+	if err := p.gh.Download(ctx, url, tmpPath); err != nil {
+		return cleanupDownload(fmt.Errorf("fetching subscription: %w", err))
+	}
+	fetched, err := p.fs.ReadFile(tmpPath)
+	if err != nil {
+		return cleanupDownload(err)
+	}
+	if len(bytes.TrimSpace(fetched)) == 0 {
+		return cleanupDownload(fmt.Errorf("fetched subscription content is empty"))
+	}
+	if err := p.fs.WriteFile(subscriptionDataFile, fetched, filePermUserRW); err != nil {
+		return cleanupDownload(fmt.Errorf("writing subscription data: %w", err))
+	}
+	if err := p.fs.Remove(tmpPath); err != nil {
+		return fmt.Errorf("removing downloaded subscription: %w", err)
+	}
+	return nil
+}
+
+func (p *configPipeline) buildApplyPreview(ctx context.Context) (string, error) {
+	preview, err := p.Preview(ctx)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(preview) == "" {
+		return "", fmt.Errorf("generated config is empty")
+	}
+	return preview, nil
+}
+
+func (p *configPipeline) stageConfig(ctx context.Context, preview string) (stagedConfig, error) {
+	staged := stagedConfig{
+		dir: filepath.Join(configDir, fmt.Sprintf(".mihomo-config-staging-%d", time.Now().UnixNano())),
+	}
+	staged.path = filepath.Join(staged.dir, "config.yaml")
+	if err := p.fs.MkdirAll(staged.dir, filePermUserRWX); err != nil {
+		return stagedConfig{}, fmt.Errorf("creating config staging directory: %w", err)
+	}
+	if err := p.fs.WriteFile(staged.path, []byte(preview), filePermUserRW); err != nil {
+		return stagedConfig{}, p.cleanupStagedConfig(staged, fmt.Errorf("writing staged config: %w", err))
+	}
+	if err := ctx.Err(); err != nil {
+		return stagedConfig{}, p.cleanupStagedConfig(staged, err)
+	}
+	return staged, nil
+}
+
+func (p *configPipeline) cleanupStagedConfig(staged stagedConfig, primary error) error {
+	if cleanupErr := p.fs.Remove(staged.dir); cleanupErr != nil {
+		return errors.Join(primary, fmt.Errorf("cleanup staged config: %w", cleanupErr))
+	}
+	return primary
+}
+
+func (p *configPipeline) commitConfig(staged stagedConfig) (postCommitCleanupErr, applyErr error) {
+	if p.fs.FileExists(configYAML) {
+		backupPath := configYAML + ".bak." + timestamp()
+		existing, err := p.fs.ReadFile(configYAML)
+		if err != nil {
+			return nil, p.cleanupStagedConfig(staged, err)
+		}
+		if err := p.fs.WriteFile(backupPath, existing, filePermUserRW); err != nil {
+			return nil, p.cleanupStagedConfig(staged, err)
+		}
+	}
+	if err := p.fs.Rename(staged.path, configYAML); err != nil {
+		return nil, p.cleanupStagedConfig(staged, fmt.Errorf("committing generated config: %w", err))
+	}
+	return p.fs.Remove(staged.dir), nil
+}
+
 func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 	release, err := p.lock.Acquire(ctx)
 	if err != nil {
@@ -361,71 +462,22 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 		}
 	}()
 
-	source, err := p.subscriptionSource()
-	if err != nil {
+	if err := p.refreshSubscription(ctx); err != nil {
 		return err
 	}
-	if source == "" {
-		return fmt.Errorf("subscription source is not configured")
-	}
-	if source == remoteSubscriptionSource {
-		data, err := p.fs.ReadFile(subscriptionURLFile)
-		if err != nil {
-			return fmt.Errorf("reading subscription URL: %w", err)
-		}
-		url := strings.TrimSpace(string(data))
-		if url != "" {
-			tmpPath := subscriptionDataFile + ".tmp"
-			if err := p.gh.Download(ctx, url, tmpPath); err != nil {
-				return fmt.Errorf("fetching subscription: %w", err)
-			}
-			fetched, err := p.fs.ReadFile(tmpPath)
-			if err != nil {
-				return err
-			}
-			if len(bytes.TrimSpace(fetched)) == 0 {
-				p.fs.Remove(tmpPath)
-				return fmt.Errorf("fetched subscription content is empty")
-			}
-			if err := p.fs.WriteFile(subscriptionDataFile, fetched, filePermUserRW); err != nil {
-				return errors.Join(fmt.Errorf("writing subscription data: %w", err), p.fs.Remove(tmpPath))
-			}
-			if err := p.fs.Remove(tmpPath); err != nil {
-				return fmt.Errorf("removing downloaded subscription: %w", err)
-			}
-		}
-	}
-
-	preview, err = p.Preview(ctx)
+	preview, err = p.buildApplyPreview(ctx)
 	if err != nil {
 		return err
 	}
 
-	if strings.TrimSpace(preview) == "" {
-		return fmt.Errorf("generated config is empty")
-	}
-
-	stageDir := filepath.Join(configDir, fmt.Sprintf(".mihomo-config-staging-%d", time.Now().UnixNano()))
-	stagePath := filepath.Join(stageDir, "config.yaml")
-	cleanupStage := func(primary error) error {
-		if cleanupErr := p.fs.Remove(stageDir); cleanupErr != nil {
-			return errors.Join(primary, fmt.Errorf("cleanup staged config: %w", cleanupErr))
-		}
-		return primary
-	}
-	if err := p.fs.MkdirAll(stageDir, filePermUserRWX); err != nil {
-		return fmt.Errorf("creating config staging directory: %w", err)
-	}
-	if err := p.fs.WriteFile(stagePath, []byte(preview), filePermUserRW); err != nil {
-		return cleanupStage(fmt.Errorf("writing staged config: %w", err))
-	}
-	if err := ctx.Err(); err != nil {
-		return cleanupStage(err)
+	staged, err := p.stageConfig(ctx, preview)
+	if err != nil {
+		return err
 	}
 
 	if p.validate != nil {
-		if err := p.validate.Validate(ctx, stagePath); err != nil {
-			failure := cleanupStage(err)
+		if err := p.validate.Validate(ctx, staged.path); err != nil {
+			failure := p.cleanupStagedConfig(staged, err)
 			state := ConfigValidationFailed
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				state = ConfigApplyFailed
@@ -439,29 +491,19 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return cleanupStage(err)
+		return p.cleanupStagedConfig(staged, err)
 	}
 
-	if p.fs.FileExists(configYAML) {
-		backupPath := configYAML + ".bak." + timestamp()
-		existing, err := p.fs.ReadFile(configYAML)
-		if err != nil {
-			return cleanupStage(err)
-		}
-		if err := p.fs.WriteFile(backupPath, existing, filePermUserRW); err != nil {
-			return cleanupStage(err)
-		}
+	postCommitCleanupErr, applyErr := p.commitConfig(staged)
+	if applyErr != nil {
+		return applyErr
 	}
-	if err := p.fs.Rename(stagePath, configYAML); err != nil {
-		return cleanupStage(fmt.Errorf("committing generated config: %w", err))
-	}
-	commitCleanupErr := p.fs.Remove(stageDir)
 
 	if p.onReload != nil {
 		if err := p.onReload(ctx); err != nil {
 			failure := err
-			if commitCleanupErr != nil {
-				failure = errors.Join(failure, fmt.Errorf("cleanup staged config: %w", commitCleanupErr))
+			if postCommitCleanupErr != nil {
+				failure = errors.Join(failure, fmt.Errorf("cleanup staged config: %w", postCommitCleanupErr))
 			}
 			statusErr := p.recordConfigApply(ConfigPendingReload, preview, failure)
 			statusRecorded = true
@@ -472,13 +514,13 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 		}
 	}
 
-	if commitCleanupErr != nil {
-		statusErr := p.recordConfigApply(ConfigApplyFailed, preview, commitCleanupErr)
+	if postCommitCleanupErr != nil {
+		statusErr := p.recordConfigApply(ConfigApplyFailed, preview, postCommitCleanupErr)
 		statusRecorded = true
 		if statusErr != nil {
-			return errors.Join(commitCleanupErr, statusErr)
+			return errors.Join(postCommitCleanupErr, statusErr)
 		}
-		return commitCleanupErr
+		return postCommitCleanupErr
 	}
 	statusErr := p.recordConfigApply(ConfigApplied, preview, nil)
 	statusRecorded = true

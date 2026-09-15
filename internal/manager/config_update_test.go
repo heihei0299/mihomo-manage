@@ -752,6 +752,33 @@ func TestUpdateConfigDownloadFailureRecordsApplyStatus(t *testing.T) {
 	requireConfigApplyState(t, m, ConfigApplyFailed)
 }
 
+func TestUpdateConfigCleansDownloadTempAfterFailure(t *testing.T) {
+	const tempPath = subscriptionDataFile + ".tmp"
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			OverrideFilePath:       true,
+			subscriptionSourceFile: true,
+			subscriptionURLFile:    true,
+			tempPath:               true,
+		},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("remote\n"),
+			subscriptionURLFile:    []byte("https://example.com/sub.yaml"),
+			tempPath:               []byte("stale download"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report download failure")
+	}
+	if _, ok := fs.written[tempPath]; ok {
+		t.Fatal("download temp file should be removed after failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
+}
+
 func TestUpdateConfigStagingDirectoryFailureRecordsApplyStatus(t *testing.T) {
 	fs := localApplyTestFileSystem()
 	fs.mkdirErrFunc = func(path string) error {
