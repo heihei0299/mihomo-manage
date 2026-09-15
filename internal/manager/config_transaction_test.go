@@ -22,13 +22,58 @@ func localApplyTestFileSystem() *fakeFileSystem {
 	}
 }
 
+type failingRenameFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingRenameFileSystem) Rename(oldPath, newPath string) error {
+	if newPath == configYAML {
+		return fs.err
+	}
+	return fs.fakeFileSystem.Rename(oldPath, newPath)
+}
+
+type failingMkdirFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingMkdirFileSystem) MkdirAll(path string, perm uint32) error {
+	if strings.Contains(path, ".mihomo-config-staging-") {
+		return fs.err
+	}
+	return fs.fakeFileSystem.MkdirAll(path, perm)
+}
+
+type failingStagedWriteFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingStagedWriteFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	if strings.Contains(path, ".mihomo-config-staging-") {
+		return fs.err
+	}
+	return fs.fakeFileSystem.WriteFile(path, data, perm)
+}
+
+type failingBackupWriteFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingBackupWriteFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	if strings.HasPrefix(path, configYAML+".bak.") {
+		return fs.err
+	}
+	return fs.fakeFileSystem.WriteFile(path, data, perm)
+}
+
 func TestUpdateConfigStagingDirectoryFailureRecordsApplyStatus(t *testing.T) {
-	fs := localApplyTestFileSystem()
-	fs.mkdirErrFunc = func(path string) error {
-		if strings.Contains(path, ".mihomo-config-staging-") {
-			return errors.New("staging directory unavailable")
-		}
-		return nil
+	fs := &failingMkdirFileSystem{
+		fakeFileSystem: localApplyTestFileSystem(),
+		err:            errors.New("staging directory unavailable"),
 	}
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
@@ -39,12 +84,9 @@ func TestUpdateConfigStagingDirectoryFailureRecordsApplyStatus(t *testing.T) {
 }
 
 func TestUpdateConfigStagedWriteFailureRecordsApplyStatus(t *testing.T) {
-	fs := localApplyTestFileSystem()
-	fs.writeErrFunc = func(path string) error {
-		if strings.Contains(path, ".mihomo-config-staging-") {
-			return errors.New("staged config is not writable")
-		}
-		return nil
+	fs := &failingStagedWriteFileSystem{
+		fakeFileSystem: localApplyTestFileSystem(),
+		err:            errors.New("staged config is not writable"),
 	}
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
@@ -55,14 +97,12 @@ func TestUpdateConfigStagedWriteFailureRecordsApplyStatus(t *testing.T) {
 }
 
 func TestUpdateConfigBackupFailureRecordsApplyStatus(t *testing.T) {
-	fs := localApplyTestFileSystem()
-	fs.fileExists[configYAML] = true
-	fs.written[configYAML] = []byte("old\n")
-	fs.writeErrFunc = func(path string) error {
-		if strings.HasPrefix(path, configYAML+".bak.") {
-			return errors.New("backup is not writable")
-		}
-		return nil
+	base := localApplyTestFileSystem()
+	base.fileExists[configYAML] = true
+	base.written[configYAML] = []byte("old\n")
+	fs := &failingBackupWriteFileSystem{
+		fakeFileSystem: base,
+		err:            errors.New("backup is not writable"),
 	}
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
@@ -73,8 +113,10 @@ func TestUpdateConfigBackupFailureRecordsApplyStatus(t *testing.T) {
 }
 
 func TestUpdateConfigRenameFailureRecordsApplyStatus(t *testing.T) {
-	fs := localApplyTestFileSystem()
-	fs.renameErrByPath = map[string]error{configYAML: errors.New("rename failed")}
+	fs := &failingRenameFileSystem{
+		fakeFileSystem: localApplyTestFileSystem(),
+		err:            errors.New("rename failed"),
+	}
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {

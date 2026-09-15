@@ -7,6 +7,72 @@ import (
 	"testing"
 )
 
+type failOnceWriteFileSystem struct {
+	*fakeFileSystem
+	path string
+	err  error
+}
+
+func (fs *failOnceWriteFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	if path == fs.path && fs.err != nil {
+		err := fs.err
+		fs.err = nil
+		return err
+	}
+	return fs.fakeFileSystem.WriteFile(path, data, perm)
+}
+
+type readFileErrorFileSystem struct {
+	*fakeFileSystem
+	path string
+	err  error
+}
+
+func (fs *readFileErrorFileSystem) ReadFile(path string) ([]byte, error) {
+	if path == fs.path {
+		return nil, fs.err
+	}
+	return fs.fakeFileSystem.ReadFile(path)
+}
+
+func TestUpdateConfigReadURLError(t *testing.T) {
+	fs := &readFileErrorFileSystem{
+		fakeFileSystem: &fakeFileSystem{
+			fileExists: map[string]bool{
+				OverrideFilePath:    true,
+				subscriptionURLFile: true,
+			},
+			written: map[string][]byte{
+				OverrideFilePath: []byte(`test: {{subscription}}`),
+			},
+		},
+		path: subscriptionURLFile,
+		err:  testError{"permission denied"},
+	}
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &configValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Error("expected error when ReadFile fails on subscriptionURLFile")
+	}
+}
+
+func TestPreviewConfigSubscriptionReadError(t *testing.T) {
+	fs := &readFileErrorFileSystem{
+		fakeFileSystem: &fakeFileSystem{
+			written: map[string][]byte{
+				OverrideFilePath: []byte(`test: {{subscription}}`),
+			},
+		},
+		path: subscriptionDataFile,
+		err:  testError{"permission denied"},
+	}
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &configValidator{}, nil)
+
+	if _, err := m.PreviewConfig(context.Background()); err == nil {
+		t.Error("expected error when ReadFile fails on subscriptionDataFile with non-ErrNotExist error")
+	}
+}
+
 func TestOldTemplatePlaceholderWarning(t *testing.T) {
 	var warned string
 	fs := &fakeFileSystem{
@@ -101,18 +167,19 @@ func TestSetRemoteSubscriptionSelectsRemoteSourceAndClearsLocalState(t *testing.
 }
 
 func TestSetSubscriptionSourceRollsBackWhenMarkerWriteFails(t *testing.T) {
-	fs := &fakeFileSystem{
-		fileExists: map[string]bool{
-			subscriptionSourceFile: true,
-			subscriptionDataFile:   true,
+	fs := &failOnceWriteFileSystem{
+		fakeFileSystem: &fakeFileSystem{
+			fileExists: map[string]bool{
+				subscriptionSourceFile: true,
+				subscriptionDataFile:   true,
+			},
+			written: map[string][]byte{
+				subscriptionSourceFile: []byte("local\n"),
+				subscriptionDataFile:   []byte("mode: rule\n"),
+			},
 		},
-		written: map[string][]byte{
-			subscriptionSourceFile: []byte("local\n"),
-			subscriptionDataFile:   []byte("mode: rule\n"),
-		},
-		writeErrByPath: map[string]error{
-			subscriptionSourceFile: errors.New("marker write failed"),
-		},
+		path: subscriptionSourceFile,
+		err:  errors.New("marker write failed"),
 	}
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 

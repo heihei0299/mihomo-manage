@@ -98,6 +98,10 @@ Prefer behavior matrices over implementation-detail assertions for recovery
 logic. Important state combinations must be visible in test names or table
 cases.
 
+Shared fakes should expose only behavior reused by most tests. Keep one-off
+blocking or failure behavior in a specialized fake beside the test group that
+needs it; do not grow a general-purpose God Fake.
+
 Do not run the full test suite after every small edit. During development, use
 the narrowest relevant tests; run the full suite once at the final verification
 gate when execution is authorized.
@@ -141,6 +145,12 @@ small; do not perform a package-wide layered rewrite.
 For a localized task, inspect the owning area first and expand only when an
 explicit dependency requires it. Do not preload the entire `internal/manager`
 package for a config-only, scheduler-only, or lifecycle-only change.
+
+Preferred first-read boundaries:
+
+- **Config:** `config*.go`, `merge.go`, `adopt.go`, `lock.go`, and the matching `config_*_test.go` files. Expand to service, lifecycle, or scheduler only for an explicit call dependency.
+- **Schedule:** `native_scheduler.go`, `schedule_manager.go`, and their tests. Do not read config or lifecycle implementation merely because it is in the same package.
+- **Lifecycle:** `lifecycle*.go`, service role contracts, and the matching lifecycle tests. Expand only when the lifecycle path calls another area.
 
 This rule is intended to improve both human navigation and AI context/cache
 efficiency.

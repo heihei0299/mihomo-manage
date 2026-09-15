@@ -7,13 +7,32 @@ import (
 	"testing"
 )
 
+type failingWriteFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingWriteFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	return fs.err
+}
+
+type failingRemoveFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingRemoveFileSystem) Remove(path string) error {
+	return fs.err
+}
+
 func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
-	fs := &fakeFileSystem{
-		writeErr: testError{"disk full"},
+	fs := &failingWriteFileSystem{
+		fakeFileSystem: &fakeFileSystem{},
+		err:            testError{"disk full"},
 	}
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
-	linkStorage(fs, source)
+	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{}
 	m := NewLifecycleManager(fs, cmd, source, svc)
 
@@ -34,7 +53,7 @@ func TestInstallRollbackContract(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		fs          *fakeFileSystem
+		fs          FileSystem
 		svc         *mockServiceManager
 		wantWrapped error
 		wantText    string
@@ -52,8 +71,11 @@ func TestInstallRollbackContract(t *testing.T) {
 			wantText:    "rollback failed",
 		},
 		{
-			name:        "filesystem rollback failure is preserved",
-			fs:          &fakeFileSystem{removeErr: removeFailure},
+			name: "filesystem rollback failure is preserved",
+			fs: &failingRemoveFileSystem{
+				fakeFileSystem: &fakeFileSystem{},
+				err:            removeFailure,
+			},
 			svc:         &mockServiceManager{},
 			wantWrapped: removeFailure,
 			wantText:    "rollback failed",
@@ -79,10 +101,13 @@ func TestInstallRollbackContract(t *testing.T) {
 }
 
 func TestInstallDeployFailsRollsBack(t *testing.T) {
-	fs := &fakeFileSystem{writeErr: testError{"disk full"}}
+	fs := &failingWriteFileSystem{
+		fakeFileSystem: &fakeFileSystem{},
+		err:            testError{"disk full"},
+	}
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
-	linkStorage(fs, source)
+	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{}
 	m := NewLifecycleManager(fs, cmd, source, svc)
 

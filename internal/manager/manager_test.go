@@ -13,21 +13,10 @@ import (
 )
 
 type fakeFileSystem struct {
-	fileExists      map[string]bool
-	written         map[string][]byte
-	writeErr        error
-	writeErrByPath  map[string]error
-	writeErrFunc    func(path string) error
-	removeErr       error
-	removeErrByPath map[string]error
-	removeErrFunc   func(path string) error
-	renameErr       error
-	renameErrByPath map[string]error
-	mkdirErrByPath  map[string]error
-	mkdirErrFunc    func(path string) error
-	removed         []string
-	renamed         map[string]string
-	readFileErr     map[string]error
+	fileExists map[string]bool
+	written    map[string][]byte
+	removed    []string
+	renamed    map[string]string
 }
 
 func (m *fakeFileSystem) FileExists(path string) bool {
@@ -35,11 +24,6 @@ func (m *fakeFileSystem) FileExists(path string) bool {
 }
 
 func (m *fakeFileSystem) ReadFile(path string) ([]byte, error) {
-	if m.readFileErr != nil {
-		if err, ok := m.readFileErr[path]; ok {
-			return nil, err
-		}
-	}
 	if m.written == nil {
 		return nil, os.ErrNotExist
 	}
@@ -51,20 +35,6 @@ func (m *fakeFileSystem) ReadFile(path string) ([]byte, error) {
 }
 
 func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error {
-	if m.writeErr != nil {
-		return m.writeErr
-	}
-	if m.writeErrFunc != nil {
-		if err := m.writeErrFunc(path); err != nil {
-			return err
-		}
-	}
-	if m.writeErrByPath != nil {
-		if err, ok := m.writeErrByPath[path]; ok {
-			delete(m.writeErrByPath, path)
-			return err
-		}
-	}
 	if m.written == nil {
 		m.written = make(map[string][]byte)
 	}
@@ -77,19 +47,6 @@ func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error 
 }
 
 func (m *fakeFileSystem) Remove(path string) error {
-	if m.removeErr != nil {
-		return m.removeErr
-	}
-	if m.removeErrFunc != nil {
-		if err := m.removeErrFunc(path); err != nil {
-			return err
-		}
-	}
-	if m.removeErrByPath != nil {
-		if err, ok := m.removeErrByPath[path]; ok {
-			return err
-		}
-	}
 	m.removed = append(m.removed, path)
 	for existing := range m.written {
 		if existing == path || strings.HasPrefix(existing, path+"/") {
@@ -105,14 +62,6 @@ func (m *fakeFileSystem) Remove(path string) error {
 }
 
 func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
-	if m.renameErr != nil {
-		return m.renameErr
-	}
-	if m.renameErrByPath != nil {
-		if err, ok := m.renameErrByPath[newPath]; ok {
-			return err
-		}
-	}
 	if m.renamed == nil {
 		m.renamed = make(map[string]string)
 	}
@@ -132,16 +81,6 @@ func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
 }
 
 func (m *fakeFileSystem) MkdirAll(path string, perm uint32) error {
-	if m.mkdirErrFunc != nil {
-		if err := m.mkdirErrFunc(path); err != nil {
-			return err
-		}
-	}
-	if m.mkdirErrByPath != nil {
-		if err, ok := m.mkdirErrByPath[path]; ok {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -466,26 +405,6 @@ func TestParseVersionError(t *testing.T) {
 	}
 }
 
-func TestUpdateConfigReadURLError(t *testing.T) {
-	fs := &fakeFileSystem{
-		fileExists: map[string]bool{
-			OverrideFilePath:    true,
-			subscriptionURLFile: true,
-		},
-		written: map[string][]byte{
-			OverrideFilePath: []byte(`test: {{subscription}}`),
-		},
-		readFileErr: map[string]error{subscriptionURLFile: testError{"permission denied"}},
-	}
-	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
-
-	err := m.UpdateConfig(context.Background())
-	if err == nil {
-		t.Error("expected error when ReadFile fails on subscriptionURLFile")
-	}
-}
-
 func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 	fs := &fakeFileSystem{}
 	source := &fakeReleaseSource{}
@@ -523,22 +442,6 @@ func TestSubscriptionRemoteURLFetched(t *testing.T) {
 
 	if !source.downloadCalled {
 		t.Error("BUG 2: subscription set with URL should trigger Download but it was never called — URL literal is substituted verbatim")
-	}
-}
-
-func TestPreviewConfigSubscriptionReadError(t *testing.T) {
-	fs := &fakeFileSystem{
-		written: map[string][]byte{
-			OverrideFilePath: []byte(`test: {{subscription}}`),
-		},
-		readFileErr: map[string]error{subscriptionDataFile: testError{"permission denied"}},
-	}
-	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
-
-	_, err := m.PreviewConfig(context.Background())
-	if err == nil {
-		t.Error("expected error when ReadFile fails on subscriptionDataFile with non-ErrNotExist error")
 	}
 }
 

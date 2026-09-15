@@ -71,13 +71,22 @@ func TestUpdateConfigDownloadFailureRecordsApplyStatus(t *testing.T) {
 	requireConfigApplyFailure(t, m)
 }
 
+type failingStagingCleanupFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingStagingCleanupFileSystem) Remove(path string) error {
+	if strings.Contains(path, ".mihomo-config-staging-") {
+		return fs.err
+	}
+	return fs.fakeFileSystem.Remove(path)
+}
+
 func TestUpdateConfigStagingCleanupFailureRecordsApplyStatus(t *testing.T) {
-	fs := localApplyTestFileSystem()
-	fs.removeErrFunc = func(path string) error {
-		if strings.Contains(path, ".mihomo-config-staging-") {
-			return errors.New("staging cleanup failed")
-		}
-		return nil
+	fs := &failingStagingCleanupFileSystem{
+		fakeFileSystem: localApplyTestFileSystem(),
+		err:            errors.New("staging cleanup failed"),
 	}
 	reloaded := false
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, func(context.Context) error {
