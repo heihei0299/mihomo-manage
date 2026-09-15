@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -696,8 +697,8 @@ func TestStartNotInstalled(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Start(context.Background())
-	if err == nil {
-		t.Fatal("expected error for not installed")
+	if !errors.Is(err, ErrMihomoNotInstalled) {
+		t.Fatalf("error = %v, want ErrMihomoNotInstalled", err)
 	}
 }
 
@@ -723,8 +724,8 @@ func TestStartAlreadyRunning(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Start(context.Background())
-	if err == nil {
-		t.Fatal("expected error for already running")
+	if !errors.Is(err, ErrMihomoAlreadyRunning) {
+		t.Fatalf("error = %v, want ErrMihomoAlreadyRunning", err)
 	}
 }
 
@@ -735,8 +736,8 @@ func TestStopNotInstalled(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Stop(context.Background())
-	if err == nil {
-		t.Fatal("expected error for not installed")
+	if !errors.Is(err, ErrMihomoNotInstalled) {
+		t.Fatalf("error = %v, want ErrMihomoNotInstalled", err)
 	}
 }
 
@@ -762,8 +763,8 @@ func TestStopAlreadyStopped(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Stop(context.Background())
-	if err == nil {
-		t.Fatal("expected error for already stopped")
+	if !errors.Is(err, ErrMihomoNotRunning) {
+		t.Fatalf("error = %v, want ErrMihomoNotRunning", err)
 	}
 }
 
@@ -774,8 +775,8 @@ func TestRestartNotInstalled(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Restart(context.Background())
-	if err == nil {
-		t.Fatal("expected error for not installed")
+	if !errors.Is(err, ErrMihomoNotInstalled) {
+		t.Fatalf("error = %v, want ErrMihomoNotInstalled", err)
 	}
 }
 
@@ -798,8 +799,8 @@ func TestReloadNotInstalled(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Reload(context.Background())
-	if err == nil {
-		t.Fatal("expected error for not installed")
+	if !errors.Is(err, ErrMihomoNotInstalled) {
+		t.Fatalf("error = %v, want ErrMihomoNotInstalled", err)
 	}
 }
 
@@ -822,7 +823,7 @@ func TestReloadStopped(t *testing.T) {
 	m := NewServiceControl(fs, cmd, svc)
 
 	err := m.Reload(context.Background())
-	if err == nil {
-		t.Fatal("expected error for reload when stopped")
+	if !errors.Is(err, ErrMihomoNotRunning) {
+		t.Fatalf("error = %v, want ErrMihomoNotRunning", err)
 	}
 }

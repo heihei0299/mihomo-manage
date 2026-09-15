@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/anomalyco/mihomo-manager/internal/manager"
 )
@@ -105,6 +107,17 @@ func TestTUIStatusShowsConfigApplyFailure(t *testing.T) {
 
 	if got := m.statusView(); !strings.Contains(got, "config: apply-failed") {
 		t.Fatalf("status view = %q, want apply-failed status", got)
+	}
+}
+
+func TestTUIScheduleStatusShowsLegacy(t *testing.T) {
+	m := model{
+		status:      &manager.Status{Installed: true, InstanceState: manager.Running},
+		scheduleErr: fmt.Errorf("schedule lookup: %w", manager.LegacyScheduleError{Interval: time.Hour}),
+	}
+
+	if got := m.statusView(); !strings.Contains(got, "schedule: legacy") {
+		t.Fatalf("status view = %q, want legacy schedule status", got)
 	}
 }
 

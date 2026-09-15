@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -429,6 +430,26 @@ func TestPreviewConfig(t *testing.T) {
 	}
 }
 
+func TestScheduleStatusReportsWrappedLegacyError(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{}, &mockSchedule{
+		scheduleStatusFn: func() (time.Duration, bool, error) {
+			return 0, false, fmt.Errorf("schedule lookup: %w", manager.LegacyScheduleError{Interval: time.Hour})
+		},
+	}, &stdout, &stderr)
+
+	code := h.ScheduleStatus(context.Background())
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "schedule:") {
+		t.Errorf("stderr should use legacy schedule branch, got %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "schedule status failed") {
+		t.Errorf("stderr should not use generic schedule branch, got %q", stderr.String())
+	}
+}
+
 func TestHandlerAdoptConfigNoChanges(t *testing.T) {
 	var stdout, stderr strings.Builder
 	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
@@ -450,7 +471,7 @@ func TestHandlerAdoptConfigLargeDiff(t *testing.T) {
 	var stdout, stderr strings.Builder
 	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
 		adoptConfigFn: func(bool) (manager.AdoptReport, error) {
-			return manager.AdoptReport{Fields: []string{"a", "b", "c", "d", "e"}, LargeDiff: true}, manager.ErrAdoptNeedsConfirmation
+			return manager.AdoptReport{Fields: []string{"a", "b", "c", "d", "e"}, LargeDiff: true}, fmt.Errorf("adopt: %w", manager.ErrAdoptNeedsConfirmation)
 		},
 	}, &mockSchedule{}, &stdout, &stderr)
 

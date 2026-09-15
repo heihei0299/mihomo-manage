@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"fmt"
 )
 
 type serviceController struct {
@@ -52,7 +51,7 @@ func (m *serviceController) Status(ctx context.Context) (*Status, error) {
 
 func (m *serviceController) SetAutoStart(ctx context.Context, enabled bool) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	svcPath := serviceUnitPath()
 	if enabled {
@@ -63,49 +62,49 @@ func (m *serviceController) SetAutoStart(ctx context.Context, enabled bool) erro
 
 func (m *serviceController) Start(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	running, err := m.svcMgr.IsRunning(ctx, serviceName)
 	if err != nil {
 		return err
 	}
 	if running {
-		return fmt.Errorf("mihomo is already running")
+		return ErrMihomoAlreadyRunning
 	}
 	return m.svcMgr.Start(ctx, serviceName)
 }
 
 func (m *serviceController) Stop(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	running, err := m.svcMgr.IsRunning(ctx, serviceName)
 	if err != nil {
 		return err
 	}
 	if !running {
-		return fmt.Errorf("mihomo is not running")
+		return ErrMihomoNotRunning
 	}
 	return m.svcMgr.Stop(ctx, serviceName)
 }
 
 func (m *serviceController) Restart(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	return m.svcMgr.Restart(ctx, serviceName)
 }
 
 func (m *serviceController) Reload(ctx context.Context) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	running, err := m.svcMgr.IsRunning(ctx, serviceName)
 	if err != nil {
 		return err
 	}
 	if !running {
-		return fmt.Errorf("mihomo is not running")
+		return ErrMihomoNotRunning
 	}
 	return m.svcMgr.Reload(ctx, serviceName)
 }

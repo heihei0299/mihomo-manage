@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -150,7 +151,7 @@ func TestAdoptConfigLargeDiffNeedsForce(t *testing.T) {
 	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	report, err := m.AdoptConfig(context.Background(), false)
-	if err != ErrAdoptNeedsConfirmation {
+	if !errors.Is(err, ErrAdoptNeedsConfirmation) {
 		t.Fatalf("expected ErrAdoptNeedsConfirmation, got %v", err)
 	}
 	if !report.LargeDiff || len(report.Fields) != 5 {
