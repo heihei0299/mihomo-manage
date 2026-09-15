@@ -29,7 +29,7 @@ func (v *recordingValidator) Validate(ctx context.Context, configPath string) er
 func TestConfigManagerValidateConfigPropagatesFailure(t *testing.T) {
 	fs := &fakeFileSystem{}
 	want := errors.New("config validation failed")
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &failValidator{err: want}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &failValidator{err: want}, nil)
 
 	err := m.ValidateConfig(context.Background())
 	if !errors.Is(err, want) {
@@ -43,7 +43,7 @@ func TestConfigManagerValidateConfigSuccessNoSideEffects(t *testing.T) {
 	}
 	val := &recordingValidator{}
 	reloaded := false
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, val, func(ctx context.Context) error {
+	m := NewConfigManager(fs, &fakeReleaseSource{}, val, func(ctx context.Context) error {
 		reloaded = true
 		return nil
 	})
@@ -64,7 +64,7 @@ func TestConfigManagerValidateConfigSuccessNoSideEffects(t *testing.T) {
 
 func TestConfigManagerValidateConfigNilValidatorPasses(t *testing.T) {
 	fs := &fakeFileSystem{}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, nil, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil)
 
 	if err := m.ValidateConfig(context.Background()); err != nil {
 		t.Fatalf("nil validator should pass validation, got %v", err)

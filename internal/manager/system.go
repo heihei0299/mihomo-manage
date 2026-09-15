@@ -47,7 +47,7 @@ type CommandRunner interface {
 	RunCommandIgnoreExit(ctx context.Context, name string, args ...string) (string, error)
 }
 
-type GitHubReleases interface {
+type ReleaseSource interface {
 	Download(ctx context.Context, url, dest string) error
 	ExpectedChecksum(ctx context.Context, owner, repo, version, assetName string) (string, error)
 	ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error)

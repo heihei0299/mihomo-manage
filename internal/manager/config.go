@@ -64,15 +64,15 @@ type ConfigPipelineOptions struct {
 
 type configPipeline struct {
 	fs       FileSystem
-	gh       GitHubReleases
+	source   ReleaseSource
 	onReload func(ctx context.Context) error
 	validate ConfigValidator
 	warn     func(msg string)
 	lock     ConfigUpdateLock
 }
 
-func newConfigPipeline(fs FileSystem, gh GitHubReleases, opts ConfigPipelineOptions) *configPipeline {
-	p := &configPipeline{fs: fs, gh: gh}
+func newConfigPipeline(fs FileSystem, source ReleaseSource, opts ConfigPipelineOptions) *configPipeline {
+	p := &configPipeline{fs: fs, source: source}
 	if opts.OnReload != nil {
 		p.onReload = opts.OnReload
 	}
@@ -372,7 +372,7 @@ func (p *configPipeline) refreshSubscription(ctx context.Context) error {
 	cleanupDownload := func(primary error) error {
 		return errors.Join(primary, p.fs.Remove(tmpPath))
 	}
-	if err := p.gh.Download(ctx, url, tmpPath); err != nil {
+	if err := p.source.Download(ctx, url, tmpPath); err != nil {
 		return cleanupDownload(fmt.Errorf("fetching subscription: %w", err))
 	}
 	fetched, err := p.fs.ReadFile(tmpPath)

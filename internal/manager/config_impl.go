@@ -4,11 +4,11 @@ import "context"
 
 type configManager struct {
 	fs       FileSystem
-	gh       GitHubReleases
+	source   ReleaseSource
 	pipeline *configPipeline
 }
 
-func NewConfigManager(fs FileSystem, gh GitHubReleases, validate ConfigValidator, onReload func(ctx context.Context) error, options ...ConfigManagerOption) ConfigManager {
+func NewConfigManager(fs FileSystem, source ReleaseSource, validate ConfigValidator, onReload func(ctx context.Context) error, options ...ConfigManagerOption) ConfigManager {
 	pipelineOptions := ConfigPipelineOptions{
 		OnReload:  onReload,
 		Validator: validate,
@@ -16,8 +16,8 @@ func NewConfigManager(fs FileSystem, gh GitHubReleases, validate ConfigValidator
 	for _, option := range options {
 		option(&pipelineOptions)
 	}
-	pipe := newConfigPipeline(fs, gh, pipelineOptions)
-	return &configManager{fs: fs, gh: gh, pipeline: pipe}
+	pipe := newConfigPipeline(fs, source, pipelineOptions)
+	return &configManager{fs: fs, source: source, pipeline: pipe}
 }
 
 func (m *configManager) SetSubscriptionSource(ctx context.Context, source string) error {

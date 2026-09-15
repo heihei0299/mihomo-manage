@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// fakeDownloader is a GitHubReleases mock that writes plain text (not gzip)
+// fakeDownloader is a ReleaseSource mock that writes plain text (not gzip)
 // so we can verify subscription data appears in the final config.
 type fakeDownloader struct {
-	fakeGitHubReleases
+	fakeReleaseSource
 	content string
 }
 
@@ -43,7 +43,7 @@ rules:
 		},
 	}
 	dl := &fakeDownloader{content: "proxies:\n  - name: node1\n    type: ss\n    server: example.com\n    port: 443"}
-	linkStorage(fs, &dl.fakeGitHubReleases)
+	linkStorage(fs, &dl.fakeReleaseSource)
 
 	m := NewConfigManager(fs, dl, nil, nil)
 
@@ -89,8 +89,8 @@ func TestLocalSubscriptionDataAppearsInConfig(t *testing.T) {
 			subscriptionDataFile: []byte("proxies:\n  - name: local-node\n    type: ss\n    server: local.example.com\n"),
 		},
 	}
-	gh := &fakeGitHubReleases{}
-	m := NewConfigManager(fs, gh, nil, nil)
+	source := &fakeReleaseSource{}
+	m := NewConfigManager(fs, source, nil, nil)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -119,7 +119,7 @@ func TestSubscriptionWithTopLevelKeysViaUpdate(t *testing.T) {
 		},
 	}
 	dl := &fakeDownloader{content: "port: 7890\nmode: rule\nproxies:\n  - name: node1\n    type: ss\n    server: example.com"}
-	linkStorage(fs, &dl.fakeGitHubReleases)
+	linkStorage(fs, &dl.fakeReleaseSource)
 
 	m := NewConfigManager(fs, dl, nil, nil)
 
@@ -165,7 +165,7 @@ func TestUpdateConfigWithValidatorPassesSubscriptionData(t *testing.T) {
 		},
 	}
 	dl := &fakeDownloader{content: "proxies:\n  - name: fetched-node\n    type: ss\n    server: example.com"}
-	linkStorage(fs, &dl.fakeGitHubReleases)
+	linkStorage(fs, &dl.fakeReleaseSource)
 
 	m := NewConfigManager(fs, dl, &passValidator{}, nil)
 
@@ -189,7 +189,7 @@ func TestPipelineMergeOverridesBaseScalar(t *testing.T) {
 			subscriptionDataFile: []byte("port: 7890\nmode: rule\nsocks-port: 7891\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -226,7 +226,7 @@ rules:
   - DOMAIN-SUFFIX,example.com,Proxy`),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -258,7 +258,7 @@ func TestPipelineMergeOverridesNonAppendArrays(t *testing.T) {
 			subscriptionDataFile: []byte("listen:\n  - 0.0.0.0:9090\n  - 127.0.0.1:9091\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -284,7 +284,7 @@ func TestOldTemplatePlaceholderWarning(t *testing.T) {
 			OverrideFilePath: []byte(`proxies: {{subscription}}`),
 		},
 	}
-	p := newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{
+	p := newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{
 		Warn: func(msg string) { warned = msg },
 	})
 
@@ -303,7 +303,7 @@ func TestPipelineMigratesLegacyTemplate(t *testing.T) {
 		fileExists: map[string]bool{legacyTemplatePath: true},
 		written:    map[string][]byte{legacyTemplatePath: []byte("port: 8888\n")},
 	}
-	newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{Warn: func(msg string) { warned = msg }})
+	newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{Warn: func(msg string) { warned = msg }})
 
 	if !fs.FileExists(OverrideFilePath) {
 		t.Errorf("legacy template should be migrated to %s", OverrideFilePath)
@@ -325,7 +325,7 @@ func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
 		fileExists: map[string]bool{legacyTemplatePath: true, OverrideFilePath: true},
 		written:    map[string][]byte{OverrideFilePath: []byte("port: 9999\n")},
 	}
-	newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{})
+	newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{})
 
 	if len(fs.renamed) != 0 {
 		t.Errorf("no rename should happen when override already exists, got: %v", fs.renamed)
@@ -334,7 +334,7 @@ func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
 
 func TestPipelineMigrationNoopWhenNothingExists(t *testing.T) {
 	fs := &fakeFileSystem{}
-	newConfigPipeline(fs, &fakeGitHubReleases{}, ConfigPipelineOptions{})
+	newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{})
 	if len(fs.renamed) != 0 {
 		t.Errorf("no rename should happen when neither file exists, got: %v", fs.renamed)
 	}
@@ -345,7 +345,7 @@ func TestPipelinePureSubscriptionWithoutOverride(t *testing.T) {
 		fileExists: map[string]bool{subscriptionDataFile: true},
 		written:    map[string][]byte{subscriptionDataFile: []byte("port: 7890\nmode: rule\n")},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -368,7 +368,7 @@ func TestSetRemoteSubscriptionSelectsRemoteSourceAndClearsLocalState(t *testing.
 		fileExists: map[string]bool{subscriptionDataFile: true},
 		written:    map[string][]byte{subscriptionDataFile: []byte("local: true\n")},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub.yaml"); err != nil {
 		t.Fatalf("SetSubscriptionSource failed: %v", err)
@@ -406,7 +406,7 @@ func TestSetSubscriptionSourceRollsBackWhenMarkerWriteFails(t *testing.T) {
 			subscriptionSourceFile: errors.New("marker write failed"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub.yaml"); err == nil {
 		t.Fatal("SetSubscriptionSource should report marker write failure")
@@ -427,7 +427,7 @@ func TestSetLocalSubscriptionSelectsLocalSourceAndClearsRemoteState(t *testing.T
 		fileExists: map[string]bool{subscriptionURLFile: true},
 		written:    map[string][]byte{subscriptionURLFile: []byte("https://example.com/sub.yaml")},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	const localData = "proxies:\n  - name: local\n"
 	if err := m.SetSubscriptionSource(context.Background(), localData); err != nil {
@@ -457,7 +457,7 @@ func TestPreviewMigratesSingleLegacyRemoteSource(t *testing.T) {
 		fileExists: map[string]bool{subscriptionURLFile: true},
 		written:    map[string][]byte{subscriptionURLFile: []byte("https://example.com/sub.yaml")},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if _, err := m.PreviewConfig(context.Background()); err != nil {
 		t.Fatalf("PreviewConfig failed: %v", err)
@@ -475,7 +475,7 @@ func TestPreviewRejectsConflictingLegacySources(t *testing.T) {
 			subscriptionDataFile: []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	_, err := m.PreviewConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
@@ -496,13 +496,13 @@ func TestLocalSourceDoesNotUseStaleRemoteURL(t *testing.T) {
 			configYAML:             []byte("mode: rule\n"),
 		},
 	}
-	gh := &fakeGitHubReleases{}
-	m := NewConfigManager(fs, gh, &passValidator{}, nil)
+	source := &fakeReleaseSource{}
+	m := NewConfigManager(fs, source, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
-	if gh.downloadCalled {
+	if source.downloadCalled {
 		t.Fatal("local source should not download the stale remote URL")
 	}
 }
@@ -511,7 +511,7 @@ func TestInvalidSubscriptionSourceIsRejected(t *testing.T) {
 	fs := &fakeFileSystem{
 		written: map[string][]byte{subscriptionSourceFile: []byte("unknown\n")},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	_, err := m.PreviewConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "invalid subscription source") {
@@ -520,7 +520,7 @@ func TestInvalidSubscriptionSourceIsRejected(t *testing.T) {
 }
 
 func TestSetSubscriptionSourceRejectsEmptySource(t *testing.T) {
-	m := NewConfigManager(&fakeFileSystem{}, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.SetSubscriptionSource(context.Background(), "  \n"); err == nil {
 		t.Fatal("SetSubscriptionSource should reject an empty source")
@@ -532,7 +532,7 @@ func TestUpdateConfigRejectsUnconfiguredSource(t *testing.T) {
 		fileExists: map[string]bool{OverrideFilePath: true},
 		written:    map[string][]byte{OverrideFilePath: []byte("mode: rule\n")},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "subscription source is not configured") {
 		t.Fatalf("UpdateConfig error = %v, want unconfigured source error", err)
@@ -560,7 +560,7 @@ func TestRemoteSourceRejectsEmptyURLInsteadOfUsingCachedData(t *testing.T) {
 			OverrideFilePath:       []byte("log-level: info\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "URL is empty") {
 		t.Fatalf("UpdateConfig error = %v, want empty URL error", err)
@@ -573,7 +573,7 @@ type recordingConfigValidator struct {
 }
 
 type blockingSubscriptionDownloader struct {
-	fakeGitHubReleases
+	fakeReleaseSource
 	started chan struct{}
 }
 
@@ -644,7 +644,7 @@ func TestUpdateConfigValidationHonorsCancellation(t *testing.T) {
 		},
 	}
 	validator := &blockingConfigValidator{started: make(chan struct{})}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, validator, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, validator, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- m.UpdateConfig(ctx) }()
@@ -672,7 +672,7 @@ func TestUpdateConfigReturnsBusyWhenLockUnavailable(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil, WithConfigUpdateLock(lock))
 
 	if err := m.UpdateConfig(context.Background()); !errors.Is(err, ErrConfigUpdateBusy) {
 		t.Fatalf("UpdateConfig error = %v, want busy error", err)
@@ -695,7 +695,7 @@ func TestUpdateConfigReleasesLockAfterSuccess(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil, WithConfigUpdateLock(lock))
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -744,7 +744,7 @@ func TestUpdateConfigDownloadFailureRecordsApplyStatus(t *testing.T) {
 			subscriptionURLFile:    []byte("https://example.com/sub.yaml"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report download failure")
@@ -768,7 +768,7 @@ func TestUpdateConfigCleansDownloadTempAfterFailure(t *testing.T) {
 			tempPath:               []byte("stale download"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report download failure")
@@ -787,7 +787,7 @@ func TestUpdateConfigStagingDirectoryFailureRecordsApplyStatus(t *testing.T) {
 		}
 		return nil
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report staging directory failure")
@@ -803,7 +803,7 @@ func TestUpdateConfigStagedWriteFailureRecordsApplyStatus(t *testing.T) {
 		}
 		return nil
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report staged write failure")
@@ -821,7 +821,7 @@ func TestUpdateConfigBackupFailureRecordsApplyStatus(t *testing.T) {
 		}
 		return nil
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report backup failure")
@@ -832,7 +832,7 @@ func TestUpdateConfigBackupFailureRecordsApplyStatus(t *testing.T) {
 func TestUpdateConfigRenameFailureRecordsApplyStatus(t *testing.T) {
 	fs := localApplyTestFileSystem()
 	fs.renameErrByPath = map[string]error{configYAML: errors.New("rename failed")}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report rename failure")
@@ -848,7 +848,7 @@ func TestUpdateConfigStagingCleanupFailureRecordsApplyStatus(t *testing.T) {
 		}
 		return nil
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report staging cleanup failure")
@@ -872,7 +872,7 @@ func TestUpdateConfigValidatesStagedConfigBeforeAtomicCommit(t *testing.T) {
 		},
 	}
 	validator := &recordingConfigValidator{}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, validator, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, validator, nil)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -900,7 +900,7 @@ func TestUpdateConfigRecordsAppliedStatus(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -924,7 +924,7 @@ func TestUpdateConfigValidationFailureRecordsStatusAndPreservesConfig(t *testing
 			configYAML:             []byte("old\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &failValidator{err: errors.New("invalid staged config")}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &failValidator{err: errors.New("invalid staged config")}, nil)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should fail validation")
@@ -951,7 +951,7 @@ func TestUpdateConfigReloadFailureRecordsPendingStatus(t *testing.T) {
 			configYAML:             []byte("old\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, func(context.Context) error {
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, func(context.Context) error {
 		return errors.New("reload failed")
 	})
 
@@ -972,7 +972,7 @@ func TestUpdateConfigReloadFailureRecordsPendingStatus(t *testing.T) {
 
 func TestLastConfigApplyReportsCorruptStateAsUnknown(t *testing.T) {
 	fs := &fakeFileSystem{written: map[string][]byte{configApplyStatusFile: []byte("not json")}}
-	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
 
 	status, err := m.LastConfigApply(context.Background())
 	if err != nil {

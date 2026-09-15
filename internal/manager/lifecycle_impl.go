@@ -18,24 +18,24 @@ import (
 type lifecycleManager struct {
 	fs       FileSystem
 	cmd      CommandRunner
-	gh       GitHubReleases
+	source   ReleaseSource
 	svcMgr   ServiceManager
 	schedule ScheduleManager
 }
 
-func NewLifecycleManager(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager, schedules ...ScheduleManager) LifecycleManager {
+func NewLifecycleManager(fs FileSystem, cmd CommandRunner, source ReleaseSource, svcMgr ServiceManager, schedules ...ScheduleManager) LifecycleManager {
 	var schedule ScheduleManager
 	if len(schedules) > 0 {
 		schedule = schedules[0]
 	}
-	return &lifecycleManager{fs: fs, cmd: cmd, gh: gh, svcMgr: svcMgr, schedule: schedule}
+	return &lifecycleManager{fs: fs, cmd: cmd, source: source, svcMgr: svcMgr, schedule: schedule}
 }
 
 func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) string {
 	if version != "latest" {
 		return version
 	}
-	tag, err := m.gh.LatestVersion(ctx, "MetaCubeX", "mihomo")
+	tag, err := m.source.LatestVersion(ctx, "MetaCubeX", "mihomo")
 	if err != nil || tag == "" {
 		return version
 	}
@@ -67,7 +67,7 @@ func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version st
 	assetName := releaseAssetName(assetURL)
 
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Verifying mihomo %s", version)})
-	expected, err := m.gh.ExpectedChecksum(ctx, "MetaCubeX", "mihomo", version, assetName)
+	expected, err := m.source.ExpectedChecksum(ctx, "MetaCubeX", "mihomo", version, assetName)
 	if err != nil {
 		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum unavailable", Error: err})
 		return "", fmt.Errorf("checksum unavailable: %w", err)
@@ -77,7 +77,7 @@ func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version st
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Downloading mihomo %s", version)})
-	if err := m.gh.Download(ctx, assetURL, gzPath); err != nil {
+	if err := m.source.Download(ctx, assetURL, gzPath); err != nil {
 		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download failed", Error: err})
 		return "", withCleanupError(fmt.Errorf("download failed: %w", err), m.fs, gzPath, tempPath)
 	}
@@ -451,5 +451,5 @@ func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPa
 }
 
 func (m *lifecycleManager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
-	return m.gh.ListVersions(ctx, "MetaCubeX", "mihomo", 5)
+	return m.source.ListVersions(ctx, "MetaCubeX", "mihomo", 5)
 }

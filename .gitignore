@@ -1,7 +1,12 @@
-# Keep only Go source/tests and the module metadata in Git.
-*
-!*/
-!*.go
-!go.mod
-!go.sum
-!.gitignore
+# Generated and local-only artifacts. Keep this list explicit so repository
+# infrastructure remains visible to Git.
+/mihomo-manager
+/config-template.yaml
+/test.sh
+/bin/
+/build/
+/dist/
+/pkg/
+/release-assets/
+/coverage.out
+/04-issue/
