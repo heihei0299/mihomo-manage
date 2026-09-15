@@ -3,6 +3,7 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -24,6 +25,15 @@ var (
 	// ErrAdoptNeedsConfirmation means a large adopt diff requires an explicit retry.
 	ErrAdoptNeedsConfirmation = errors.New("adopt needs confirmation: large diff, use --force")
 )
+
+// LegacyScheduleError reports a schedule that still uses the legacy scheduler.
+type LegacyScheduleError struct {
+	Interval time.Duration
+}
+
+func (e LegacyScheduleError) Error() string {
+	return fmt.Sprintf("legacy schedule configured for every %v; run subscription schedule --interval %v to activate it", e.Interval, e.Interval)
+}
 
 // UnsupportedPlatformError is returned when an operation has no implementation
 // for the current operating system. Callers can use errors.As when they need to

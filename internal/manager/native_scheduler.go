@@ -144,14 +144,6 @@ func (s *linuxPlatformScheduler) Status(ctx context.Context) (time.Duration, boo
 	return 0, false, fmt.Errorf("systemd schedule interval is missing")
 }
 
-type LegacyScheduleError struct {
-	Interval time.Duration
-}
-
-func (e LegacyScheduleError) Error() string {
-	return fmt.Sprintf("legacy schedule configured for every %v; run subscription schedule --interval %v to activate it", e.Interval, e.Interval)
-}
-
 type nativeScheduleManager struct {
 	fs          FileSystem
 	platform    PlatformScheduler
