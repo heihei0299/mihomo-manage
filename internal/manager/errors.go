@@ -15,6 +15,12 @@ var (
 	// ErrMihomoNotInstalled means an operation requires an installed mihomo binary.
 	ErrMihomoNotInstalled = errors.New("mihomo is not installed")
 
+	// ErrMihomoAlreadyRunning means Start was requested for an active instance.
+	ErrMihomoAlreadyRunning = errors.New("mihomo is already running")
+
+	// ErrMihomoNotRunning means an operation requires a running instance.
+	ErrMihomoNotRunning = errors.New("mihomo is not running")
+
 	// ErrAdoptNeedsConfirmation means a large adopt diff requires an explicit retry.
 	ErrAdoptNeedsConfirmation = errors.New("adopt needs confirmation: large diff, use --force")
 )
