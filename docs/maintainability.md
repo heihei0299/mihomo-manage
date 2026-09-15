@@ -58,7 +58,7 @@ Current branchable categories include:
 
 - configuration update busy;
 - subscription source not configured;
-- mihomo not installed;
+- mihomo not installed / already running / not running;
 - adopt requiring confirmation;
 - unsupported scheduler platform.
 
