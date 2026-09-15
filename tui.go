@@ -61,6 +61,7 @@ var actionRegistry = map[action]actionDef{
 }
 
 type model struct {
+	ctx        context.Context
 	control    manager.ServiceControl
 	lifecycle  manager.LifecycleManager
 	config     manager.ConfigManager
@@ -120,7 +121,7 @@ func editorCommand(editor, path string) (*exec.Cmd, error) {
 	return exec.Command(parts[0], args...), nil
 }
 
-func editSubscriptionCmd(cfg manager.ConfigManager) tea.Cmd {
+func editSubscriptionCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd {
 	file, err := os.CreateTemp("", "mihomo-subscription-*")
 	if err != nil {
 		return func() tea.Msg { return subscriptionEditMsg{err: err} }
@@ -152,39 +153,49 @@ func editSubscriptionCmd(cfg manager.ConfigManager) tea.Cmd {
 		if strings.TrimSpace(string(data)) == "" {
 			return subscriptionEditMsg{err: fmt.Errorf("subscription source cannot be empty")}
 		}
-		return subscriptionEditMsg{err: cfg.SetSubscriptionSource(context.Background(), string(data))}
+		return subscriptionEditMsg{err: cfg.SetSubscriptionSource(ctx, string(data))}
 	})
 }
 
-func (m model) Init() tea.Cmd {
-	return fetchStatusCmd(m.control)
+func tuiContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
-func fetchStatusCmd(ctrl manager.ServiceControl) tea.Cmd {
+func (m model) Init() tea.Cmd {
+	return fetchStatusCmd(m.control, tuiContext(m.ctx))
+}
+
+func fetchStatusCmd(ctrl manager.ServiceControl, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		s, err := ctrl.Status(context.Background())
+		s, err := ctrl.Status(ctx)
 		return statusMsg{status: s, err: err}
 	}
 }
 
-func fetchConfigPreview(cfg manager.ConfigManager) tea.Cmd {
+func fetchConfigPreview(cfg manager.ConfigManager, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		s, err := cfg.PreviewConfig(context.Background())
+		s, err := cfg.PreviewConfig(ctx)
 		return configPreviewMsg{content: s, err: err}
 	}
 }
 
-func fetchVersionsCmd(lifecycle manager.LifecycleManager) tea.Cmd {
+func fetchVersionsCmd(lifecycle manager.LifecycleManager, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		v, err := lifecycle.ListVersions(context.Background())
+		v, err := lifecycle.ListVersions(ctx)
 		return versionsMsg{versions: v, err: err}
 	}
 }
 
 func execActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
+	return execActionCmdWithContext(context.Background(), ctrl, lifecycle, cfg, a, progressCh, version, keepBackup)
+}
+
+func execActionCmdWithContext(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
 	return func() tea.Msg {
 		var err error
-		ctx := context.Background()
 		switch a {
 		case actStart:
 			if verr := cfg.ValidateConfig(ctx); verr != nil {
@@ -256,10 +267,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeConfig
 				m.configTab = configTabSubscription
 				m.previewContent = ""
-				return m, fetchConfigPreview(m.config)
+				return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 			}
 		case "r":
-			return m, fetchStatusCmd(m.control)
+			return m, fetchStatusCmd(m.control, tuiContext(m.ctx))
 		case "1":
 			if isActionAllowed(m.status, actStart) {
 				return m.startAction(actStart, "latest")
@@ -281,7 +292,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeChooseVersion
 				m.versions = nil
 				m.selectedIdx = 0
-				return m, fetchVersionsCmd(m.lifecycle)
+				return m, fetchVersionsCmd(m.lifecycle, tuiContext(m.ctx))
 			}
 		case "i":
 			if !isInstalled(m.status) {
@@ -331,7 +342,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.execResult = "success"
 		}
-		return m, fetchConfigPreview(m.config)
+		return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 
 	case progressMsg:
 		m.phaseLabel = msg.phase.String()
@@ -348,7 +359,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.execResult = "success"
 			m.actionErr = nil
 		}
-		return m, fetchStatusCmd(m.control)
+		return m, fetchStatusCmd(m.control, tuiContext(m.ctx))
 	}
 	return m, nil
 }
@@ -404,10 +415,10 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.configTab = (m.configTab - 1 + 3) % 3
 		return m, nil
 	case "r":
-		return m, fetchConfigPreview(m.config)
+		return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 	case "e":
 		if m.configTab == configTabSubscription {
-			return m, editSubscriptionCmd(m.config)
+			return m, editSubscriptionCmd(m.config, tuiContext(m.ctx))
 		}
 	}
 	return m, nil
@@ -419,7 +430,7 @@ func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
 	ch := make(chan progressMsg, 20)
 	return m, tea.Batch(
 		progressReaderCmd(ch),
-		execActionCmd(m.control, m.lifecycle, m.config, a, ch, version, m.keepBackup),
+		execActionCmdWithContext(tuiContext(m.ctx), m.control, m.lifecycle, m.config, a, ch, version, m.keepBackup),
 	)
 }
 
@@ -623,8 +634,8 @@ func (m model) configView() string {
 	return tabLine + content + "\n\nTab/← → switch tab  r) refresh preview  q) back"
 }
 
-func startTUI(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager) error {
-	p := tea.NewProgram(model{control: ctrl, lifecycle: lifecycle, config: cfg})
+func startTUI(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager) error {
+	p := tea.NewProgram(model{ctx: ctx, control: ctrl, lifecycle: lifecycle, config: cfg}, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
 }

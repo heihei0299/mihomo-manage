@@ -7,8 +7,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/anomalyco/mihomo-manager/internal/cli"
@@ -97,7 +99,9 @@ func main() {
 		if tryElevate(nil) {
 			return
 		}
-		if err := startTUI(ctrl, lifecycle, cfg); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := startTUI(ctx, ctrl, lifecycle, cfg); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -118,7 +122,7 @@ func main() {
 		return
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	var exitCode int
 
 	switch args[0] {
@@ -203,6 +207,7 @@ func main() {
 		printUsage()
 	}
 
+	stop()
 	os.Exit(exitCode)
 }
 
@@ -383,6 +388,7 @@ Config:
 Environments:
   MIHOMO_DOWNLOAD_PROXY=<url>   Proxy for GitHub core download (e.g. http://127.0.0.1:10809)
   MIHOMO_RELEASE_URL=<tmpl>     Download URL template with {os} {arch} {version} placeholders
+  MIHOMO_RELEASE_CHECKSUM_URL=<tmpl>  Checksum URL template with {version} {asset} placeholders
 
 Lifecycle:
   install/i [ver] [--no-autostart] [--from <path>]   Install mihomo (default: latest; --from for local .gz/binary)

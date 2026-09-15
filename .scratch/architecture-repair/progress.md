@@ -30,8 +30,8 @@
 
 | NN | Status | Commit | Review | Tests |
 |---|---|---|---|---|
-| 02 | resolved | `HEAD` (implementation commit) | completed; no blocking findings | `go test ./internal/manager && go test .`
+| 02 | resolved | `65363bf` | completed; no blocking findings | `go test ./internal/manager && go test .`
 | 03 | blocked | — | — | — |
-| 04 | planned | — | — | — |
+| 04 | resolved | `HEAD` (implementation commit) | completed; no blocking findings | `go test ./internal/manager && go test .`
 | 05 | blocked | — | — | — |
 | 06 | blocked | — | — | — |

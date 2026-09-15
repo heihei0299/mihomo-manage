@@ -82,3 +82,14 @@ func releaseURL(goos, goarch, version string) string {
 	)
 	return r.Replace(tmpl)
 }
+
+func releaseChecksumURL(version, assetName string) string {
+	tmpl := os.Getenv("MIHOMO_RELEASE_CHECKSUM_URL")
+	if tmpl == "" {
+		return ""
+	}
+	return strings.NewReplacer(
+		"{version}", version,
+		"{asset}", assetName,
+	).Replace(tmpl)
+}

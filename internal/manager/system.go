@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,6 +49,7 @@ type CommandRunner interface {
 
 type GitHubReleases interface {
 	Download(ctx context.Context, url, dest string) error
+	ExpectedChecksum(ctx context.Context, owner, repo, version, assetName string) (string, error)
 	ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error)
 	LatestVersion(ctx context.Context, owner, repo string) (string, error)
 }
@@ -131,6 +133,95 @@ func (OSSystem) Download(ctx context.Context, rawURL, dest string) error {
 		return fmt.Errorf("writing %s: %w", dest, err)
 	}
 	return nil
+}
+
+func normalizeChecksum(raw, assetName string) (string, error) {
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) > 1 {
+			name := strings.TrimPrefix(fields[1], "*")
+			if name != assetName {
+				continue
+			}
+		}
+		candidate := strings.TrimPrefix(fields[0], "sha256:")
+		if len(candidate) != 64 {
+			continue
+		}
+		decoded, err := hex.DecodeString(candidate)
+		if err != nil || len(decoded) != 32 {
+			continue
+		}
+		return strings.ToLower(candidate), nil
+	}
+	return "", fmt.Errorf("checksum for %s not found or invalid", assetName)
+}
+
+func (OSSystem) ExpectedChecksum(ctx context.Context, owner, repo, version, assetName string) (string, error) {
+	if os.Getenv("MIHOMO_RELEASE_URL") != "" {
+		checksumURL := releaseChecksumURL(version, assetName)
+		if checksumURL == "" {
+			return "", fmt.Errorf("MIHOMO_RELEASE_CHECKSUM_URL is required with MIHOMO_RELEASE_URL")
+		}
+		data, err := fetchChecksumURL(ctx, checksumURL)
+		if err != nil {
+			return "", err
+		}
+		return normalizeChecksum(string(data), assetName)
+	}
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", owner, repo, version)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := downloadClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching release checksum: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API: status %d", resp.StatusCode)
+	}
+	var release struct {
+		Assets []struct {
+			Name   string `json:"name"`
+			Digest string `json:"digest"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", fmt.Errorf("decoding release checksum: %w", err)
+	}
+	for _, asset := range release.Assets {
+		if asset.Name == assetName {
+			return normalizeChecksum(asset.Digest, assetName)
+		}
+	}
+	return "", fmt.Errorf("release asset %s has no checksum", assetName)
+}
+
+func fetchChecksumURL(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating checksum request: %w", err)
+	}
+	resp, err := downloadClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("downloading checksum: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("downloading checksum: status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading checksum: %w", err)
+	}
+	return data, nil
 }
 
 func (OSSystem) ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error) {

@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"path"
 	"runtime"
 	"strings"
 )
@@ -32,25 +37,90 @@ func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) s
 	return tag
 }
 
+func cleanupArtifacts(fs FileSystem, paths ...string) error {
+	var cleanupErrs []error
+	for _, path := range paths {
+		if err := fs.Remove(path); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	return errors.Join(cleanupErrs...)
+}
+
+func withCleanupError(primary error, fs FileSystem, paths ...string) error {
+	if cleanupErr := cleanupArtifacts(fs, paths...); cleanupErr != nil {
+		return errors.Join(primary, fmt.Errorf("cleanup failed: %w", cleanupErr))
+	}
+	return primary
+}
+
 func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback) (string, error) {
 	version = m.resolveVersion(ctx, version)
 	tempPath := fmt.Sprintf("%s.tmp.%s", binaryPath, version)
 	gzPath := tempPath + ".gz"
+	assetURL := releaseURL(runtime.GOOS, runtime.GOARCH, version)
+	assetName := releaseAssetName(assetURL)
+
+	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Verifying mihomo %s", version)})
+	expected, err := m.gh.ExpectedChecksum(ctx, "MetaCubeX", "mihomo", version, assetName)
+	if err != nil {
+		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum unavailable", Error: err})
+		return "", fmt.Errorf("checksum unavailable: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Downloading mihomo %s", version)})
-	if err := m.gh.Download(ctx, releaseURL(runtime.GOOS, runtime.GOARCH, version), gzPath); err != nil {
+	if err := m.gh.Download(ctx, assetURL, gzPath); err != nil {
 		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download failed", Error: err})
-		m.fs.Remove(gzPath)
-		return "", fmt.Errorf("download failed: %w", err)
+		return "", withCleanupError(fmt.Errorf("download failed: %w", err), m.fs, gzPath, tempPath)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", withCleanupError(err, m.fs, gzPath, tempPath)
+	}
+	if err := verifyChecksum(m.fs, gzPath, expected, assetName); err != nil {
+		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum verification failed", Error: err})
+		return "", withCleanupError(err, m.fs, gzPath, tempPath)
+	}
+	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum verified"})
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Decompressing"})
 	if err := m.decompressGzip(gzPath, tempPath); err != nil {
-		m.fs.Remove(gzPath)
-		return "", fmt.Errorf("decompress failed: %w", err)
+		return "", withCleanupError(fmt.Errorf("decompress failed: %w", err), m.fs, gzPath, tempPath)
 	}
-	m.fs.Remove(gzPath)
+	if err := ctx.Err(); err != nil {
+		return "", withCleanupError(err, m.fs, gzPath, tempPath)
+	}
+	if err := m.fs.Remove(gzPath); err != nil {
+		return "", withCleanupError(fmt.Errorf("cleanup downloaded artifact: %w", err), m.fs, gzPath, tempPath)
+	}
 	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download complete"})
 	return tempPath, nil
+}
+
+func releaseAssetName(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err == nil && parsed.Path != "" {
+		return path.Base(parsed.Path)
+	}
+	return path.Base(rawURL)
+}
+
+func verifyChecksum(fs FileSystem, filePath, expected, assetName string) error {
+	normalized, err := normalizeChecksum(expected, assetName)
+	if err != nil {
+		return fmt.Errorf("invalid checksum for %s: %w", assetName, err)
+	}
+	data, err := fs.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading downloaded artifact: %w", err)
+	}
+	actualBytes := sha256.Sum256(data)
+	actual := hex.EncodeToString(actualBytes[:])
+	if !strings.EqualFold(actual, normalized) {
+		return fmt.Errorf("checksum mismatch for %s: got %s, want %s", assetName, actual, normalized)
+	}
+	return nil
 }
 
 func (m *lifecycleManager) decompressGzip(src, dest string) error {
@@ -72,11 +142,27 @@ func (m *lifecycleManager) decompressGzip(src, dest string) error {
 }
 
 func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, err error) error {
-	m.svcMgr.Stop(serviceName)
-	m.svcMgr.Unregister(serviceName)
-	m.fs.Remove(binaryPath)
-	m.fs.Remove(configDir)
-	return fmt.Errorf("install failed at %s: %w", phase, err)
+	var rollbackErrs []error
+	if rollbackErr := m.svcMgr.Stop(serviceName); rollbackErr != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("stop service: %w", rollbackErr))
+	}
+	if rollbackErr := m.svcMgr.Unregister(serviceName); rollbackErr != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("unregister service: %w", rollbackErr))
+	}
+	if rollbackErr := m.fs.Remove(binaryPath); rollbackErr != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove binary: %w", rollbackErr))
+	}
+	if rollbackErr := m.fs.Remove(configDir); rollbackErr != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove config: %w", rollbackErr))
+	}
+	if rollbackErr := m.fs.Remove(serviceUnitPath()); rollbackErr != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove service unit: %w", rollbackErr))
+	}
+	failure := fmt.Errorf("install failed at %s: %w", phase, err)
+	if rollbackErr := errors.Join(rollbackErrs...); rollbackErr != nil {
+		return errors.Join(failure, fmt.Errorf("rollback failed: %w", rollbackErr))
+	}
+	return failure
 }
 
 func (m *lifecycleManager) Install(ctx context.Context, version string, autoStart bool, onProgress ProgressCallback) error {
@@ -84,27 +170,41 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return withCleanupError(err, m.fs, tempPath)
+	}
 	return m.installBinary(ctx, tempPath, autoStart, onProgress)
 }
 
 func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress ProgressCallback) error {
-	tempPath, err := m.resolveLocalBinary(localPath)
+	tempPath, err := m.resolveLocalBinary(ctx, localPath)
 	if err != nil {
 		return fmt.Errorf("local binary: %w", err)
 	}
-	defer func() {
-		if tempPath != localPath {
-			m.fs.Remove(tempPath)
+	installErr := m.installBinary(ctx, tempPath, autoStart, onProgress)
+	if tempPath == localPath {
+		return installErr
+	}
+	if cleanupErr := m.fs.Remove(tempPath); cleanupErr != nil {
+		if installErr != nil {
+			return errors.Join(installErr, fmt.Errorf("cleanup local binary: %w", cleanupErr))
 		}
-	}()
-	return m.installBinary(ctx, tempPath, autoStart, onProgress)
+		return fmt.Errorf("cleanup local binary: %w", cleanupErr)
+	}
+	return installErr
 }
 
-func (m *lifecycleManager) resolveLocalBinary(localPath string) (string, error) {
+func (m *lifecycleManager) resolveLocalBinary(ctx context.Context, localPath string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if strings.HasSuffix(localPath, ".gz") {
 		tempPath := binaryPath + ".tmp.local"
 		if err := m.decompressGzip(localPath, tempPath); err != nil {
-			return "", err
+			return "", withCleanupError(err, m.fs, tempPath)
+		}
+		if err := ctx.Err(); err != nil {
+			return "", withCleanupError(err, m.fs, tempPath)
 		}
 		return tempPath, nil
 	}
@@ -115,12 +215,21 @@ func (m *lifecycleManager) resolveLocalBinary(localPath string) (string, error) 
 }
 
 func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, autoStart bool, onProgress ProgressCallback) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Deploying binary"})
 	if err := m.fs.Rename(binarySrc, binaryPath); err != nil {
-		m.fs.Remove(binarySrc)
-		return m.rollbackInstall(ctx, "deploy rename", err)
+		rollbackErr := m.rollbackInstall(ctx, "deploy rename", err)
+		if cleanupErr := m.fs.Remove(binarySrc); cleanupErr != nil {
+			return errors.Join(rollbackErr, fmt.Errorf("cleanup deploy source: %w", cleanupErr))
+		}
+		return rollbackErr
 	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Binary deployed"})
+	if err := ctx.Err(); err != nil {
+		return m.rollbackInstall(ctx, "deploy", err)
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Creating directories"})
 	if err := m.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
@@ -141,12 +250,18 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 		return m.rollbackInstall(ctx, "bootstrap service unit", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Config files created"})
+	if err := ctx.Err(); err != nil {
+		return m.rollbackInstall(ctx, "bootstrap", err)
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseRegister, Message: "Registering system service"})
 	if err := m.svcMgr.Register(serviceName, svcPath); err != nil {
 		return m.rollbackInstall(ctx, "service register", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseRegister, Message: "Service registered"})
+	if err := ctx.Err(); err != nil {
+		return m.rollbackInstall(ctx, "service register", err)
+	}
 
 	if autoStart {
 		onProgress(ProgressEvent{Phase: PhaseEnableAutoStart, Message: "Enabling auto-start"})
@@ -154,11 +269,20 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 			return m.rollbackInstall(ctx, "enable auto-start", err)
 		}
 		onProgress(ProgressEvent{Phase: PhaseEnableAutoStart, Message: "Auto-start enabled"})
+		if err := ctx.Err(); err != nil {
+			return m.rollbackInstall(ctx, "enable auto-start", err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return m.rollbackInstall(ctx, "before start", err)
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseStart, Message: "Starting mihomo"})
 	if err := m.svcMgr.Start(serviceName); err != nil {
 		return m.rollbackInstall(ctx, "service start", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return m.rollbackInstall(ctx, "after service start", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseStart, Message: "mihomo is running"})
 
@@ -206,50 +330,97 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return withCleanupError(err, m.fs, tempPath)
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopping mihomo"})
-	if running, _ := m.svcMgr.IsRunning(serviceName); running {
+	wasRunning, statusErr := m.svcMgr.IsRunning(serviceName)
+	if statusErr != nil {
+		return withCleanupError(fmt.Errorf("check service state: %w", statusErr), m.fs, tempPath)
+	}
+	resumeService := func() error {
+		if wasRunning {
+			return m.svcMgr.Start(serviceName)
+		}
+		return nil
+	}
+	if wasRunning {
 		if err := m.svcMgr.Stop(serviceName); err != nil {
-			m.fs.Remove(tempPath)
-			return fmt.Errorf("stop failed: %w", err)
+			return withCleanupError(fmt.Errorf("stop failed: %w", err), m.fs, tempPath)
 		}
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopped"})
+	if err := ctx.Err(); err != nil {
+		return withCleanupError(errors.Join(err, resumeService()), m.fs, tempPath)
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Backing up old binary"})
 	backupDir := "/opt/mihomo-manager/backups"
-	m.fs.MkdirAll(backupDir, filePermUserRWX)
+	if err := m.fs.MkdirAll(backupDir, filePermUserRWX); err != nil {
+		return withCleanupError(errors.Join(fmt.Errorf("create backup directory: %w", err), resumeService()), m.fs, tempPath)
+	}
 	backupPath := backupDir + "/mihomo.bak"
-	m.fs.Rename(binaryPath, backupPath)
+	if err := m.fs.Rename(binaryPath, backupPath); err != nil {
+		return withCleanupError(errors.Join(fmt.Errorf("backup binary: %w", err), resumeService()), m.fs, tempPath)
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, m.restoreBinary(backupPath, tempPath, wasRunning))
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Replacing binary"})
 	if err := m.fs.Chmod(tempPath, filePermUserRWX); err != nil {
-		m.restoreBinary(backupPath, tempPath)
-		return fmt.Errorf("chmod failed: %w", err)
+		return withRollbackError(fmt.Errorf("chmod failed: %w", err), m.restoreBinary(backupPath, tempPath, wasRunning))
 	}
 	if err := m.fs.Rename(tempPath, binaryPath); err != nil {
-		m.restoreBinary(backupPath, tempPath)
-		return fmt.Errorf("rename failed: %w", err)
+		return withRollbackError(fmt.Errorf("rename failed: %w", err), m.restoreBinary(backupPath, tempPath, wasRunning))
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Binary replaced"})
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, m.svcMgr.Stop(serviceName), m.restoreBinary(backupPath, "", wasRunning))
+	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Starting mihomo"})
 	if err := m.svcMgr.Start(serviceName); err != nil {
-		if rbErr := m.restoreBinary(backupPath, ""); rbErr != nil {
-			return fmt.Errorf("start failed, rollback also failed: %v (original: %w)", rbErr, err)
+		if rbErr := m.restoreBinary(backupPath, "", wasRunning); rbErr != nil {
+			return errors.Join(fmt.Errorf("start failed: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return fmt.Errorf("start failed, rolled back: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, m.svcMgr.Stop(serviceName), m.restoreBinary(backupPath, "", wasRunning))
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + version})
 
 	return nil
 }
 
-func (m *lifecycleManager) restoreBinary(backupPath, tempPath string) error {
-	m.fs.Remove(binaryPath)
-	m.fs.Rename(backupPath, binaryPath)
-	m.fs.Remove(tempPath)
-	return m.svcMgr.Start(serviceName)
+func withRollbackError(primary, rollback error) error {
+	if rollback == nil {
+		return primary
+	}
+	return errors.Join(primary, fmt.Errorf("rollback failed: %w", rollback))
+}
+
+func (m *lifecycleManager) restoreBinary(backupPath, tempPath string, restart bool) error {
+	var restoreErrs []error
+	if err := m.fs.Remove(binaryPath); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("remove new binary: %w", err))
+	}
+	if err := m.fs.Rename(backupPath, binaryPath); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("restore old binary: %w", err))
+	}
+	if tempPath != "" {
+		if err := m.fs.Remove(tempPath); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("remove temporary binary: %w", err))
+		}
+	}
+	if restart {
+		if err := m.svcMgr.Start(serviceName); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restart service: %w", err))
+		}
+	}
+	return errors.Join(restoreErrs...)
 }
 
 func (m *lifecycleManager) ListVersions(ctx context.Context) ([]VersionInfo, error) {

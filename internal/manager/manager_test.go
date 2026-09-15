@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
@@ -122,11 +124,23 @@ func (m *fakeCmdRunner) RunCommandIgnoreExit(name string, args ...string) (strin
 }
 
 type fakeGitHubReleases struct {
-	downloadErr    error
-	downloadCalled bool
-	written        map[string][]byte
-	versions       []VersionInfo
-	versionsErr    error
+	downloadErr      error
+	downloadCalled   bool
+	expectedChecksum string
+	checksumErr      error
+	checksumCalled   bool
+	downloadData     []byte
+	written          map[string][]byte
+	versions         []VersionInfo
+	versionsErr      error
+}
+
+func fakeReleaseArchive() []byte {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	gw.Write([]byte("proxies:\n  - server: fetched-node\n"))
+	gw.Close()
+	return buf.Bytes()
 }
 
 func (m *fakeGitHubReleases) Download(ctx context.Context, url, dest string) error {
@@ -137,11 +151,11 @@ func (m *fakeGitHubReleases) Download(ctx context.Context, url, dest string) err
 	if m.written == nil {
 		m.written = make(map[string][]byte)
 	}
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	gw.Write([]byte("proxies:\n  - server: fetched-node\n"))
-	gw.Close()
-	m.written[dest] = buf.Bytes()
+	if m.downloadData != nil {
+		m.written[dest] = m.downloadData
+	} else {
+		m.written[dest] = fakeReleaseArchive()
+	}
 	return nil
 }
 
@@ -152,6 +166,22 @@ func linkStorage(fs *fakeFileSystem, gh *fakeGitHubReleases) {
 		fs.written = make(map[string][]byte)
 	}
 	gh.written = fs.written
+}
+
+func (m *fakeGitHubReleases) ExpectedChecksum(ctx context.Context, owner, repo, version, assetName string) (string, error) {
+	m.checksumCalled = true
+	if m.checksumErr != nil {
+		return "", m.checksumErr
+	}
+	if m.expectedChecksum != "" {
+		return m.expectedChecksum, nil
+	}
+	data := fakeReleaseArchive()
+	if m.downloadData != nil {
+		data = m.downloadData
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func (m *fakeGitHubReleases) ListVersions(ctx context.Context, owner, repo string, limit int) ([]VersionInfo, error) {

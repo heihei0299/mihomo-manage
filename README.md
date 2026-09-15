@@ -83,8 +83,9 @@ sudo mihomo-manager install
 export MIHOMO_RELEASE_URL="https://ghproxy.com/https://github.com/MetaCubeX/mihomo/releases/download/{version}/mihomo-{os}-{arch}-{version}.gz"
 sudo mihomo-manager install
 
-# 自建镜像
+# 自建镜像（必须同时提供 checksum 模板）
 export MIHOMO_RELEASE_URL="https://cdn.example.com/mihomo/{version}/mihomo-{os}-{arch}-{version}.gz"
+export MIHOMO_RELEASE_CHECKSUM_URL="https://cdn.example.com/mihomo/{version}/{asset}.sha256"
 sudo mihomo-manager install
 ```
 
@@ -142,7 +143,8 @@ TUI 的 Config → Subscription 页面支持按 `e` 使用 `$EDITOR` 输入 URL 
 | 变量 | 说明 |
 |---|---|
 | `MIHOMO_DOWNLOAD_PROXY` | 用于下载 mihomo 核心的代理（绕过系统 HTTP_PROXY） |
-| `MIHOMO_RELEASE_URL` | GitHub Release 下载 URL 模板，支持 `{os}` `{arch}` `{version}` 占位符 |
+| `MIHOMO_RELEASE_URL` | Release 下载 URL 模板，支持 `{os}` `{arch}` `{version}` 占位符；设置后必须提供 checksum 模板 |
+| `MIHOMO_RELEASE_CHECKSUM_URL` | 自定义镜像 checksum URL 模板，支持 `{version}` `{asset}` 占位符；缺失或校验失败时拒绝安装 |
 
 ## 验收测试
 

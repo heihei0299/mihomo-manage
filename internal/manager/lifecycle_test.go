@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,109 @@ func TestLifecycleInstall(t *testing.T) {
 	assertFileExists(t, fs, defaultServiceUnitPath, "BUG 1: service unit file should be created")
 	if !svc.running {
 		t.Error("service should be running after Install")
+	}
+}
+
+func TestLifecycleInstallRejectsChecksumMismatch(t *testing.T) {
+	fs := &fakeFileSystem{}
+	gh := &fakeGitHubReleases{expectedChecksum: strings.Repeat("0", 64)}
+	linkStorage(fs, gh)
+	svc := &mockServiceManager{}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, gh, svc)
+
+	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
+	if err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("Install error = %v, want checksum error", err)
+	}
+	if _, ok := fs.written[binaryPath]; ok {
+		t.Fatal("binary should not be deployed after checksum mismatch")
+	}
+}
+
+func TestLifecycleInstallFailsClosedWhenChecksumUnavailable(t *testing.T) {
+	fs := &fakeFileSystem{}
+	gh := &fakeGitHubReleases{checksumErr: errors.New("checksum metadata unavailable")}
+	linkStorage(fs, gh)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, gh, &mockServiceManager{})
+
+	if err := m.Install(context.Background(), "v1.18.0", true, noopProgress); err == nil || !strings.Contains(err.Error(), "checksum unavailable") {
+		t.Fatalf("Install error = %v, want checksum-unavailable error", err)
+	}
+	if gh.downloadCalled {
+		t.Fatal("download should not start without checksum metadata")
+	}
+}
+
+func TestLifecycleInstallCleansArtifactsAfterDecompressFailure(t *testing.T) {
+	fs := &fakeFileSystem{}
+	gh := &fakeGitHubReleases{downloadData: []byte("not gzip")}
+	linkStorage(fs, gh)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, gh, &mockServiceManager{})
+
+	if err := m.Install(context.Background(), "v1.18.0", true, noopProgress); err == nil || !strings.Contains(err.Error(), "decompress failed") {
+		t.Fatalf("Install error = %v, want decompress error", err)
+	}
+	for _, path := range []string{binaryPath + ".tmp.v1.18.0", binaryPath + ".tmp.v1.18.0.gz"} {
+		if _, exists := fs.written[path]; exists {
+			t.Fatalf("temporary artifact %q should be removed", path)
+		}
+	}
+}
+
+func TestLifecycleUpgradeRejectsChecksumBeforeStopping(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	gh := &fakeGitHubReleases{expectedChecksum: strings.Repeat("0", 64)}
+	linkStorage(fs, gh)
+	svc := &mockServiceManager{running: true}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, gh, svc)
+
+	if err := m.Upgrade(context.Background(), "v1.18.0", noopProgress); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("Upgrade error = %v, want checksum error", err)
+	}
+	if svc.stopped {
+		t.Fatal("upgrade should verify before stopping the running service")
+	}
+	if got := string(fs.written[binaryPath]); got != "old binary" {
+		t.Fatalf("binary after rejected upgrade = %q", got)
+	}
+}
+
+func TestLifecycleLocalInstallSkipsRemoteChecksum(t *testing.T) {
+	const localPath = "/tmp/mihomo-local"
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{localPath: true},
+		written:    map[string][]byte{localPath: []byte("local binary")},
+	}
+	gh := &fakeGitHubReleases{}
+	linkStorage(fs, gh)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, gh, &mockServiceManager{})
+
+	if err := m.InstallFromLocal(context.Background(), localPath, false, noopProgress); err != nil {
+		t.Fatalf("InstallFromLocal failed: %v", err)
+	}
+	if gh.checksumCalled {
+		t.Fatal("local installation should not request a remote checksum")
+	}
+}
+
+func TestLifecycleLocalInstallHonorsCanceledContext(t *testing.T) {
+	const localPath = "/tmp/mihomo-canceled"
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{localPath: true},
+		written:    map[string][]byte{localPath: []byte("local binary")},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeGitHubReleases{}, &mockServiceManager{})
+
+	if err := m.InstallFromLocal(ctx, localPath, false, noopProgress); err == nil {
+		t.Fatal("InstallFromLocal should stop before deployment when context is canceled")
+	}
+	if _, ok := fs.written[binaryPath]; ok {
+		t.Fatal("canceled local install should not deploy the binary")
 	}
 }
 
@@ -60,12 +164,12 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 func TestLifecycleSubscriptionUpdate(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:  true,
+			OverrideFilePath:    true,
 			subscriptionURLFile: true,
 			configYAML:          true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath:     []byte("mode: rule\n"),
+			OverrideFilePath:    []byte("mode: rule\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},
