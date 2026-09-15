@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/anomalyco/mihomo-manager/internal/manager"
 
@@ -58,17 +61,17 @@ var actionRegistry = map[action]actionDef{
 }
 
 type model struct {
-	control        manager.ServiceControl
-	lifecycle      manager.LifecycleManager
-	config         manager.ConfigManager
-	status         *manager.Status
-	statusErr      error
-	ready          bool
-	executing      action
-	execResult     string
-	actionErr      error
-	phaseLabel     string
-	phaseMsg       string
+	control    manager.ServiceControl
+	lifecycle  manager.LifecycleManager
+	config     manager.ConfigManager
+	status     *manager.Status
+	statusErr  error
+	ready      bool
+	executing  action
+	execResult string
+	actionErr  error
+	phaseLabel string
+	phaseMsg   string
 
 	mode           viewMode
 	keepBackup     bool
@@ -102,6 +105,55 @@ type versionsMsg struct {
 type configPreviewMsg struct {
 	content string
 	err     error
+}
+
+type subscriptionEditMsg struct {
+	err error
+}
+
+func editorCommand(editor, path string) (*exec.Cmd, error) {
+	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("editor is empty")
+	}
+	args := append(append([]string{}, parts[1:]...), path)
+	return exec.Command(parts[0], args...), nil
+}
+
+func editSubscriptionCmd(cfg manager.ConfigManager) tea.Cmd {
+	file, err := os.CreateTemp("", "mihomo-subscription-*")
+	if err != nil {
+		return func() tea.Msg { return subscriptionEditMsg{err: err} }
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return func() tea.Msg { return subscriptionEditMsg{err: err} }
+	}
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	command, err := editorCommand(editor, path)
+	if err != nil {
+		os.Remove(path)
+		return func() tea.Msg { return subscriptionEditMsg{err: err} }
+	}
+	return tea.ExecProcess(command, func(runErr error) tea.Msg {
+		defer os.Remove(path)
+		if runErr != nil {
+			return subscriptionEditMsg{err: fmt.Errorf("editor failed: %w", runErr)}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return subscriptionEditMsg{err: err}
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			return subscriptionEditMsg{err: fmt.Errorf("subscription source cannot be empty")}
+		}
+		return subscriptionEditMsg{err: cfg.SetSubscriptionSource(context.Background(), string(data))}
+	})
 }
 
 func (m model) Init() tea.Cmd {
@@ -204,9 +256,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeConfig
 				m.configTab = configTabSubscription
 				m.previewContent = ""
-			return m, fetchConfigPreview(m.config)
-		}
-	case "r":
+				return m, fetchConfigPreview(m.config)
+			}
+		case "r":
 			return m, fetchStatusCmd(m.control)
 		case "1":
 			if isActionAllowed(m.status, actStart) {
@@ -270,6 +322,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewContent = msg.content
 		}
 		return m, nil
+
+	case subscriptionEditMsg:
+		m.execResult = ""
+		m.actionErr = msg.err
+		if msg.err != nil {
+			m.execResult = "failed"
+		} else {
+			m.execResult = "success"
+		}
+		return m, fetchConfigPreview(m.config)
 
 	case progressMsg:
 		m.phaseLabel = msg.phase.String()
@@ -343,6 +405,10 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "r":
 		return m, fetchConfigPreview(m.config)
+	case "e":
+		if m.configTab == configTabSubscription {
+			return m, editSubscriptionCmd(m.config)
+		}
 	}
 	return m, nil
 }
@@ -537,8 +603,9 @@ func (m model) configView() string {
 	var content string
 	switch m.configTab {
 	case configTabSubscription:
-		content = "Subscription: /opt/mihomo-manager/state/subscription-data.txt\n"
-		content += "Edit with: mihomo-manager subscription set <url-or-data>\n"
+		content = "Subscription source: remote or local\n"
+		content += "e) Edit source with $EDITOR (URL or local subscription-data)\n"
+		content += "CLI: mihomo-manager subscription set <url-or-data>\n"
 	case configTabOverride:
 		content = fmt.Sprintf("Override file: %s\n", manager.OverrideFilePath)
 		content += "Edit with: mihomo-manager config override edit\n"

@@ -122,7 +122,10 @@ Usage of mihomo-manager:
 最终配置由两部分合并生成：
 
 - **订阅数据**（subscription-data）：订阅 URL 拉取或本地粘贴的内容，作为合并的 base
+- **订阅来源**（subscription-source）：显式记录 `remote` 或 `local`；切换来源时清理非活动来源，避免旧 URL 或数据被误用
 - **覆写文件**（override-file）：`/opt/mihomo/etc/override.yaml`，本地定制的唯一入口
+
+TUI 的 Config → Subscription 页面支持按 `e` 使用 `$EDITOR` 输入 URL 或本地 subscription-data；CLI 仍可使用 `subscription set <url-or-data>`。
 
 合并语义：
 

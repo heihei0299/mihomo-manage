@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -29,7 +30,7 @@ func (m *fakeDownloader) Download(ctx context.Context, url, dest string) error {
 func TestRemoteSubscriptionDataAppearsInConfig(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:  true,
+			OverrideFilePath:    true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
@@ -84,7 +85,7 @@ func TestLocalSubscriptionDataAppearsInConfig(t *testing.T) {
 			OverrideFilePath: true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath:  []byte("proxy-groups:\n  - name: Proxy\n    type: select\n"),
+			OverrideFilePath:     []byte("proxy-groups:\n  - name: Proxy\n    type: select\n"),
 			subscriptionDataFile: []byte("proxies:\n  - name: local-node\n    type: ss\n    server: local.example.com\n"),
 		},
 	}
@@ -109,11 +110,11 @@ func TestSubscriptionWithTopLevelKeysViaUpdate(t *testing.T) {
 	// Template overlays supplement missing fields only
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:  true,
+			OverrideFilePath:    true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath: []byte("log-level: debug\n"),
+			OverrideFilePath:    []byte("log-level: debug\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 		},
 	}
@@ -153,12 +154,12 @@ func TestUpdateConfigWithValidatorPassesSubscriptionData(t *testing.T) {
 	// Full flow with a no-op validator
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:  true,
+			OverrideFilePath:    true,
 			subscriptionURLFile: true,
 			configYAML:          true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath: []byte("log-level: debug\n"),
+			OverrideFilePath:    []byte("log-level: debug\n"),
 			subscriptionURLFile: []byte(`https://example.com/sub`),
 			configYAML:          []byte(`old config`),
 		},
@@ -184,7 +185,7 @@ func TestPipelineMergeOverridesBaseScalar(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{OverrideFilePath: true},
 		written: map[string][]byte{
-			OverrideFilePath: []byte("port: 8888\nmode: global\n"),
+			OverrideFilePath:     []byte("port: 8888\nmode: global\n"),
 			subscriptionDataFile: []byte("port: 7890\nmode: rule\nsocks-port: 7891\n"),
 		},
 	}
@@ -253,7 +254,7 @@ func TestPipelineMergeOverridesNonAppendArrays(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{OverrideFilePath: true},
 		written: map[string][]byte{
-			OverrideFilePath: []byte("listen:\n  - 0.0.0.0:8080\n"),
+			OverrideFilePath:     []byte("listen:\n  - 0.0.0.0:8080\n"),
 			subscriptionDataFile: []byte("listen:\n  - 0.0.0.0:9090\n  - 127.0.0.1:9091\n"),
 		},
 	}
@@ -342,7 +343,7 @@ func TestPipelineMigrationNoopWhenNothingExists(t *testing.T) {
 func TestPipelinePureSubscriptionWithoutOverride(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{subscriptionDataFile: true},
-		written: map[string][]byte{subscriptionDataFile: []byte("port: 7890\nmode: rule\n")},
+		written:    map[string][]byte{subscriptionDataFile: []byte("port: 7890\nmode: rule\n")},
 	}
 	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
 
@@ -359,6 +360,203 @@ func TestPipelinePureSubscriptionWithoutOverride(t *testing.T) {
 	}
 	if fs.FileExists(OverrideFilePath) {
 		t.Errorf("Apply should not auto-create the override file (pure-subscription mode)")
+	}
+}
+
+func TestSetRemoteSubscriptionSelectsRemoteSourceAndClearsLocalState(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{subscriptionDataFile: true},
+		written:    map[string][]byte{subscriptionDataFile: []byte("local: true\n")},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub.yaml"); err != nil {
+		t.Fatalf("SetSubscriptionSource failed: %v", err)
+	}
+
+	if got := string(fs.written[stateDir+"/subscription-source.txt"]); got != "remote\n" {
+		t.Fatalf("source marker = %q, want remote", got)
+	}
+	if got := string(fs.written[subscriptionURLFile]); got != "https://example.com/sub.yaml" {
+		t.Fatalf("subscription URL = %q", got)
+	}
+	removedData := false
+	for _, path := range fs.removed {
+		if path == subscriptionDataFile {
+			removedData = true
+			break
+		}
+	}
+	if !removedData {
+		t.Fatalf("removed files = %v, want local subscription data removed", fs.removed)
+	}
+}
+
+func TestSetSubscriptionSourceRollsBackWhenMarkerWriteFails(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			subscriptionSourceFile: true,
+			subscriptionDataFile:   true,
+		},
+		written: map[string][]byte{
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+		},
+		writeErrByPath: map[string]error{
+			subscriptionSourceFile: errors.New("marker write failed"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub.yaml"); err == nil {
+		t.Fatal("SetSubscriptionSource should report marker write failure")
+	}
+	if got := string(fs.written[subscriptionSourceFile]); got != "local\n" {
+		t.Fatalf("source marker after rollback = %q, want local", got)
+	}
+	if got := string(fs.written[subscriptionDataFile]); got != "mode: rule\n" {
+		t.Fatalf("subscription data after rollback = %q", got)
+	}
+	if _, exists := fs.written[subscriptionURLFile]; exists {
+		t.Fatal("remote URL should not remain after rollback")
+	}
+}
+
+func TestSetLocalSubscriptionSelectsLocalSourceAndClearsRemoteState(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{subscriptionURLFile: true},
+		written:    map[string][]byte{subscriptionURLFile: []byte("https://example.com/sub.yaml")},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	const localData = "proxies:\n  - name: local\n"
+	if err := m.SetSubscriptionSource(context.Background(), localData); err != nil {
+		t.Fatalf("SetSubscriptionSource failed: %v", err)
+	}
+
+	if got := string(fs.written[subscriptionSourceFile]); got != "local\n" {
+		t.Fatalf("source marker = %q, want local", got)
+	}
+	if got := string(fs.written[subscriptionDataFile]); got != localData {
+		t.Fatalf("subscription data = %q", got)
+	}
+	removedURL := false
+	for _, path := range fs.removed {
+		if path == subscriptionURLFile {
+			removedURL = true
+			break
+		}
+	}
+	if !removedURL {
+		t.Fatalf("removed files = %v, want remote URL removed", fs.removed)
+	}
+}
+
+func TestPreviewMigratesSingleLegacyRemoteSource(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{subscriptionURLFile: true},
+		written:    map[string][]byte{subscriptionURLFile: []byte("https://example.com/sub.yaml")},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if _, err := m.PreviewConfig(context.Background()); err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
+	if got := string(fs.written[subscriptionSourceFile]); got != "remote\n" {
+		t.Fatalf("migrated source marker = %q, want remote", got)
+	}
+}
+
+func TestPreviewRejectsConflictingLegacySources(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{subscriptionURLFile: true, subscriptionDataFile: true},
+		written: map[string][]byte{
+			subscriptionURLFile:  []byte("https://example.com/sub.yaml"),
+			subscriptionDataFile: []byte("mode: rule\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	_, err := m.PreviewConfig(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("PreviewConfig error = %v, want conflicting legacy source error", err)
+	}
+}
+
+func TestLocalSourceDoesNotUseStaleRemoteURL(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			subscriptionURLFile: true,
+			configYAML:          true,
+		},
+		written: map[string][]byte{
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+			subscriptionURLFile:    []byte("https://stale.example/sub.yaml"),
+			configYAML:             []byte("mode: rule\n"),
+		},
+	}
+	gh := &fakeGitHubReleases{}
+	m := NewConfigManager(fs, gh, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	if gh.downloadCalled {
+		t.Fatal("local source should not download the stale remote URL")
+	}
+}
+
+func TestInvalidSubscriptionSourceIsRejected(t *testing.T) {
+	fs := &fakeFileSystem{
+		written: map[string][]byte{subscriptionSourceFile: []byte("unknown\n")},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	_, err := m.PreviewConfig(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "invalid subscription source") {
+		t.Fatalf("PreviewConfig error = %v, want invalid source error", err)
+	}
+}
+
+func TestSetSubscriptionSourceRejectsEmptySource(t *testing.T) {
+	m := NewConfigManager(&fakeFileSystem{}, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.SetSubscriptionSource(context.Background(), "  \n"); err == nil {
+		t.Fatal("SetSubscriptionSource should reject an empty source")
+	}
+}
+
+func TestUpdateConfigRejectsUnconfiguredSource(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true},
+		written:    map[string][]byte{OverrideFilePath: []byte("mode: rule\n")},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "subscription source is not configured") {
+		t.Fatalf("UpdateConfig error = %v, want unconfigured source error", err)
+	}
+}
+
+func TestRemoteSourceRejectsEmptyURLInsteadOfUsingCachedData(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			subscriptionURLFile:  true,
+			subscriptionDataFile: true,
+			OverrideFilePath:     true,
+		},
+		written: map[string][]byte{
+			subscriptionSourceFile: []byte("remote\n"),
+			subscriptionURLFile:    []byte("  \n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+			OverrideFilePath:       []byte("log-level: info\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "URL is empty") {
+		t.Fatalf("UpdateConfig error = %v, want empty URL error", err)
 	}
 }
 

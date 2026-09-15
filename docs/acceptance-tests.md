@@ -319,8 +319,9 @@ subscription saved
 
 | 检查项 | 命令 | 通过条件 |
 |--------|------|----------|
+| 来源标记 | `cat /opt/mihomo-manager/state/subscription-source.txt` | 内容为 `remote` |
 | URL 文件 | `cat /opt/mihomo-manager/state/subscription-url.txt` | 内容等于输入的 URL |
-| 数据文件 | `cat /opt/mihomo-manager/state/subscription-data.txt` | 内容等于输入的 URL（首次 set 写入 data） |
+| 数据文件 | `test ! -e /opt/mihomo-manager/state/subscription-data.txt` | 设置来源后不保留旧的本地 subscription-data |
 
 ### 设置本地内容（非 URL）
 
@@ -328,7 +329,7 @@ subscription saved
 mihomo-manager subscription set "proxies:\n  - name: myproxy\n    type: ss\n    server: 1.2.3.4"
 ```
 
-此时 `subscription-url.txt` 不可读（os.ErrNotExist），`subscription-data.txt` 包含粘贴的内容。
+此时 `subscription-url.txt` 不可读（os.ErrNotExist），`subscription-source.txt` 内容为 `local`，`subscription-data.txt` 包含粘贴的内容。切换来源时，非活动来源的状态会被清理。
 
 ---
 
@@ -654,7 +655,7 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 | <kbd>i</kbd> (Install) | 仅当未安装时可触发 |
 | <kbd>5</kbd> (Upgrade) | 弹出版本选择列表，<kbd>↑</kbd>/<kbd>↓</kbd> 导航，<kbd>Enter</kbd> 确认，显示进度 |
 | <kbd>u</kbd> (Uninstall) | 弹出确认对话框，<kbd>y</kbd> 保留备份 / <kbd>n</kbd> 完全删除 / 其他键取消 |
-| <kbd>Tab</kbd> | 切换到 Config 视图，显示四个标签页（Subscription / Template / Rules / Preview） |
+| <kbd>Tab</kbd> | 切换到 Config 视图，显示三个标签页（Subscription / Override / Preview） |
 | <kbd>←</kbd> / <kbd>→</kbd> | 在 Config 四个标签页之间循环切换 |
 | <kbd>r</kbd> (Refresh) | 刷新状态显示 |
 | <kbd>q</kbd> (Quit) | 退出 TUI，返回 shell |
@@ -667,9 +668,8 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 
 ### Config 视图
 
-- Subscription 标签页：显示当前订阅 URL/数据
-- Template 标签页：显示模板内容
-- Rules 标签页：显示分流规则
+- Subscription 标签页：显示当前 source 类型；按 <kbd>e</kbd> 使用 `$EDITOR` 输入 URL 或本地 subscription-data
+- Override 标签页：显示覆写文件
 - Preview 标签页：显示生成的最终配置
 
 ---

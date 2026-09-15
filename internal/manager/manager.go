@@ -9,7 +9,7 @@ import (
 type InstanceState int
 
 const (
-	Stopped   InstanceState = iota
+	Stopped InstanceState = iota
 	Running
 	Upgrading
 )
@@ -94,10 +94,10 @@ type VersionInfo struct {
 }
 
 type Status struct {
-	InstanceState     InstanceState
-	Installed         bool
-	Version           string
-	AutoStartEnabled  bool
+	InstanceState    InstanceState
+	Installed        bool
+	Version          string
+	AutoStartEnabled bool
 }
 
 type ServiceManager interface {
@@ -150,19 +150,20 @@ func timestamp() string {
 }
 
 const (
-	filePermUserRW   = 0644
-	filePermUserRWX  = 0755
+	filePermUserRW  = 0644
+	filePermUserRWX = 0755
 
-	binaryPath            = "/opt/mihomo/bin/mihomo"
-	configDir             = "/opt/mihomo/etc"
-	OverrideFilePath      = "/opt/mihomo/etc/override.yaml"
-	legacyTemplatePath    = "/opt/mihomo/etc/config-template.yaml"
-	configYAML            = "/opt/mihomo/etc/config.yaml"
+	binaryPath             = "/opt/mihomo/bin/mihomo"
+	configDir              = "/opt/mihomo/etc"
+	OverrideFilePath       = "/opt/mihomo/etc/override.yaml"
+	legacyTemplatePath     = "/opt/mihomo/etc/config-template.yaml"
+	configYAML             = "/opt/mihomo/etc/config.yaml"
 	defaultServiceUnitPath = "/etc/systemd/system/mihomo.service"
-	ServiceName           = "mihomo"
-	stateDir              = "/opt/mihomo-manager/state"
-	subscriptionDataFile  = "/opt/mihomo-manager/state/subscription-data.txt"
+	ServiceName            = "mihomo"
+	stateDir               = "/opt/mihomo-manager/state"
+	subscriptionDataFile   = "/opt/mihomo-manager/state/subscription-data.txt"
 	subscriptionURLFile    = "/opt/mihomo-manager/state/subscription-url.txt"
+	subscriptionSourceFile = "/opt/mihomo-manager/state/subscription-source.txt"
 	RoutingRulesPath       = "/opt/mihomo/etc/rules.txt"
 	scheduleFile           = "/opt/mihomo-manager/state/schedule.txt"
 )

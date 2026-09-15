@@ -10,14 +10,16 @@ import (
 )
 
 type fakeFileSystem struct {
-	fileExists  map[string]bool
-	written     map[string][]byte
-	writeErr    error
-	removeErr   error
-	renameErr   error
-	removed     []string
-	renamed     map[string]string
-	readFileErr map[string]error
+	fileExists      map[string]bool
+	written         map[string][]byte
+	writeErr        error
+	writeErrByPath  map[string]error
+	removeErr       error
+	removeErrByPath map[string]error
+	renameErr       error
+	removed         []string
+	renamed         map[string]string
+	readFileErr     map[string]error
 }
 
 func (m *fakeFileSystem) FileExists(path string) bool {
@@ -44,10 +46,20 @@ func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error 
 	if m.writeErr != nil {
 		return m.writeErr
 	}
+	if m.writeErrByPath != nil {
+		if err, ok := m.writeErrByPath[path]; ok {
+			delete(m.writeErrByPath, path)
+			return err
+		}
+	}
 	if m.written == nil {
 		m.written = make(map[string][]byte)
 	}
 	m.written[path] = data
+	if m.fileExists == nil {
+		m.fileExists = make(map[string]bool)
+	}
+	m.fileExists[path] = true
 	return nil
 }
 
@@ -55,7 +67,14 @@ func (m *fakeFileSystem) Remove(path string) error {
 	if m.removeErr != nil {
 		return m.removeErr
 	}
+	if m.removeErrByPath != nil {
+		if err, ok := m.removeErrByPath[path]; ok {
+			return err
+		}
+	}
 	m.removed = append(m.removed, path)
+	delete(m.written, path)
+	delete(m.fileExists, path)
 	return nil
 }
 
@@ -223,14 +242,14 @@ func (m *mockServiceManager) AutoStartEnabled(name string) (bool, error) {
 }
 
 type testManager struct {
-	fs       *fakeFileSystem
-	cmd      *fakeCmdRunner
-	gh       *fakeGitHubReleases
-	svc      *mockServiceManager
-	ctrl     ServiceControl
-	life     LifecycleManager
-	cfg      ConfigManager
-	sched    ScheduleManager
+	fs    *fakeFileSystem
+	cmd   *fakeCmdRunner
+	gh    *fakeGitHubReleases
+	svc   *mockServiceManager
+	ctrl  ServiceControl
+	life  LifecycleManager
+	cfg   ConfigManager
+	sched ScheduleManager
 }
 
 func newTestManager() *testManager {
@@ -473,7 +492,7 @@ func TestInstallDeployFailsRollsBack(t *testing.T) {
 func TestUpdateConfigReadURLError(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:  true,
+			OverrideFilePath:    true,
 			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
@@ -511,7 +530,7 @@ func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:                        true,
+			OverrideFilePath: true,
 			"/opt/mihomo-manager/state/subscription-url.txt": true,
 		},
 		written: map[string][]byte{
@@ -567,16 +586,17 @@ func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 func TestUpdateConfigEmptyURL(t *testing.T) {
 	fs := &fakeFileSystem{
 		written: map[string][]byte{
-			OverrideFilePath:  []byte(`test: {{subscription}}`),
-			subscriptionURLFile: []byte(``),
+			OverrideFilePath:       []byte(`test: {{subscription}}`),
+			subscriptionSourceFile: []byte("remote\n"),
+			subscriptionURLFile:    []byte(``),
 		},
 	}
 	gh := &fakeGitHubReleases{}
 	m := NewConfigManager(fs, gh, &configValidator{}, nil)
 
 	err := m.UpdateConfig(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "URL is empty") {
+		t.Fatalf("error = %v, want empty URL error", err)
 	}
 }
 
@@ -586,11 +606,13 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 			OverrideFilePath: true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath: []byte(`test: {{subscription}}`),
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
 	gh := &fakeGitHubReleases{}
-	m := NewConfigManager(fs, gh, &configValidator{}, nil)
+	m := NewConfigManager(fs, gh, &passValidator{}, nil)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -602,7 +624,7 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 func TestUpdateConfigHappyPath(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath:                     true,
+			OverrideFilePath:     true,
 			subscriptionDataFile: true,
 		},
 		written: map[string][]byte{
@@ -641,12 +663,14 @@ func TestUpdateConfigReloadsInstance(t *testing.T) {
 			"/opt/mihomo/etc/config-template.yaml": true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte(`test: {{subscription}}`),
+			"/opt/mihomo/etc/config-template.yaml": []byte("mode: rule\n"),
+			subscriptionSourceFile:                 []byte("local\n"),
+			subscriptionDataFile:                   []byte("mode: rule\n"),
 		},
 	}
 	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
-	m := NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error {
+	m := NewConfigManager(fs, gh, &passValidator{}, func(ctx context.Context) error {
 		return svc.Reload(serviceName)
 	})
 
@@ -664,12 +688,14 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 			"/opt/mihomo/etc/config.yaml":          true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte(`test: {{subscription}}`),
+			"/opt/mihomo/etc/config-template.yaml": []byte("mode: rule\n"),
 			"/opt/mihomo/etc/config.yaml":          []byte(`old content`),
+			subscriptionSourceFile:                 []byte("local\n"),
+			subscriptionDataFile:                   []byte("mode: rule\n"),
 		},
 	}
 	gh := &fakeGitHubReleases{}
-	m := NewConfigManager(fs, gh, &configValidator{}, nil)
+	m := NewConfigManager(fs, gh, &passValidator{}, nil)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {

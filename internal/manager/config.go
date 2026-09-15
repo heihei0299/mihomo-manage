@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,17 +82,172 @@ func renderConfig(template, subscription, routingRules string) (string, error) {
 	return result, nil
 }
 
+type fileSnapshot struct {
+	data   []byte
+	exists bool
+}
+
+func (p *configPipeline) snapshotFile(path string) (fileSnapshot, error) {
+	data, err := p.fs.ReadFile(path)
+	if err == nil {
+		return fileSnapshot{data: data, exists: true}, nil
+	}
+	if os.IsNotExist(err) {
+		return fileSnapshot{}, nil
+	}
+	return fileSnapshot{}, err
+}
+
+func (p *configPipeline) restoreFile(path string, snapshot fileSnapshot) error {
+	if snapshot.exists {
+		return p.fs.WriteFile(path, snapshot.data, filePermUserRW)
+	}
+	return p.fs.Remove(path)
+}
+
+func (p *configPipeline) restoreSubscriptionState(snapshots map[string]fileSnapshot) error {
+	var restoreErrs []error
+	for _, path := range []string{subscriptionDataFile, subscriptionURLFile, subscriptionSourceFile} {
+		if err := p.restoreFile(path, snapshots[path]); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restore %s: %w", path, err))
+		}
+	}
+	return errors.Join(restoreErrs...)
+}
+
 func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
 	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
-	if looksLikeURL(source) {
-		return p.fs.WriteFile(subscriptionURLFile, []byte(source), filePermUserRW)
+
+	trimmed := strings.TrimSpace(source)
+	if trimmed == "" {
+		return fmt.Errorf("subscription source cannot be empty")
 	}
-	return p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW)
+
+	snapshots := make(map[string]fileSnapshot, 3)
+	for _, path := range []string{subscriptionDataFile, subscriptionURLFile, subscriptionSourceFile} {
+		snapshot, err := p.snapshotFile(path)
+		if err != nil {
+			return fmt.Errorf("reading subscription state: %w", err)
+		}
+		snapshots[path] = snapshot
+	}
+
+	rollback := func(err error) error {
+		if restoreErr := p.restoreSubscriptionState(snapshots); restoreErr != nil {
+			return errors.Join(err, restoreErr)
+		}
+		return err
+	}
+
+	if looksLikeURL(trimmed) {
+		if err := p.fs.WriteFile(subscriptionURLFile, []byte(trimmed), filePermUserRW); err != nil {
+			return rollback(err)
+		}
+		if err := p.fs.Remove(subscriptionDataFile); err != nil {
+			return rollback(fmt.Errorf("removing local subscription data: %w", err))
+		}
+		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermUserRW); err != nil {
+			return rollback(fmt.Errorf("recording subscription source: %w", err))
+		}
+		return nil
+	}
+
+	if err := p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW); err != nil {
+		return rollback(err)
+	}
+	if err := p.fs.Remove(subscriptionURLFile); err != nil {
+		return rollback(fmt.Errorf("removing remote subscription URL: %w", err))
+	}
+	if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermUserRW); err != nil {
+		return rollback(fmt.Errorf("recording subscription source: %w", err))
+	}
+	return nil
+}
+
+const (
+	remoteSubscriptionSource = "remote"
+	localSubscriptionSource  = "local"
+)
+
+func (p *configPipeline) filePresent(path string) bool {
+	if p.fs.FileExists(path) {
+		return true
+	}
+	_, err := p.fs.ReadFile(path)
+	return err == nil
+}
+
+func (p *configPipeline) requireSourceValue(path, missingMessage, emptyMessage string) error {
+	data, err := p.fs.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", missingMessage, err)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return fmt.Errorf("%s", emptyMessage)
+	}
+	return nil
+}
+
+func (p *configPipeline) subscriptionSource() (string, error) {
+	marker, err := p.fs.ReadFile(subscriptionSourceFile)
+	if err == nil {
+		source := strings.TrimSpace(string(marker))
+		switch source {
+		case remoteSubscriptionSource:
+			if !p.filePresent(subscriptionURLFile) {
+				return "", fmt.Errorf("remote subscription source is configured but its URL is missing")
+			}
+			if err := p.requireSourceValue(subscriptionURLFile, "reading remote subscription URL", "remote subscription URL is empty"); err != nil {
+				return "", err
+			}
+		case localSubscriptionSource:
+			if !p.filePresent(subscriptionDataFile) {
+				return "", fmt.Errorf("local subscription source is configured but its data is missing")
+			}
+			if err := p.requireSourceValue(subscriptionDataFile, "reading local subscription data", "local subscription data is empty"); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("invalid subscription source %q", source)
+		}
+		return source, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("reading subscription source: %w", err)
+	}
+
+	hasRemote := p.filePresent(subscriptionURLFile)
+	hasLocal := p.filePresent(subscriptionDataFile)
+	switch {
+	case hasRemote && hasLocal:
+		return "", fmt.Errorf("conflicting legacy subscription sources; choose remote or local explicitly")
+	case hasRemote:
+		if err := p.requireSourceValue(subscriptionURLFile, "reading legacy remote subscription URL", "legacy remote subscription URL is empty"); err != nil {
+			return "", err
+		}
+		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermUserRW); err != nil {
+			return "", fmt.Errorf("migrating remote subscription source: %w", err)
+		}
+		return remoteSubscriptionSource, nil
+	case hasLocal:
+		if err := p.requireSourceValue(subscriptionDataFile, "reading legacy local subscription data", "legacy local subscription data is empty"); err != nil {
+			return "", err
+		}
+		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermUserRW); err != nil {
+			return "", fmt.Errorf("migrating local subscription source: %w", err)
+		}
+		return localSubscriptionSource, nil
+	default:
+		return "", nil
+	}
 }
 
 func (p *configPipeline) Preview(ctx context.Context) (string, error) {
+	if _, err := p.subscriptionSource(); err != nil {
+		return "", err
+	}
 	subData, err := p.fs.ReadFile(subscriptionDataFile)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
@@ -120,12 +276,18 @@ func (p *configPipeline) Preview(ctx context.Context) (string, error) {
 }
 
 func (p *configPipeline) Apply(ctx context.Context) error {
-	data, err := p.fs.ReadFile(subscriptionURLFile)
+	source, err := p.subscriptionSource()
 	if err != nil {
-		if !os.IsNotExist(err) {
+		return err
+	}
+	if source == "" {
+		return fmt.Errorf("subscription source is not configured")
+	}
+	if source == remoteSubscriptionSource {
+		data, err := p.fs.ReadFile(subscriptionURLFile)
+		if err != nil {
 			return fmt.Errorf("reading subscription URL: %w", err)
 		}
-	} else {
 		url := strings.TrimSpace(string(data))
 		if url != "" {
 			tmpPath := subscriptionDataFile + ".tmp"
@@ -144,7 +306,6 @@ func (p *configPipeline) Apply(ctx context.Context) error {
 			p.fs.Remove(tmpPath)
 		}
 	}
-
 
 	preview, err := p.Preview(ctx)
 	if err != nil {

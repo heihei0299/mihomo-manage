@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/anomalyco/mihomo-manager/internal/manager"
@@ -86,6 +88,32 @@ func runActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManage
 		return errors.New("expected actionDoneMsg")
 	}
 	return done.err
+}
+
+func TestTUISubscriptionConfigOffersEditor(t *testing.T) {
+	m := model{configTab: configTabSubscription}
+	if !strings.Contains(m.configView(), "e) Edit") {
+		t.Fatalf("subscription config view should offer an editor: %s", m.configView())
+	}
+}
+
+func TestEditorCommandPreservesArguments(t *testing.T) {
+	cmd, err := editorCommand("code --wait", "/tmp/subscription")
+	if err != nil {
+		t.Fatalf("editorCommand failed: %v", err)
+	}
+	if filepath.Base(cmd.Path) != "code" {
+		t.Fatalf("editor path = %q, want code", cmd.Path)
+	}
+	want := []string{"code", "--wait", "/tmp/subscription"}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("editor args = %v, want %v", cmd.Args, want)
+	}
+	for i := range want {
+		if cmd.Args[i] != want[i] {
+			t.Fatalf("editor args = %v, want %v", cmd.Args, want)
+		}
+	}
 }
 
 func TestTUIStartRejectedWhenValidationFails(t *testing.T) {
