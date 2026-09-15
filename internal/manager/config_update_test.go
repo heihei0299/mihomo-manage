@@ -537,6 +537,13 @@ func TestUpdateConfigRejectsUnconfiguredSource(t *testing.T) {
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "subscription source is not configured") {
 		t.Fatalf("UpdateConfig error = %v, want unconfigured source error", err)
 	}
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != ConfigApplyFailed {
+		t.Fatalf("status = %+v, want apply-failed", status)
+	}
 }
 
 func TestRemoteSourceRejectsEmptyURLInsteadOfUsingCachedData(t *testing.T) {
@@ -624,6 +631,7 @@ func TestUpdateConfigDownloadHonorsCancellation(t *testing.T) {
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("UpdateConfig error = %v, want cancellation", err)
 	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
 }
 
 func TestUpdateConfigValidationHonorsCancellation(t *testing.T) {
@@ -644,6 +652,13 @@ func TestUpdateConfigValidationHonorsCancellation(t *testing.T) {
 	cancel()
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("UpdateConfig error = %v, want cancellation", err)
+	}
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != ConfigApplyFailed {
+		t.Fatalf("status = %+v, want apply-failed", status)
 	}
 }
 
@@ -688,6 +703,130 @@ func TestUpdateConfigReleasesLockAfterSuccess(t *testing.T) {
 	if !lock.released {
 		t.Fatal("UpdateConfig should release the update lock")
 	}
+}
+
+func localApplyTestFileSystem() *fakeFileSystem {
+	return &fakeFileSystem{
+		fileExists: map[string]bool{
+			OverrideFilePath:       true,
+			subscriptionSourceFile: true,
+			subscriptionDataFile:   true,
+		},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+		},
+	}
+}
+
+func requireConfigApplyState(t *testing.T, m ConfigManager, want ConfigApplyState) {
+	t.Helper()
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != want {
+		t.Fatalf("status = %+v, want %s", status, want)
+	}
+}
+
+func TestUpdateConfigDownloadFailureRecordsApplyStatus(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			OverrideFilePath:       true,
+			subscriptionSourceFile: true,
+			subscriptionURLFile:    true,
+		},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("remote\n"),
+			subscriptionURLFile:    []byte("https://example.com/sub.yaml"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report download failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
+}
+
+func TestUpdateConfigStagingDirectoryFailureRecordsApplyStatus(t *testing.T) {
+	fs := localApplyTestFileSystem()
+	fs.mkdirErrFunc = func(path string) error {
+		if strings.Contains(path, ".mihomo-config-staging-") {
+			return errors.New("staging directory unavailable")
+		}
+		return nil
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report staging directory failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
+}
+
+func TestUpdateConfigStagedWriteFailureRecordsApplyStatus(t *testing.T) {
+	fs := localApplyTestFileSystem()
+	fs.writeErrFunc = func(path string) error {
+		if strings.Contains(path, ".mihomo-config-staging-") {
+			return errors.New("staged config is not writable")
+		}
+		return nil
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report staged write failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
+}
+
+func TestUpdateConfigBackupFailureRecordsApplyStatus(t *testing.T) {
+	fs := localApplyTestFileSystem()
+	fs.fileExists[configYAML] = true
+	fs.written[configYAML] = []byte("old\n")
+	fs.writeErrFunc = func(path string) error {
+		if strings.HasPrefix(path, configYAML+".bak.") {
+			return errors.New("backup is not writable")
+		}
+		return nil
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report backup failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
+}
+
+func TestUpdateConfigRenameFailureRecordsApplyStatus(t *testing.T) {
+	fs := localApplyTestFileSystem()
+	fs.renameErrByPath = map[string]error{configYAML: errors.New("rename failed")}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report rename failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
+}
+
+func TestUpdateConfigStagingCleanupFailureRecordsApplyStatus(t *testing.T) {
+	fs := localApplyTestFileSystem()
+	fs.removeErrFunc = func(path string) error {
+		if strings.Contains(path, ".mihomo-config-staging-") {
+			return errors.New("staging cleanup failed")
+		}
+		return nil
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should report staging cleanup failure")
+	}
+	requireConfigApplyState(t, m, ConfigApplyFailed)
 }
 
 func TestUpdateConfigValidatesStagedConfigBeforeAtomicCommit(t *testing.T) {

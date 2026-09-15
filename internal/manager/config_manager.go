@@ -11,6 +11,7 @@ const (
 	ConfigApplied          ConfigApplyState = "applied"
 	ConfigPendingReload    ConfigApplyState = "pending-reload"
 	ConfigValidationFailed ConfigApplyState = "validation-failed"
+	ConfigApplyFailed      ConfigApplyState = "apply-failed"
 	ConfigUnknown          ConfigApplyState = "unknown"
 )
 

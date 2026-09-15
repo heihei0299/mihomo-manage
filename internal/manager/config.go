@@ -353,7 +353,7 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 	statusRecorded := false
 	defer func() {
 		if applyErr != nil && !statusRecorded {
-			statusErr := p.recordConfigApply(ConfigValidationFailed, preview, applyErr)
+			statusErr := p.recordConfigApply(ConfigApplyFailed, preview, applyErr)
 			statusRecorded = true
 			if statusErr != nil {
 				applyErr = errors.Join(applyErr, statusErr)
@@ -426,7 +426,11 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 	if p.validate != nil {
 		if err := p.validate.Validate(ctx, stagePath); err != nil {
 			failure := cleanupStage(err)
-			statusErr := p.recordConfigApply(ConfigValidationFailed, preview, err)
+			state := ConfigValidationFailed
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				state = ConfigApplyFailed
+			}
+			statusErr := p.recordConfigApply(state, preview, err)
 			statusRecorded = true
 			if statusErr != nil {
 				failure = errors.Join(failure, statusErr)
@@ -469,7 +473,7 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 	}
 
 	if commitCleanupErr != nil {
-		statusErr := p.recordConfigApply(ConfigApplied, preview, commitCleanupErr)
+		statusErr := p.recordConfigApply(ConfigApplyFailed, preview, commitCleanupErr)
 		statusRecorded = true
 		if statusErr != nil {
 			return errors.Join(commitCleanupErr, statusErr)
@@ -494,7 +498,7 @@ func (p *configPipeline) LastConfigApply(ctx context.Context) (ConfigApplyStatus
 		return ConfigApplyStatus{State: ConfigUnknown, ErrorSummary: fmt.Sprintf("invalid status file: %v", err)}, nil
 	}
 	switch status.State {
-	case ConfigApplied, ConfigPendingReload, ConfigValidationFailed:
+	case ConfigApplied, ConfigPendingReload, ConfigValidationFailed, ConfigApplyFailed:
 		return status, nil
 	default:
 		return ConfigApplyStatus{State: ConfigUnknown, ErrorSummary: "unknown config apply state"}, nil

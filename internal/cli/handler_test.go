@@ -196,6 +196,23 @@ func TestStatusShowsLatestConfigApply(t *testing.T) {
 	}
 }
 
+func TestStatusShowsConfigApplyFailure(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		lastConfig: manager.ConfigApplyStatus{
+			State:        manager.ConfigApplyFailed,
+			ErrorSummary: "writing staged config failed",
+		},
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.Status(context.Background()); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if got := stdout.String(); !strings.Contains(got, "config: apply-failed (writing staged config failed)") {
+		t.Fatalf("stdout = %q, want apply-failed status", got)
+	}
+}
+
 func TestStatusNotInstalled(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	h := New(&mockControl{

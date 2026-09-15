@@ -75,6 +75,10 @@ func (m *tuiMockConfig) UpdateConfig(ctx context.Context) error {
 
 func (m *tuiMockConfig) ValidateConfig(ctx context.Context) error { return m.validateErr }
 
+func (m *tuiMockConfig) LastConfigApply(ctx context.Context) (manager.ConfigApplyStatus, error) {
+	return manager.ConfigApplyStatus{State: manager.ConfigUnknown}, nil
+}
+
 func (m *tuiMockConfig) AdoptConfig(ctx context.Context, force bool) (manager.AdoptReport, error) {
 	return manager.AdoptReport{NoChanges: true}, nil
 }
@@ -88,6 +92,20 @@ func runActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManage
 		return errors.New("expected actionDoneMsg")
 	}
 	return done.err
+}
+
+func TestTUIStatusShowsConfigApplyFailure(t *testing.T) {
+	m := model{
+		status: &manager.Status{Installed: true, InstanceState: manager.Running},
+		configStatus: manager.ConfigApplyStatus{
+			State:        manager.ConfigApplyFailed,
+			ErrorSummary: "writing staged config failed",
+		},
+	}
+
+	if got := m.statusView(); !strings.Contains(got, "config: apply-failed") {
+		t.Fatalf("status view = %q, want apply-failed status", got)
+	}
 }
 
 func TestTUISubscriptionConfigOffersEditor(t *testing.T) {

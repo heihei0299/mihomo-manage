@@ -16,9 +16,14 @@ type fakeFileSystem struct {
 	written         map[string][]byte
 	writeErr        error
 	writeErrByPath  map[string]error
+	writeErrFunc    func(path string) error
 	removeErr       error
 	removeErrByPath map[string]error
+	removeErrFunc   func(path string) error
 	renameErr       error
+	renameErrByPath map[string]error
+	mkdirErrByPath  map[string]error
+	mkdirErrFunc    func(path string) error
 	removed         []string
 	renamed         map[string]string
 	readFileErr     map[string]error
@@ -48,6 +53,11 @@ func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error 
 	if m.writeErr != nil {
 		return m.writeErr
 	}
+	if m.writeErrFunc != nil {
+		if err := m.writeErrFunc(path); err != nil {
+			return err
+		}
+	}
 	if m.writeErrByPath != nil {
 		if err, ok := m.writeErrByPath[path]; ok {
 			delete(m.writeErrByPath, path)
@@ -68,6 +78,11 @@ func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error 
 func (m *fakeFileSystem) Remove(path string) error {
 	if m.removeErr != nil {
 		return m.removeErr
+	}
+	if m.removeErrFunc != nil {
+		if err := m.removeErrFunc(path); err != nil {
+			return err
+		}
 	}
 	if m.removeErrByPath != nil {
 		if err, ok := m.removeErrByPath[path]; ok {
@@ -92,6 +107,11 @@ func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
 	if m.renameErr != nil {
 		return m.renameErr
 	}
+	if m.renameErrByPath != nil {
+		if err, ok := m.renameErrByPath[newPath]; ok {
+			return err
+		}
+	}
 	if m.renamed == nil {
 		m.renamed = make(map[string]string)
 	}
@@ -111,6 +131,16 @@ func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
 }
 
 func (m *fakeFileSystem) MkdirAll(path string, perm uint32) error {
+	if m.mkdirErrFunc != nil {
+		if err := m.mkdirErrFunc(path); err != nil {
+			return err
+		}
+	}
+	if m.mkdirErrByPath != nil {
+		if err, ok := m.mkdirErrByPath[path]; ok {
+			return err
+		}
+	}
 	return nil
 }
 
