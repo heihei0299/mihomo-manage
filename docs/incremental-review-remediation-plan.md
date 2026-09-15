@@ -246,13 +246,13 @@ Do not change `pending-reload` semantics.
 Add or update tests for:
 
 ```text
-[ ] rename failure -> apply-failed
-[ ] validation failure -> validation-failed
-[ ] reload failure -> pending-reload
-[ ] successful commit + reload + cleanup failure -> applied
-[ ] cleanup warning is preserved in ErrorSummary
-[ ] cleanup failure still follows the existing API error-return contract
-[ ] clean success -> applied with empty ErrorSummary
+[x] rename failure -> apply-failed
+[x] validation failure -> validation-failed
+[x] reload failure -> pending-reload
+[x] successful commit + reload + cleanup failure -> applied
+[x] cleanup warning is preserved in ErrorSummary
+[x] cleanup failure still follows the existing API error-return contract
+[x] clean success -> applied with empty ErrorSummary
 ```
 
 Update the current staging cleanup test so it expects:

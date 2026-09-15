@@ -515,7 +515,7 @@ func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
 	}
 
 	if postCommitCleanupErr != nil {
-		statusErr := p.recordConfigApply(ConfigApplyFailed, preview, postCommitCleanupErr)
+		statusErr := p.recordConfigApply(ConfigApplied, preview, postCommitCleanupErr)
 		statusRecorded = true
 		if statusErr != nil {
 			return errors.Join(postCommitCleanupErr, statusErr)

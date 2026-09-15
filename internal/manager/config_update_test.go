@@ -848,12 +848,26 @@ func TestUpdateConfigStagingCleanupFailureRecordsApplyStatus(t *testing.T) {
 		}
 		return nil
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	reloaded := false
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, func(context.Context) error {
+		reloaded = true
+		return nil
+	})
 
-	if err := m.UpdateConfig(context.Background()); err == nil {
-		t.Fatal("UpdateConfig should report staging cleanup failure")
+	err := m.UpdateConfig(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "staging cleanup failed") {
+		t.Fatalf("UpdateConfig error = %v, want staging cleanup failure", err)
 	}
-	requireConfigApplyState(t, m, ConfigApplyFailed)
+	if !reloaded {
+		t.Fatal("UpdateConfig should reload before reporting cleanup failure")
+	}
+	status, statusErr := m.LastConfigApply(context.Background())
+	if statusErr != nil {
+		t.Fatalf("LastConfigApply failed: %v", statusErr)
+	}
+	if status.State != ConfigApplied || !strings.Contains(status.ErrorSummary, "staging cleanup failed") {
+		t.Fatalf("status = %+v, want applied with cleanup error", status)
+	}
 }
 
 func TestUpdateConfigValidatesStagedConfigBeforeAtomicCommit(t *testing.T) {
@@ -909,8 +923,8 @@ func TestUpdateConfigRecordsAppliedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LastConfigApply failed: %v", err)
 	}
-	if status.State != ConfigApplied || status.ConfigHash == "" || status.AttemptedAt.IsZero() {
-		t.Fatalf("status = %+v, want applied status with timestamp and hash", status)
+	if status.State != ConfigApplied || status.ConfigHash == "" || status.AttemptedAt.IsZero() || status.ErrorSummary != "" {
+		t.Fatalf("status = %+v, want applied status with timestamp, hash, and no error", status)
 	}
 }
 
