@@ -39,8 +39,14 @@ func TestDarwinPlatformSetIsRepeatable(t *testing.T) {
 		t.Fatalf("second Set failed: %v", err)
 	}
 	plist := string(fs.written[launchdSchedulePlist])
+	if !strings.HasPrefix(plist, `<?xml version="1.0" encoding="UTF-8"?>`) {
+		t.Fatalf("plist = %q, has an invalid XML declaration", plist)
+	}
 	if !strings.Contains(plist, "<string>/usr/local/bin/mihomo-manager</string>") || !strings.Contains(plist, "<integer>10800</integer>") {
 		t.Fatalf("plist = %q, missing command or updated interval", plist)
+	}
+	if len(cmd.captured) != 6 || cmd.captured[0].args[0] != "print" || cmd.captured[1].args[0] != "bootout" || cmd.captured[2].args[0] != "bootstrap" || cmd.captured[3].args[0] != "print" || cmd.captured[4].args[0] != "bootout" || cmd.captured[5].args[0] != "bootstrap" {
+		t.Fatalf("commands = %v, want print, bootout, bootstrap twice", cmd.captured)
 	}
 }
 
@@ -72,6 +78,9 @@ func TestDarwinPlatformSetRecoversFromUnloadedJob(t *testing.T) {
 	}
 	if !strings.Contains(string(fs.written[launchdSchedulePlist]), "<integer>10800</integer>") {
 		t.Fatalf("plist = %q, want updated interval", fs.written[launchdSchedulePlist])
+	}
+	if len(cmd.captured) != 2 || cmd.captured[0].args[0] != "print" || cmd.captured[1].args[0] != "bootstrap" {
+		t.Fatalf("commands = %v, want print then bootstrap", cmd.captured)
 	}
 }
 
@@ -168,6 +177,31 @@ func TestDarwinPlatformStatusPropagatesQueryFailure(t *testing.T) {
 	}
 }
 
+func TestDarwinPlatformStopStopsLoadedJobWithoutPlist(t *testing.T) {
+	fs := &fakeFileSystem{}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "loaded"}, {}}}
+	platform := NewDarwin(fs, cmd)
+
+	if err := platform.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if len(cmd.captured) != 2 || cmd.captured[0].args[0] != "print" || cmd.captured[1].args[0] != "bootout" {
+		t.Fatalf("commands = %v, want print, bootout", cmd.captured)
+	}
+}
+
+func TestDarwinPlatformStopWithoutPlist(t *testing.T) {
+	cmd := &commandRecorder{responses: []commandResponse{{output: "Could not find service", err: errors.New("exit status 3")}}}
+	platform := NewDarwin(&fakeFileSystem{}, cmd)
+
+	if err := platform.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop without a plist should succeed: %v", err)
+	}
+	if len(cmd.captured) != 1 || cmd.captured[0].args[0] != "print" {
+		t.Fatalf("commands = %v, want print only", cmd.captured)
+	}
+}
+
 func TestDarwinPlatformStopIsRepeatable(t *testing.T) {
 	fs := &fakeFileSystem{written: map[string][]byte{launchdSchedulePlist: []byte("plist")}}
 	cmd := &commandRecorder{responses: []commandResponse{
@@ -185,6 +219,9 @@ func TestDarwinPlatformStopIsRepeatable(t *testing.T) {
 	if _, ok := fs.written[launchdSchedulePlist]; ok {
 		t.Fatal("launchd plist should be removed")
 	}
+	if len(cmd.captured) != 3 || cmd.captured[0].args[0] != "print" || cmd.captured[1].args[0] != "bootout" || cmd.captured[2].args[0] != "print" {
+		t.Fatalf("commands = %v, want print, bootout, print", cmd.captured)
+	}
 }
 
 func TestDarwinPlatformStopRemovesUnloadedPlist(t *testing.T) {
@@ -197,6 +234,9 @@ func TestDarwinPlatformStopRemovesUnloadedPlist(t *testing.T) {
 	}
 	if _, ok := fs.written[launchdSchedulePlist]; ok {
 		t.Fatal("stale launchd plist should be removed")
+	}
+	if len(cmd.captured) != 1 || cmd.captured[0].args[0] != "print" {
+		t.Fatalf("commands = %v, want print only", cmd.captured)
 	}
 }
 
