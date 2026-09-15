@@ -313,36 +313,35 @@ func isLaunchdJobNotLoadedError(output string, err error) bool {
 }
 
 func (s *darwinPlatformScheduler) Status(ctx context.Context) (time.Duration, bool, error) {
+	loaded, err := s.isLoaded(ctx)
+	if err != nil {
+		return 0, false, err
+	}
 	data, err := s.fs.ReadFile(launchdSchedulePlist)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, false, nil
+			return 0, loaded, nil
 		}
-		return 0, false, err
+		return 0, loaded, err
 	}
-	out, err := s.cmd.RunCommand(ctx, "launchctl", "print", "system/"+launchdScheduleLabel)
-	if err != nil {
-		return 0, false, fmt.Errorf("querying launchd schedule: %w", err)
-	}
-	active := strings.TrimSpace(out) != ""
 	const prefix = "<integer>"
 	const suffix = "</integer>"
 	marker := "<key>StartInterval</key>"
 	start := strings.Index(string(data), marker)
 	if start < 0 {
-		return 0, false, fmt.Errorf("launchd schedule interval is missing")
+		return 0, loaded, fmt.Errorf("launchd schedule interval is missing")
 	}
 	value := string(data)[start+len(marker):]
 	open := strings.Index(value, prefix)
 	close := strings.Index(value, suffix)
 	if open < 0 || close < open {
-		return 0, false, fmt.Errorf("invalid launchd schedule interval")
+		return 0, loaded, fmt.Errorf("invalid launchd schedule interval")
 	}
 	seconds, err := strconv.ParseInt(strings.TrimSpace(value[open+len(prefix):close]), 10, 64)
 	if err != nil {
-		return 0, false, fmt.Errorf("invalid launchd schedule interval: %w", err)
+		return 0, loaded, fmt.Errorf("invalid launchd schedule interval: %w", err)
 	}
-	return time.Duration(seconds) * time.Second, active, nil
+	return time.Duration(seconds) * time.Second, loaded, nil
 }
 
 type unsupportedPlatformScheduler struct{ os string }

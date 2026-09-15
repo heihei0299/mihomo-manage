@@ -197,6 +197,47 @@ func TestDarwinPlatformSchedulerPropagatesPrintFailure(t *testing.T) {
 	}
 }
 
+func TestDarwinPlatformSchedulerStatusWithLoadedJobAndMissingPlist(t *testing.T) {
+	fs := &fakeFileSystem{}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "loaded"}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	interval, active, err := scheduler.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if interval != 0 || !active {
+		t.Fatalf("status = %v, %v; want 0, active", interval, active)
+	}
+}
+
+func TestDarwinPlatformSchedulerStatusWithUnloadedJobAndMissingPlist(t *testing.T) {
+	cmd := &commandRecorder{responses: []commandResponse{{output: "Could not find service", err: errors.New("exit status 3")}}}
+	scheduler := NewDarwinPlatformScheduler(&fakeFileSystem{}, cmd)
+
+	interval, active, err := scheduler.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if interval != 0 || active {
+		t.Fatalf("status = %v, %v; want 0, inactive", interval, active)
+	}
+}
+
+func TestDarwinPlatformSchedulerStatusWithUnloadedJobAndExistingPlist(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("<key>StartInterval</key><integer>3600</integer>")},
+	}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "Could not find service", err: errors.New("exit status 3")}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	interval, active, err := scheduler.Status(context.Background())
+	if err != nil || active || interval != time.Hour {
+		t.Fatalf("status = %v, %v, %v; want 1h, inactive", interval, active, err)
+	}
+}
+
 func TestDarwinPlatformSchedulerStatusReadsLaunchdPlist(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{launchdSchedulePlist: true},
