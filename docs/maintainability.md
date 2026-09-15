@@ -130,18 +130,10 @@ gate when execution is authorized.
 
 ## Change review evidence
 
-For each meaningful Config, Lifecycle, Service, or Schedule change, record the
-change blast radius in the review:
-
-- owning area;
-- production files changed inside that area;
-- production files changed outside that area;
-- whether unrelated manager implementation had to be read;
-- whether a helper or type was promoted to shared;
-- whether a new cross-domain dependency was introduced.
-
-For each new cross-domain dependency, apply these rules and answer these
-questions before merging:
+For each meaningful Config, Lifecycle, or Service change, use the following
+compact review record to capture its change blast radius. For each new
+cross-domain dependency, the record must also answer the four dependency
+questions below before merging:
 
 - A same-domain helper stays in its owning area.
 - A cross-domain call uses an existing stable role contract when one already
@@ -149,12 +141,6 @@ questions before merging:
 - Do not introduce an interface solely to hide an otherwise unnecessary
   dependency.
 - Do not move a helper to a shared file merely so two areas can reach it.
-
-1. Which area owns the state or invariant?
-2. Why is this dependency necessary?
-3. Can the caller use an existing role interface instead of implementation
-   internals?
-4. Does the dependency introduce or strengthen a reverse dependency?
 
 Before adding a symbol to `manager.go`, a role interface file, `errors.go`,
 `paths.go`, or `defaults.go`, verify that:
@@ -165,9 +151,6 @@ Before adding a symbol to `manager.go`, a role interface file, `errors.go`,
 - moving it to shared does not bypass an existing ownership boundary;
 - it does not add mutable cross-domain state.
 
-Use this compact record when a change is meaningful enough to contribute split
-trigger evidence:
-
 ```text
 Owner:
 Production files inside owner:
@@ -175,6 +158,10 @@ Production files outside owner:
 Unrelated manager context required: yes/no
 Helper/type promoted to shared: yes/no
 New cross-domain dependency: yes/no
+State or invariant owner:
+Why this dependency is necessary:
+Caller can use an existing role interface: yes/no; if no, why:
+Reverse dependency introduced or strengthened: yes/no
 ```
 
 ## Documentation hierarchy
