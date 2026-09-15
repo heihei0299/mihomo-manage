@@ -412,6 +412,12 @@ and:
 - `.gitignore` remains explicit and narrow;
 - unrelated AI/local workspace files are not restored automatically.
 
+### Completion
+
+- [x] Required README, LICENSE, `.github/`, acceptance documentation, and ADRs are restored.
+- [x] README, workflow, and restored documentation are aligned with current CLI, scheduler, config, and license behavior.
+- [x] Local agent and workspace artifacts remain outside the restoration.
+
 ### Suggested commit
 
 ```text
@@ -451,12 +457,20 @@ After all three tickets are complete, perform one incremental review from the cu
 Verify:
 
 ```text
-[ ] launchd covers all four plist/job state combinations
-[ ] FileExists is no longer used as the loaded-state authority
-[ ] post-commit cleanup failure no longer produces apply-failed
-[ ] pending-reload semantics remain unchanged
-[ ] README / LICENSE / release workflow are actually restored
-[ ] no unrelated package split / DI framework / broad architecture rewrite was introduced
+[x] launchd covers all four plist/job state combinations
+[x] FileExists is no longer used as the loaded-state authority
+[x] post-commit cleanup failure no longer produces apply-failed
+[x] pending-reload semantics remain unchanged
+[x] README / LICENSE / release workflow are actually restored
+[x] no unrelated package split / DI framework / broad architecture rewrite was introduced
 ```
+
+## Execution record
+
+- Ticket 1: completed with `fix(schedule): decouple launchd job and plist state`.
+- Ticket 2: completed with `fix(config): preserve applied state on cleanup failure`.
+- Ticket 3: completed with `chore(repo): restore required repository infrastructure`.
+- Verification: `go test ./internal/manager` (160 tests), `go test .` (13 tests), asset/policy checks, and final Standards/Spec review passed.
+- No force push, package split, dependency-injection framework, or local AI artifacts were introduced.
 
 Once these checks pass, this maintainability remediation round can be considered complete.

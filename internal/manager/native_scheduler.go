@@ -282,7 +282,7 @@ func (s *darwinPlatformScheduler) isLoaded(ctx context.Context) (bool, error) {
 }
 
 func (s *darwinPlatformScheduler) bootout(ctx context.Context) error {
-	output, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system", launchdSchedulePlist)
+	output, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system/"+launchdScheduleLabel)
 	if err == nil || isLaunchdJobNotLoadedError(output, err) {
 		return nil
 	}

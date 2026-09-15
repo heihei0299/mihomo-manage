@@ -1,0 +1,149 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: build
+        run: |
+          mkdir -p dist
+          go build -ldflags "-X main.version=${{ github.ref_name }}" \
+            -o "dist/mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" \
+            .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/mihomo-manager-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+
+  deb:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mihomo-manager-linux-${{ matrix.arch }}
+          path: dist/
+
+      - name: build deb
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          mkdir -p pkg/DEBIAN
+          mkdir -p pkg/usr/bin
+
+          install -m 0755 "dist/mihomo-manager-linux-${{ matrix.arch }}" pkg/usr/bin/mihomo-manager
+
+          {
+            echo "Package: mihomo-manager"
+            echo "Version: $VERSION"
+            echo "Section: net"
+            echo "Priority: optional"
+            echo "Architecture: ${{ matrix.arch }}"
+            echo "Maintainer: mihomo-manager <dev@example.com>"
+            echo "Description: mihomo (Clash Meta) proxy manager"
+            echo " Manages the lifecycle, configuration, and subscription"
+            echo " updates of a mihomo proxy instance."
+          } > pkg/DEBIAN/control
+
+          dpkg-deb --build pkg "dist/mihomo-manager_${VERSION}_${{ matrix.arch }}.deb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-manager-deb-${{ matrix.arch }}
+          path: dist/mihomo-manager_*.deb
+
+  arch:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mihomo-manager-linux-amd64
+          path: dist/
+
+      - name: build arch package
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          PKGDIR="pkg/usr/bin"
+          mkdir -p "$PKGDIR"
+
+          install -m 0755 dist/mihomo-manager-linux-amd64 "$PKGDIR/mihomo-manager"
+
+          BINARY_SIZE=$(stat -c%s "$PKGDIR/mihomo-manager")
+
+          {
+            echo "pkgname = mihomo-manager"
+            echo "pkgver = ${VERSION}-1"
+            echo "pkgdesc = mihomo (Clash Meta) proxy manager"
+            echo "url = https://github.com/${{ github.repository }}"
+            echo "builddate = $(date +%s)"
+            echo "packager = mihomo-manager <dev@example.com>"
+            echo "size = $BINARY_SIZE"
+            echo "arch = x86_64"
+            echo "license = GPL-3.0-or-later"
+          } > pkg/.PKGINFO
+
+          tar -c --zstd -f "dist/mihomo-manager-${VERSION}-x86_64.pkg.tar.zst" \
+            -C pkg .PKGINFO usr/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-manager-arch
+          path: dist/mihomo-manager-*.pkg.tar.zst
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [deb, arch]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts/ -type f -exec cp {} release-assets/ \;
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true

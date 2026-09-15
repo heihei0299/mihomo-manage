@@ -379,7 +379,7 @@ Subscription:
 Config:
   config preview              Preview generated config
   config adopt [--force]      Adopt manual config.yaml changes into override
-  config override             Edit override file ($EDITOR)
+  config override edit        Edit override file ($EDITOR)
 
 Environments:
   MIHOMO_DOWNLOAD_PROXY=<url>   Proxy for GitHub core download (e.g. http://127.0.0.1:10809)

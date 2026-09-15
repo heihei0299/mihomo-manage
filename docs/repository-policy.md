@@ -11,6 +11,16 @@ rule. When a new generated output is introduced, add its exact path or a
 narrow pattern to `.gitignore`; source and repository infrastructure must stay
 visible to Git so additions and removals appear in review.
 
+## Required repository assets
+
+These files are part of the project and must remain tracked:
+
+- `README.md`
+- `LICENSE`
+- `.github/workflows/release.yml`
+- `docs/`
+- Markdown issue and project metadata under `.scratch/`
+
 Ignored outputs currently include local binaries, build/package directories,
 coverage output, the legacy generated template, and the local `04-issue/`
 workspace. Everything else is intended to remain trackable.

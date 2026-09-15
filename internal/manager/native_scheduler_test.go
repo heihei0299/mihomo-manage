@@ -84,6 +84,9 @@ func TestDarwinPlatformSchedulerSetStopsLoadedJobWithoutPlist(t *testing.T) {
 	if len(cmd.captured) != 3 || cmd.captured[0].args[0] != "print" || cmd.captured[1].args[0] != "bootout" || cmd.captured[2].args[0] != "bootstrap" {
 		t.Fatalf("commands = %v, want print, bootout, bootstrap", cmd.captured)
 	}
+	if got := cmd.captured[1].args[1]; got != "system/"+launchdScheduleLabel {
+		t.Fatalf("bootout target = %q, want service label", got)
+	}
 }
 
 func TestDarwinPlatformSchedulerSetIsRepeatable(t *testing.T) {
