@@ -29,13 +29,13 @@ sudo install -m 0755 mihomo-manager-darwin-arm64 /usr/local/bin/mihomo-manager
 ### Debian/Ubuntu
 
 ```bash
-sudo dpkg -i mihomo-manager_<version>_amd64.deb
+sudo dpkg -i mihomo-manager_*_amd64.deb
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -U mihomo-manager-<version>-x86_64.pkg.tar.zst
+sudo pacman -U mihomo-manager-*-x86_64.pkg.tar.zst
 ```
 
 ### 从源码编译
