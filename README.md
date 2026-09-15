@@ -2,8 +2,6 @@
 
 mihomo (Clash Meta) 代理管理工具。管理实例的完整生命周期：安装、配置、升级、卸载。
 
-当前版本: `v2026.8.7`
-
 ## 安装
 
 ### 从 Release 下载
@@ -31,19 +29,19 @@ sudo install -m 0755 mihomo-manager-darwin-arm64 /usr/local/bin/mihomo-manager
 ### Debian/Ubuntu
 
 ```bash
-sudo dpkg -i mihomo-manager_2026.8.7_amd64.deb
+sudo dpkg -i mihomo-manager_<version>_amd64.deb
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -U mihomo-manager-2026.8.7-x86_64.pkg.tar.zst
+sudo pacman -U mihomo-manager-<version>-x86_64.pkg.tar.zst
 ```
 
 ### 从源码编译
 
 ```bash
-go build -ldflags "-X main.version=v2026.8.7" -o mihomo-manager .
+go build -o mihomo-manager .
 ```
 
 ## 快速开始
