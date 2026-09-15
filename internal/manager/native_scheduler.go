@@ -239,7 +239,11 @@ func (s *darwinPlatformScheduler) Set(ctx context.Context, interval time.Duratio
 </plist>
 `, launchdScheduleLabel, commandPath, int64(interval.Seconds()))
 	plist = strings.Replace(plist, "</dict>\n</plist>", "  <key>StandardOutPath</key>\n  <string>/var/log/mihomo-manager-subscription-update.log</string>\n  <key>StandardErrorPath</key>\n  <string>/var/log/mihomo-manager-subscription-update.err.log</string>\n</dict>\n</plist>", 1)
-	if s.fs.FileExists(launchdSchedulePlist) {
+	loaded, err := s.isLoaded(ctx)
+	if err != nil {
+		return err
+	}
+	if loaded {
 		if err := s.bootout(ctx); err != nil {
 			return err
 		}
@@ -254,12 +258,27 @@ func (s *darwinPlatformScheduler) Set(ctx context.Context, interval time.Duratio
 }
 
 func (s *darwinPlatformScheduler) Stop(ctx context.Context) error {
-	if s.fs.FileExists(launchdSchedulePlist) {
+	loaded, err := s.isLoaded(ctx)
+	if err != nil {
+		return err
+	}
+	if loaded {
 		if err := s.bootout(ctx); err != nil {
 			return err
 		}
 	}
 	return s.fs.Remove(launchdSchedulePlist)
+}
+
+func (s *darwinPlatformScheduler) isLoaded(ctx context.Context) (bool, error) {
+	output, err := s.cmd.RunCommand(ctx, "launchctl", "print", "system/"+launchdScheduleLabel)
+	if err == nil {
+		return true, nil
+	}
+	if isLaunchdJobNotLoadedError(output, err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("querying launchd schedule: %w", err)
 }
 
 func (s *darwinPlatformScheduler) bootout(ctx context.Context) error {

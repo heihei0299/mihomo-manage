@@ -96,21 +96,21 @@ Add or update tests for:
 
 ```text
 Set:
-[ ] plist missing + job loaded
-[ ] plist missing + job unloaded
-[ ] plist exists + job loaded
-[ ] plist exists + job unloaded
+[x] plist missing + job loaded
+[x] plist missing + job unloaded
+[x] plist exists + job loaded
+[x] plist exists + job unloaded
 
 Stop:
-[ ] plist missing + job loaded
-[ ] plist missing + job unloaded
-[ ] plist exists + job loaded
-[ ] plist exists + job unloaded
+[x] plist missing + job loaded
+[x] plist missing + job unloaded
+[x] plist exists + job loaded
+[x] plist exists + job unloaded
 
 Errors:
-[ ] launchctl print real failure is propagated
-[ ] bootout real failure is propagated
-[ ] explicit not-loaded race remains idempotent
+[x] launchctl print real failure is propagated
+[x] bootout real failure is propagated
+[x] explicit not-loaded race remains idempotent
 ```
 
 The existing `TestDarwinPlatformSchedulerStopWithoutPlist` must no longer assert that a missing plist means launchctl is never queried. The scheduler must query actual job state first.
