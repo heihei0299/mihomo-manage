@@ -5,6 +5,17 @@ import (
 	"time"
 )
 
+// ConfigApplyState records the externally meaningful result of an apply.
+//
+// State contract:
+//   validation-failed -> staged config was rejected; current config is unchanged
+//   apply-failed      -> apply failed before a successful commit/reload
+//   pending-reload    -> config was committed, but runtime reload failed
+//   applied           -> config was committed and reload succeeded
+//
+// An applied status may still carry ErrorSummary when only post-commit cleanup
+// failed. In that case the runtime state is applied and the error is a warning
+// about cleanup, not a failed transaction.
 type ConfigApplyState string
 
 const (
