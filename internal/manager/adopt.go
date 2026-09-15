@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -10,11 +9,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
-
-// ErrAdoptNeedsConfirmation is returned by Adopt when the diff is large and
-// force was not passed. The caller should show the report and ask to retry
-// with --force.
-var ErrAdoptNeedsConfirmation = errors.New("adopt needs confirmation: large diff, use --force")
 
 // AdoptReport describes the differences found between the current config.yaml
 // and the rendered config (subscription + override file).
