@@ -146,6 +146,15 @@ func (m *lifecycleManager) decompressGzip(src, dest string) error {
 	return m.fs.WriteFile(dest, decompressed, filePermUserRWX)
 }
 
+// rollbackInstall defines the install recovery boundary.
+//
+// State contract:
+//   pre-deploy failure       -> no rollback-owned state exists
+//   post-deploy failure      -> stop/unregister service and remove deployed files
+//   rollback step failure    -> preserve both the primary failure and rollback failure
+//   canceled caller context  -> rollback still runs with context.WithoutCancel
+//
+// Keep this contract aligned with the lifecycle rollback behavior tests.
 func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, err error) error {
 	rollbackCtx := context.WithoutCancel(ctx)
 	var rollbackErrs []error
@@ -297,7 +306,7 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 
 func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onProgress ProgressCallback) error {
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 	if m.schedule != nil {
 		if err := m.schedule.StopSchedule(ctx); err != nil {
@@ -346,10 +355,18 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 	return nil
 }
 
+// Upgrade is transactional around binary replacement.
+//
+// Recovery contract:
+//   failure before backup       -> leave installed binary untouched
+//   failure after service stop  -> resume the previously running service
+//   failure after backup        -> restore the old binary
+//   failure after replacement   -> restore old binary and prior running state
+//   rollback failure            -> return both primary and rollback errors
 func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error {
 	version = m.resolveVersion(ctx, version)
 	if !m.fs.FileExists(binaryPath) {
-		return fmt.Errorf("mihomo is not installed")
+		return ErrMihomoNotInstalled
 	}
 
 	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress)
