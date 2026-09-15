@@ -23,7 +23,7 @@ func TestLifecycleInstall(t *testing.T) {
 	assertFileExists(t, fs, binaryPath, "binary should be deployed")
 	assertFileExists(t, fs, OverrideFilePath, "template should be created")
 	assertFileExists(t, fs, configYAML, "config should be created")
-	assertFileExists(t, fs, defaultServiceUnitPath, "BUG 1: service unit file should be created")
+	assertFileExists(t, fs, serviceUnitPath(), "BUG 1: service unit file should be created")
 	if !svc.running {
 		t.Error("service should be running after Install")
 	}

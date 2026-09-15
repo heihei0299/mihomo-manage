@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+const legacyTemplatePath = "/opt/mihomo/etc/config-template.yaml"
+
 type ConfigValidator interface {
 	Validate(ctx context.Context, configPath string) error
 }

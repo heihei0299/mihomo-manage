@@ -150,60 +150,6 @@ func timestamp() string {
 	return fmt.Sprintf("%d", time.Now().Unix())
 }
 
-const (
-	filePermUserRW  = 0644
-	filePermUserRWX = 0755
-
-	binaryPath                 = "/opt/mihomo/bin/mihomo"
-	configDir                  = "/opt/mihomo/etc"
-	OverrideFilePath           = "/opt/mihomo/etc/override.yaml"
-	legacyTemplatePath         = "/opt/mihomo/etc/config-template.yaml"
-	configYAML                 = "/opt/mihomo/etc/config.yaml"
-	defaultServiceUnitPath     = "/etc/systemd/system/mihomo.service"
-	ServiceName                = "mihomo"
-	stateDir                   = "/opt/mihomo-manager/state"
-	subscriptionDataFile       = "/opt/mihomo-manager/state/subscription-data.txt"
-	subscriptionURLFile        = "/opt/mihomo-manager/state/subscription-url.txt"
-	subscriptionSourceFile     = "/opt/mihomo-manager/state/subscription-source.txt"
-	RoutingRulesPath           = "/opt/mihomo/etc/rules.txt"
-	scheduleFile               = "/opt/mihomo-manager/state/schedule.txt"
-	subscriptionUpdateLockFile = "/opt/mihomo-manager/state/config-update.lock"
-	configApplyStatusFile      = "/opt/mihomo-manager/state/config-apply-status.json"
-)
+const ServiceName = "mihomo"
 
 var serviceName = ServiceName
-
-var defaultOverride = []byte(`# 本地覆写文件（override-file）—— 覆盖 / 补充订阅配置。
-#
-# 与订阅数据合并的语义：
-# - 同名标量/映射：本文件的值覆盖订阅的值
-# - 订阅缺失的字段：本文件补充
-# - 数组字段（proxies、proxy-groups、rules、proxy-providers、rule-providers）
-#   默认追加到订阅数组末尾
-# - 标 !replace 的数组整体替换订阅数组，例如：
-#     proxies: !replace
-#       - name: local-only
-#         type: ss
-#
-# 删除本文件后，订阅配置原样生效（纯订阅模式）。
-
-mode: rule
-log-level: info
-
-proxy-groups:
-  - name: Proxy
-    type: select
-    proxies:
-      - AUTO
-
-rules:
-  - MATCH,DIRECT
-`)
-
-var defaultConfig = []byte(`port: 7890
-socks-port: 7891
-allow-lan: false
-mode: rule
-log-level: info
-external-controller: 127.0.0.1:9090
-`)

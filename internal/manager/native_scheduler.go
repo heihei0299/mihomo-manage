@@ -17,6 +17,7 @@ const (
 	systemdScheduleService = "/etc/systemd/system/mihomo-manager-subscription-update.service"
 	systemdScheduleTimer   = "/etc/systemd/system/mihomo-manager-subscription-update.timer"
 	systemdScheduleName    = "mihomo-manager-subscription-update.timer"
+	scheduleFile           = "/opt/mihomo-manager/state/schedule.txt"
 	launchdSchedulePlist   = "/Library/LaunchDaemons/mihomo-manager-subscription-update.plist"
 	launchdScheduleLabel   = "mihomo-manager-subscription-update"
 )

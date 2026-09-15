@@ -19,7 +19,9 @@ considered.
 | Service | `service*.go`, `servicemanager.go` | service process control and platform service registration |
 | Schedule | `native_scheduler.go`, `schedule_manager.go` | systemd/launchd scheduling and legacy schedule migration |
 | OS seams | `system.go` | filesystem, command execution, release/network boundary implementations |
-| Shared contract | `manager.go`, role interface files, `errors.go` | shared paths, public role contracts, caller-branchable errors |
+| Shared contract | `manager.go`, role interface files, `errors.go` | shared domain contracts, public role contracts, caller-branchable errors |
+| Shared paths | `paths.go` | genuinely cross-domain filesystem paths and shared filesystem permissions |
+| Bootstrap defaults | `defaults.go` | generated install/bootstrap override and config content |
 
 Rules:
 
