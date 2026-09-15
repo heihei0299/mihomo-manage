@@ -49,6 +49,28 @@ func TestBranchableErrorContracts(t *testing.T) {
 		}
 	})
 
+	t.Run("service state errors are branchable", func(t *testing.T) {
+		installed := map[string]bool{binaryPath: true}
+
+		running := NewServiceControl(
+			&fakeFileSystem{fileExists: installed},
+			&fakeCmdRunner{},
+			&mockServiceManager{running: true},
+		)
+		if err := running.Start(context.Background()); !errors.Is(err, ErrMihomoAlreadyRunning) {
+			t.Fatalf("Start error = %v, want ErrMihomoAlreadyRunning", err)
+		}
+
+		stopped := NewServiceControl(
+			&fakeFileSystem{fileExists: installed},
+			&fakeCmdRunner{},
+			&mockServiceManager{running: false},
+		)
+		if err := stopped.Stop(context.Background()); !errors.Is(err, ErrMihomoNotRunning) {
+			t.Fatalf("Stop error = %v, want ErrMihomoNotRunning", err)
+		}
+	})
+
 	t.Run("unsupported scheduler is typed", func(t *testing.T) {
 		err := (unsupportedPlatformScheduler{os: "plan9"}).Set(
 			context.Background(),
