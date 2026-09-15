@@ -51,7 +51,7 @@ go build -o mihomo-manager .
 sudo mihomo-manager install
 
 # 安装 mihomo（从本地 .gz 或二进制文件）
-sudo mihomo-manager install --from ./mihomo-linux-amd64-v1.19.27.gz
+sudo mihomo-manager install --from ./mihomo-linux-amd64.gz
 
 # 设置订阅
 sudo mihomo-manager subscription set https://example.com/sub
