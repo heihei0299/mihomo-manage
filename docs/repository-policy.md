@@ -24,3 +24,11 @@ These files are part of the project and must remain tracked:
 Ignored outputs currently include local binaries, build/package directories,
 coverage output, the legacy generated template, and the local `04-issue/`
 workspace. Everything else is intended to remain trackable.
+
+
+## Maintenance source of truth
+
+Architecture and maintenance boundaries are defined in
+`docs/maintainability.md`. Review/remediation plans under `docs/` are execution
+records; they must not become the only source of truth for current runtime
+behavior or package ownership.
