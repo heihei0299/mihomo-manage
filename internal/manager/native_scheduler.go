@@ -15,6 +15,8 @@ const (
 	systemdScheduleService = "/etc/systemd/system/mihomo-manager-subscription-update.service"
 	systemdScheduleTimer   = "/etc/systemd/system/mihomo-manager-subscription-update.timer"
 	systemdScheduleName    = "mihomo-manager-subscription-update.timer"
+	launchdSchedulePlist   = "/Library/LaunchDaemons/mihomo-manager-subscription-update.plist"
+	launchdScheduleLabel   = "mihomo-manager-subscription-update"
 )
 
 type PlatformScheduler interface {
@@ -30,6 +32,10 @@ type linuxPlatformScheduler struct {
 
 func NewLinuxPlatformScheduler(fs FileSystem, cmd CommandRunner) PlatformScheduler {
 	return &linuxPlatformScheduler{fs: fs, cmd: cmd}
+}
+
+func NewDarwinPlatformScheduler(fs FileSystem, cmd CommandRunner) PlatformScheduler {
+	return &darwinPlatformScheduler{fs: fs, cmd: cmd}
 }
 
 func (s *linuxPlatformScheduler) Set(ctx context.Context, interval time.Duration, commandPath string) error {
@@ -158,10 +164,14 @@ func installedManagerPath() string {
 
 func NewNativeScheduleManager(fs FileSystem, cmd CommandRunner) ScheduleManager {
 	commandPath := installedManagerPath()
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		return NewScheduleManagerWithPlatform(fs, NewLinuxPlatformScheduler(fs, cmd), commandPath)
+	case "darwin":
+		return NewScheduleManagerWithPlatform(fs, NewDarwinPlatformScheduler(fs, cmd), commandPath)
+	default:
+		return NewScheduleManagerWithPlatform(fs, unsupportedPlatformScheduler{os: runtime.GOOS}, commandPath)
 	}
-	return NewScheduleManagerWithPlatform(fs, unsupportedPlatformScheduler{os: runtime.GOOS}, commandPath)
 }
 
 func (m *nativeScheduleManager) SetSchedule(ctx context.Context, interval time.Duration) error {
@@ -197,6 +207,90 @@ func (m *nativeScheduleManager) ScheduleStatus(ctx context.Context) (time.Durati
 		}
 	}
 	return 0, false, nil
+}
+
+type darwinPlatformScheduler struct {
+	fs  FileSystem
+	cmd CommandRunner
+}
+
+func (s *darwinPlatformScheduler) Set(ctx context.Context, interval time.Duration, commandPath string) error {
+	if interval < time.Hour {
+		return fmt.Errorf("minimum interval is 1h, got %v", interval)
+	}
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>%s</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>%s</string>
+    <string>subscription</string>
+    <string>update</string>
+    <string>--quiet</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>%d</integer>
+</dict>
+</plist>
+`, launchdScheduleLabel, commandPath, int64(interval.Seconds()))
+	plist = strings.Replace(plist, "</dict>\n</plist>", "  <key>StandardOutPath</key>\n  <string>/var/log/mihomo-manager-subscription-update.log</string>\n  <key>StandardErrorPath</key>\n  <string>/var/log/mihomo-manager-subscription-update.err.log</string>\n</dict>\n</plist>", 1)
+	if s.fs.FileExists(launchdSchedulePlist) {
+		if _, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system", launchdSchedulePlist); err != nil {
+			return fmt.Errorf("unloading launchd schedule: %w", err)
+		}
+	}
+	if err := s.fs.WriteFile(launchdSchedulePlist, []byte(plist), filePermUserRW); err != nil {
+		return fmt.Errorf("writing launchd schedule: %w", err)
+	}
+	if _, err := s.cmd.RunCommand(ctx, "launchctl", "bootstrap", "system", launchdSchedulePlist); err != nil {
+		return fmt.Errorf("loading launchd schedule: %w", err)
+	}
+	return nil
+}
+
+func (s *darwinPlatformScheduler) Stop(ctx context.Context) error {
+	if s.fs.FileExists(launchdSchedulePlist) {
+		if _, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system", launchdSchedulePlist); err != nil {
+			return fmt.Errorf("unloading launchd schedule: %w", err)
+		}
+	}
+	return s.fs.Remove(launchdSchedulePlist)
+}
+
+func (s *darwinPlatformScheduler) Status(ctx context.Context) (time.Duration, bool, error) {
+	data, err := s.fs.ReadFile(launchdSchedulePlist)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	out, err := s.cmd.RunCommand(ctx, "launchctl", "print", "system/"+launchdScheduleLabel)
+	if err != nil {
+		return 0, false, fmt.Errorf("querying launchd schedule: %w", err)
+	}
+	active := strings.TrimSpace(out) != ""
+	const prefix = "<integer>"
+	const suffix = "</integer>"
+	marker := "<key>StartInterval</key>"
+	start := strings.Index(string(data), marker)
+	if start < 0 {
+		return 0, false, fmt.Errorf("launchd schedule interval is missing")
+	}
+	value := string(data)[start+len(marker):]
+	open := strings.Index(value, prefix)
+	close := strings.Index(value, suffix)
+	if open < 0 || close < open {
+		return 0, false, fmt.Errorf("invalid launchd schedule interval")
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(value[open+len(prefix):close]), 10, 64)
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid launchd schedule interval: %w", err)
+	}
+	return time.Duration(seconds) * time.Second, active, nil
 }
 
 type unsupportedPlatformScheduler struct{ os string }

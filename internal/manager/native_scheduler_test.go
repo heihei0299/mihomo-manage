@@ -73,6 +73,65 @@ func TestLinuxPlatformSchedulerStatusReadsNativeTimer(t *testing.T) {
 	}
 }
 
+func TestDarwinPlatformSchedulerWritesLaunchdPlist(t *testing.T) {
+	fs := &fakeFileSystem{}
+	cmd := &commandRecorder{}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	if err := scheduler.Set(context.Background(), 2*time.Hour, "/usr/local/bin/mihomo-manager"); err != nil {
+		t.Fatalf("Set failed: %v", err)
+	}
+	plist := string(fs.written[launchdSchedulePlist])
+	if !strings.Contains(plist, "<string>/usr/local/bin/mihomo-manager</string>") || !strings.Contains(plist, "<integer>7200</integer>") {
+		t.Fatalf("plist = %q, missing command or interval", plist)
+	}
+	if len(cmd.captured) != 1 || cmd.captured[0].args[0] != "bootstrap" || cmd.captured[0].args[1] != "system" {
+		t.Fatalf("commands = %v, want launchctl bootstrap system", cmd.captured)
+	}
+}
+
+func TestDarwinPlatformSchedulerStatusReadsLaunchdPlist(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written: map[string][]byte{
+			launchdSchedulePlist: []byte("<key>StartInterval</key><integer>3600</integer>"),
+		},
+	}
+	scheduler := NewDarwinPlatformScheduler(fs, &commandRecorder{output: "loaded"})
+
+	interval, active, err := scheduler.Status(context.Background())
+	if err != nil || !active || interval != time.Hour {
+		t.Fatalf("status = %v, %v, %v; want 1h active", interval, active, err)
+	}
+}
+
+func TestDarwinPlatformSchedulerStatusPropagatesQueryFailure(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("<key>StartInterval</key><integer>3600</integer>")},
+	}
+	scheduler := NewDarwinPlatformScheduler(fs, &commandRecorder{cmdErr: errors.New("launchd unavailable")})
+
+	if _, _, err := scheduler.Status(context.Background()); err == nil {
+		t.Fatal("Status should report launchd query failure")
+	}
+}
+
+func TestDarwinPlatformSchedulerStopRemovesPlist(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("plist")},
+	}
+	scheduler := NewDarwinPlatformScheduler(fs, &commandRecorder{})
+
+	if err := scheduler.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if _, ok := fs.written[launchdSchedulePlist]; ok {
+		t.Fatal("launchd plist should be removed")
+	}
+}
+
 func TestNativeScheduleManagerReportsLegacySchedule(t *testing.T) {
 	fs := &fakeFileSystem{written: map[string][]byte{scheduleFile: []byte("7200")}}
 	platform := &fakePlatformScheduler{}
