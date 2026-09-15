@@ -146,6 +146,10 @@ func (p *configPipeline) restoreSubscriptionState(snapshots map[string]fileSnaps
 	return errors.Join(restoreErrs...)
 }
 
+func looksLikeURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
 func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
 	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
@@ -428,7 +432,7 @@ func (p *configPipeline) cleanupStagedConfig(staged stagedConfig, primary error)
 
 func (p *configPipeline) commitConfig(staged stagedConfig) (postCommitCleanupErr, applyErr error) {
 	if p.fs.FileExists(configYAML) {
-		backupPath := configYAML + ".bak." + timestamp()
+		backupPath := fmt.Sprintf("%s.bak.%d", configYAML, time.Now().Unix())
 		existing, err := p.fs.ReadFile(configYAML)
 		if err != nil {
 			return nil, p.cleanupStagedConfig(staged, err)

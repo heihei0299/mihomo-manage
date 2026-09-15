@@ -2,7 +2,32 @@ package manager
 
 import (
 	"context"
+	"strings"
 )
+
+func looksLikeVersion(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	if s[0] != 'v' && s[0] != 'V' {
+		return false
+	}
+	return s[1] >= '0' && s[1] <= '9'
+}
+
+func parseVersion(ctx context.Context, cmd CommandRunner, binaryPath string) (string, error) {
+	out, err := cmd.RunCommand(ctx, binaryPath, "-v")
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Fields(out)
+	for _, p := range parts {
+		if looksLikeVersion(p) {
+			return p, nil
+		}
+	}
+	return out, nil
+}
 
 type serviceController struct {
 	fs     FileSystem

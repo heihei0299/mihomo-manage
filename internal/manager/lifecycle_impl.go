@@ -13,6 +13,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"time"
 )
 
 type lifecycleManager struct {
@@ -334,7 +335,7 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 
 	onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Cleaning up files"})
 	if keepBackup {
-		backupPath := "/opt/mihomo.bak." + timestamp()
+		backupPath := fmt.Sprintf("/opt/mihomo.bak.%d", time.Now().Unix())
 		if err := m.fs.Rename("/opt/mihomo", backupPath); err != nil {
 			return fmt.Errorf("backup uninstall files: %w", err)
 		}
