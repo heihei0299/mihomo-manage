@@ -61,18 +61,20 @@ var actionRegistry = map[action]actionDef{
 }
 
 type model struct {
-	ctx        context.Context
-	control    manager.ServiceControl
-	lifecycle  manager.LifecycleManager
-	config     manager.ConfigManager
-	status     *manager.Status
-	statusErr  error
-	ready      bool
-	executing  action
-	execResult string
-	actionErr  error
-	phaseLabel string
-	phaseMsg   string
+	ctx          context.Context
+	control      manager.ServiceControl
+	lifecycle    manager.LifecycleManager
+	config       manager.ConfigManager
+	status       *manager.Status
+	statusErr    error
+	configStatus manager.ConfigApplyStatus
+	configErr    error
+	ready        bool
+	executing    action
+	execResult   string
+	actionErr    error
+	phaseLabel   string
+	phaseMsg     string
 
 	mode           viewMode
 	keepBackup     bool
@@ -83,8 +85,10 @@ type model struct {
 }
 
 type statusMsg struct {
-	status *manager.Status
-	err    error
+	status       *manager.Status
+	err          error
+	configStatus manager.ConfigApplyStatus
+	configErr    error
 }
 
 type actionDoneMsg struct {
@@ -165,13 +169,14 @@ func tuiContext(ctx context.Context) context.Context {
 }
 
 func (m model) Init() tea.Cmd {
-	return fetchStatusCmd(m.control, tuiContext(m.ctx))
+	return fetchStatusCmd(m.control, m.config, tuiContext(m.ctx))
 }
 
-func fetchStatusCmd(ctrl manager.ServiceControl, ctx context.Context) tea.Cmd {
+func fetchStatusCmd(ctrl manager.ServiceControl, cfg manager.ConfigManager, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		s, err := ctrl.Status(ctx)
-		return statusMsg{status: s, err: err}
+		configStatus, configErr := cfg.LastConfigApply(ctx)
+		return statusMsg{status: s, err: err, configStatus: configStatus, configErr: configErr}
 	}
 }
 
@@ -270,7 +275,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 			}
 		case "r":
-			return m, fetchStatusCmd(m.control, tuiContext(m.ctx))
+			return m, fetchStatusCmd(m.control, m.config, tuiContext(m.ctx))
 		case "1":
 			if isActionAllowed(m.status, actStart) {
 				return m.startAction(actStart, "latest")
@@ -318,6 +323,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.status = msg.status
 		m.statusErr = msg.err
+		m.configStatus = msg.configStatus
+		m.configErr = msg.configErr
 		m.execResult = ""
 		m.actionErr = nil
 		return m, nil
@@ -359,7 +366,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.execResult = "success"
 			m.actionErr = nil
 		}
-		return m, fetchStatusCmd(m.control, tuiContext(m.ctx))
+		return m, fetchStatusCmd(m.control, m.config, tuiContext(m.ctx))
 	}
 	return m, nil
 }
@@ -584,14 +591,19 @@ func (m model) statusView() string {
 		result = fmt.Sprintf("\n✗ %v", m.actionErr)
 	}
 
+	configState := string(m.configStatus.State)
+	if configState == "" || m.configErr != nil {
+		configState = "unknown"
+	}
 	return fmt.Sprintf(
 		"┌────────────────────────────┐\n"+
 			"│ mihomo: %-18s │\n"+
 			"│ version: %-18s │\n"+
 			"│ autostart: %-15s │\n"+
+			"│ config: %-17s │\n"+
 			"└────────────────────────────┘%s%s\n\n"+
 			"r) Refresh    q) Quit",
-		stateStr, version, autostart, actions, result,
+		stateStr, version, autostart, configState, actions, result,
 	)
 }
 

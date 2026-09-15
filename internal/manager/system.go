@@ -43,8 +43,8 @@ type FileSystem interface {
 }
 
 type CommandRunner interface {
-	RunCommand(name string, args ...string) (string, error)
-	RunCommandIgnoreExit(name string, args ...string) (string, error)
+	RunCommand(ctx context.Context, name string, args ...string) (string, error)
+	RunCommandIgnoreExit(ctx context.Context, name string, args ...string) (string, error)
 }
 
 type GitHubReleases interface {
@@ -85,8 +85,8 @@ func (OSSystem) Chmod(path string, perm uint32) error {
 	return os.Chmod(path, os.FileMode(perm))
 }
 
-func (OSSystem) RunCommand(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+func (OSSystem) RunCommand(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -94,10 +94,13 @@ func (OSSystem) RunCommand(name string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (OSSystem) RunCommandIgnoreExit(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+func (OSSystem) RunCommandIgnoreExit(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
 	out, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		if _, ok := err.(*exec.ExitError); ok {
 			return string(out), nil
 		}

@@ -560,6 +560,263 @@ func TestRemoteSourceRejectsEmptyURLInsteadOfUsingCachedData(t *testing.T) {
 	}
 }
 
+type recordingConfigValidator struct {
+	path string
+	err  error
+}
+
+type blockingSubscriptionDownloader struct {
+	fakeGitHubReleases
+	started chan struct{}
+}
+
+func (d *blockingSubscriptionDownloader) Download(ctx context.Context, url, dest string) error {
+	close(d.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type blockingConfigValidator struct {
+	started chan struct{}
+}
+
+func (v *blockingConfigValidator) Validate(ctx context.Context, path string) error {
+	close(v.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (v *recordingConfigValidator) Validate(ctx context.Context, path string) error {
+	v.path = path
+	return v.err
+}
+
+type fakeConfigUpdateLock struct {
+	err      error
+	acquired bool
+	released bool
+}
+
+func (l *fakeConfigUpdateLock) Acquire(context.Context) (func(), error) {
+	l.acquired = true
+	if l.err != nil {
+		return nil, l.err
+	}
+	return func() { l.released = true }, nil
+}
+
+func TestUpdateConfigDownloadHonorsCancellation(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true, subscriptionSourceFile: true, subscriptionURLFile: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("remote\n"),
+			subscriptionURLFile:    []byte("https://example.com/sub.yaml"),
+		},
+	}
+	dl := &blockingSubscriptionDownloader{started: make(chan struct{})}
+	m := NewConfigManager(fs, dl, &passValidator{}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- m.UpdateConfig(ctx) }()
+	<-dl.started
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateConfig error = %v, want cancellation", err)
+	}
+}
+
+func TestUpdateConfigValidationHonorsCancellation(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true, subscriptionSourceFile: true, subscriptionDataFile: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+		},
+	}
+	validator := &blockingConfigValidator{started: make(chan struct{})}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, validator, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- m.UpdateConfig(ctx) }()
+	<-validator.started
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateConfig error = %v, want cancellation", err)
+	}
+}
+
+func TestUpdateConfigReturnsBusyWhenLockUnavailable(t *testing.T) {
+	lock := &fakeConfigUpdateLock{err: ErrConfigUpdateBusy}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil, WithConfigUpdateLock(lock))
+
+	if err := m.UpdateConfig(context.Background()); !errors.Is(err, ErrConfigUpdateBusy) {
+		t.Fatalf("UpdateConfig error = %v, want busy error", err)
+	}
+	if !lock.acquired {
+		t.Fatal("UpdateConfig should attempt to acquire the update lock")
+	}
+	if _, exists := fs.written[configYAML]; exists {
+		t.Fatal("busy update should not write generated config")
+	}
+}
+
+func TestUpdateConfigReleasesLockAfterSuccess(t *testing.T) {
+	lock := &fakeConfigUpdateLock{}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil, WithConfigUpdateLock(lock))
+
+	if err := m.UpdateConfig(context.Background()); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	if !lock.released {
+		t.Fatal("UpdateConfig should release the update lock")
+	}
+}
+
+func TestUpdateConfigValidatesStagedConfigBeforeAtomicCommit(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			OverrideFilePath:       true,
+			subscriptionSourceFile: true,
+			subscriptionDataFile:   true,
+			configYAML:             true,
+		},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+			configYAML:             []byte("old\n"),
+		},
+	}
+	validator := &recordingConfigValidator{}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, validator, nil)
+
+	if err := m.UpdateConfig(context.Background()); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	if validator.path == configYAML || !strings.HasSuffix(validator.path, "/config.yaml") {
+		t.Fatalf("validator path = %q, want staged config.yaml", validator.path)
+	}
+	committed := false
+	for source, destination := range fs.renamed {
+		if destination == configYAML && source != configYAML {
+			committed = true
+		}
+	}
+	if !committed {
+		t.Fatalf("renames = %v, want staged config atomically committed", fs.renamed)
+	}
+}
+
+func TestUpdateConfigRecordsAppliedStatus(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true, subscriptionSourceFile: true, subscriptionDataFile: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != ConfigApplied || status.ConfigHash == "" || status.AttemptedAt.IsZero() {
+		t.Fatalf("status = %+v, want applied status with timestamp and hash", status)
+	}
+}
+
+func TestUpdateConfigValidationFailureRecordsStatusAndPreservesConfig(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true, subscriptionSourceFile: true, subscriptionDataFile: true, configYAML: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+			configYAML:             []byte("old\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &failValidator{err: errors.New("invalid staged config")}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should fail validation")
+	}
+	if got := string(fs.written[configYAML]); got != "old\n" {
+		t.Fatalf("config after validation failure = %q, want old config", got)
+	}
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != ConfigValidationFailed || !strings.Contains(status.ErrorSummary, "invalid staged config") {
+		t.Fatalf("status = %+v, want validation-failed with error", status)
+	}
+}
+
+func TestUpdateConfigReloadFailureRecordsPendingStatus(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true, subscriptionSourceFile: true, subscriptionDataFile: true, configYAML: true},
+		written: map[string][]byte{
+			OverrideFilePath:       []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
+			configYAML:             []byte("old\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, func(context.Context) error {
+		return errors.New("reload failed")
+	})
+
+	if err := m.UpdateConfig(context.Background()); err == nil {
+		t.Fatal("UpdateConfig should fail when reload fails")
+	}
+	if got := string(fs.written[configYAML]); got == "old\n" {
+		t.Fatal("validated generated config should remain after reload failure")
+	}
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != ConfigPendingReload || !strings.Contains(status.ErrorSummary, "reload failed") {
+		t.Fatalf("status = %+v, want pending-reload with error", status)
+	}
+}
+
+func TestLastConfigApplyReportsCorruptStateAsUnknown(t *testing.T) {
+	fs := &fakeFileSystem{written: map[string][]byte{configApplyStatusFile: []byte("not json")}}
+	m := NewConfigManager(fs, &fakeGitHubReleases{}, &passValidator{}, nil)
+
+	status, err := m.LastConfigApply(context.Background())
+	if err != nil {
+		t.Fatalf("LastConfigApply failed: %v", err)
+	}
+	if status.State != ConfigUnknown || status.ErrorSummary == "" {
+		t.Fatalf("status = %+v, want unknown with diagnostic", status)
+	}
+}
+
 // passValidator is a ConfigValidator that always passes
 type passValidator struct{}
 

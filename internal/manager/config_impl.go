@@ -8,11 +8,15 @@ type configManager struct {
 	pipeline *configPipeline
 }
 
-func NewConfigManager(fs FileSystem, gh GitHubReleases, validate ConfigValidator, onReload func(ctx context.Context) error) ConfigManager {
-	pipe := newConfigPipeline(fs, gh, ConfigPipelineOptions{
+func NewConfigManager(fs FileSystem, gh GitHubReleases, validate ConfigValidator, onReload func(ctx context.Context) error, options ...ConfigManagerOption) ConfigManager {
+	pipelineOptions := ConfigPipelineOptions{
 		OnReload:  onReload,
 		Validator: validate,
-	})
+	}
+	for _, option := range options {
+		option(&pipelineOptions)
+	}
+	pipe := newConfigPipeline(fs, gh, pipelineOptions)
 	return &configManager{fs: fs, gh: gh, pipeline: pipe}
 }
 
@@ -34,4 +38,8 @@ func (m *configManager) AdoptConfig(ctx context.Context, force bool) (AdoptRepor
 
 func (m *configManager) ValidateConfig(ctx context.Context) error {
 	return m.pipeline.Validate(ctx)
+}
+
+func (m *configManager) LastConfigApply(ctx context.Context) (ConfigApplyStatus, error) {
+	return m.pipeline.LastConfigApply(ctx)
 }

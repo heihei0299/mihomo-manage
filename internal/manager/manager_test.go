@@ -75,8 +75,16 @@ func (m *fakeFileSystem) Remove(path string) error {
 		}
 	}
 	m.removed = append(m.removed, path)
-	delete(m.written, path)
-	delete(m.fileExists, path)
+	for existing := range m.written {
+		if existing == path || strings.HasPrefix(existing, path+"/") {
+			delete(m.written, existing)
+		}
+	}
+	for existing := range m.fileExists {
+		if existing == path || strings.HasPrefix(existing, path+"/") {
+			delete(m.fileExists, existing)
+		}
+	}
 	return nil
 }
 
@@ -115,11 +123,11 @@ type fakeCmdRunner struct {
 	cmdErr    error
 }
 
-func (m *fakeCmdRunner) RunCommand(name string, args ...string) (string, error) {
+func (m *fakeCmdRunner) RunCommand(ctx context.Context, name string, args ...string) (string, error) {
 	return m.cmdOutput, m.cmdErr
 }
 
-func (m *fakeCmdRunner) RunCommandIgnoreExit(name string, args ...string) (string, error) {
+func (m *fakeCmdRunner) RunCommandIgnoreExit(ctx context.Context, name string, args ...string) (string, error) {
 	return m.cmdOutput, m.cmdErr
 }
 
@@ -209,11 +217,11 @@ type mockServiceManager struct {
 	autoStartEnabled bool
 }
 
-func (m *mockServiceManager) IsRunning(name string) (bool, error) {
+func (m *mockServiceManager) IsRunning(ctx context.Context, name string) (bool, error) {
 	return m.running, m.err
 }
 
-func (m *mockServiceManager) Register(name, serviceFilePath string) error {
+func (m *mockServiceManager) Register(ctx context.Context, name, serviceFilePath string) error {
 	if m.registerErr != nil {
 		return m.registerErr
 	}
@@ -221,11 +229,11 @@ func (m *mockServiceManager) Register(name, serviceFilePath string) error {
 	return nil
 }
 
-func (m *mockServiceManager) Unregister(name string) error {
+func (m *mockServiceManager) Unregister(ctx context.Context, name string) error {
 	return nil
 }
 
-func (m *mockServiceManager) Start(name string) error {
+func (m *mockServiceManager) Start(ctx context.Context, name string) error {
 	if m.startErr != nil {
 		return m.startErr
 	}
@@ -233,7 +241,7 @@ func (m *mockServiceManager) Start(name string) error {
 	return nil
 }
 
-func (m *mockServiceManager) Stop(name string) error {
+func (m *mockServiceManager) Stop(ctx context.Context, name string) error {
 	if m.stopErr != nil {
 		return m.stopErr
 	}
@@ -242,14 +250,14 @@ func (m *mockServiceManager) Stop(name string) error {
 	return nil
 }
 
-func (m *mockServiceManager) Restart(name string) error {
+func (m *mockServiceManager) Restart(ctx context.Context, name string) error {
 	if m.restartErr != nil {
 		return m.restartErr
 	}
 	return nil
 }
 
-func (m *mockServiceManager) Reload(name string) error {
+func (m *mockServiceManager) Reload(ctx context.Context, name string) error {
 	m.reloadCalled = true
 	if m.reloadErr != nil {
 		return m.reloadErr
@@ -257,17 +265,17 @@ func (m *mockServiceManager) Reload(name string) error {
 	return nil
 }
 
-func (m *mockServiceManager) EnableAutoStart(name, serviceFilePath string) error {
+func (m *mockServiceManager) EnableAutoStart(ctx context.Context, name, serviceFilePath string) error {
 	m.autoStartEnabled = true
 	return nil
 }
 
-func (m *mockServiceManager) DisableAutoStart(name string) error {
+func (m *mockServiceManager) DisableAutoStart(ctx context.Context, name string) error {
 	m.autoStartEnabled = false
 	return nil
 }
 
-func (m *mockServiceManager) AutoStartEnabled(name string) (bool, error) {
+func (m *mockServiceManager) AutoStartEnabled(ctx context.Context, name string) (bool, error) {
 	return m.autoStartEnabled, nil
 }
 
@@ -295,7 +303,7 @@ func newTestManager() *testManager {
 		svc:   svc,
 		ctrl:  NewServiceControl(fs, cmd, svc),
 		life:  NewLifecycleManager(fs, cmd, gh, svc),
-		cfg:   NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error { return svc.Reload(serviceName) }),
+		cfg:   NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error { return svc.Reload(context.Background(), serviceName) }),
 		sched: NewScheduleManager(fs, func(ctx context.Context) {}),
 	}
 }
@@ -408,7 +416,7 @@ func TestParseVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		cmd := &fakeCmdRunner{cmdOutput: tt.output}
-		got, err := parseVersion(cmd, "/dummy")
+		got, err := parseVersion(context.Background(), cmd, "/dummy")
 		if err != nil {
 			t.Errorf("parseVersion(%q) unexpected error: %v", tt.output, err)
 			continue
@@ -421,7 +429,7 @@ func TestParseVersion(t *testing.T) {
 
 func TestParseVersionError(t *testing.T) {
 	cmd := &fakeCmdRunner{cmdErr: testError{"command failed"}}
-	_, err := parseVersion(cmd, "/dummy")
+	_, err := parseVersion(context.Background(), cmd, "/dummy")
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -701,7 +709,7 @@ func TestUpdateConfigReloadsInstance(t *testing.T) {
 	gh := &fakeGitHubReleases{}
 	svc := &mockServiceManager{}
 	m := NewConfigManager(fs, gh, &passValidator{}, func(ctx context.Context) error {
-		return svc.Reload(serviceName)
+		return svc.Reload(context.Background(), serviceName)
 	})
 
 	m.UpdateConfig(context.Background())

@@ -178,7 +178,7 @@ func TestLifecycleSubscriptionUpdate(t *testing.T) {
 	linkStorage(fs, &dl.fakeGitHubReleases)
 	svc := &mockServiceManager{}
 	m := NewConfigManager(fs, dl, &configValidator{}, func(ctx context.Context) error {
-		return svc.Reload(serviceName)
+		return svc.Reload(context.Background(), serviceName)
 	})
 
 	err := m.UpdateConfig(context.Background())

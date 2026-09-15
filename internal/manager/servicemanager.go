@@ -2,93 +2,94 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
 )
 
 type osStrategy interface {
-	isActive(name string) (bool, error)
-	enable(name, serviceFilePath string) error
-	disable(name string) error
-	start(name string) error
-	stop(name string) error
-	restart(name string) error
-	reload(name string) error
-	isEnabled(name string) (bool, error)
-	enableAutoStart(name, serviceFilePath string) error
-	disableAutoStart(name string) error
+	isActive(ctx context.Context, name string) (bool, error)
+	enable(ctx context.Context, name, serviceFilePath string) error
+	disable(ctx context.Context, name string) error
+	start(ctx context.Context, name string) error
+	stop(ctx context.Context, name string) error
+	restart(ctx context.Context, name string) error
+	reload(ctx context.Context, name string) error
+	isEnabled(ctx context.Context, name string) (bool, error)
+	enableAutoStart(ctx context.Context, name, serviceFilePath string) error
+	disableAutoStart(ctx context.Context, name string) error
 }
 
 type linuxSystemctl struct{ cmd CommandRunner }
 
-func (l linuxSystemctl) isActive(name string) (bool, error) {
-	out, err := l.cmd.RunCommandIgnoreExit("systemctl", "is-active", name)
+func (l linuxSystemctl) isActive(ctx context.Context, name string) (bool, error) {
+	out, err := l.cmd.RunCommandIgnoreExit(ctx, "systemctl", "is-active", name)
 	if err != nil {
 		return false, fmt.Errorf("systemctl is-active: %w", err)
 	}
 	return strings.TrimSpace(out) == "active", nil
 }
 
-func (l linuxSystemctl) enable(name, _ string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "daemon-reload"); err != nil {
+func (l linuxSystemctl) enable(ctx context.Context, name, _ string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) disable(name string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "disable", name); err != nil {
+func (l linuxSystemctl) disable(ctx context.Context, name string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "disable", name); err != nil {
 		return fmt.Errorf("systemctl disable %s: %w", name, err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) start(name string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "start", name); err != nil {
+func (l linuxSystemctl) start(ctx context.Context, name string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "start", name); err != nil {
 		return fmt.Errorf("systemctl start %s: %w", name, err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) stop(name string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "stop", name); err != nil {
+func (l linuxSystemctl) stop(ctx context.Context, name string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "stop", name); err != nil {
 		return fmt.Errorf("systemctl stop %s: %w", name, err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) restart(name string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "restart", name); err != nil {
+func (l linuxSystemctl) restart(ctx context.Context, name string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "restart", name); err != nil {
 		return fmt.Errorf("systemctl restart %s: %w", name, err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) reload(name string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "reload", name); err != nil {
+func (l linuxSystemctl) reload(ctx context.Context, name string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "reload", name); err != nil {
 		return fmt.Errorf("systemctl reload %s: %w", name, err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) isEnabled(name string) (bool, error) {
-	out, err := l.cmd.RunCommandIgnoreExit("systemctl", "is-enabled", name)
+func (l linuxSystemctl) isEnabled(ctx context.Context, name string) (bool, error) {
+	out, err := l.cmd.RunCommandIgnoreExit(ctx, "systemctl", "is-enabled", name)
 	if err != nil {
-		return false, nil
+		return false, err
 	}
 	return strings.TrimSpace(out) == "enabled", nil
 }
 
-func (l linuxSystemctl) enableAutoStart(name, _ string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "enable", name); err != nil {
+func (l linuxSystemctl) enableAutoStart(ctx context.Context, name, _ string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "enable", name); err != nil {
 		return fmt.Errorf("systemctl enable %s: %w", name, err)
 	}
 	return nil
 }
 
-func (l linuxSystemctl) disableAutoStart(name string) error {
-	if _, err := l.cmd.RunCommand("systemctl", "disable", name); err != nil {
+func (l linuxSystemctl) disableAutoStart(ctx context.Context, name string) error {
+	if _, err := l.cmd.RunCommand(ctx, "systemctl", "disable", name); err != nil {
 		return fmt.Errorf("systemctl disable %s: %w", name, err)
 	}
 	return nil
@@ -99,51 +100,51 @@ type darwinLaunchctl struct {
 	fs  FileSystem
 }
 
-func (d darwinLaunchctl) isActive(name string) (bool, error) {
-	out, err := d.cmd.RunCommand("launchctl", "list", name)
+func (d darwinLaunchctl) isActive(ctx context.Context, name string) (bool, error) {
+	out, err := d.cmd.RunCommand(ctx, "launchctl", "list", name)
 	if err != nil {
 		return false, fmt.Errorf("launchctl list %s: %w", name, err)
 	}
 	return strings.Contains(out, "PID"), nil
 }
 
-func (d darwinLaunchctl) enable(name, serviceFilePath string) error {
-	_, err := d.cmd.RunCommand("launchctl", "load", serviceFilePath)
+func (d darwinLaunchctl) enable(ctx context.Context, name, serviceFilePath string) error {
+	_, err := d.cmd.RunCommand(ctx, "launchctl", "load", serviceFilePath)
 	return err
 }
 
-func (d darwinLaunchctl) disable(name string) error {
-	_, err := d.cmd.RunCommand("launchctl", "unload", fmt.Sprintf("/Library/LaunchAgents/%s.plist", name))
+func (d darwinLaunchctl) disable(ctx context.Context, name string) error {
+	_, err := d.cmd.RunCommand(ctx, "launchctl", "unload", fmt.Sprintf("/Library/LaunchAgents/%s.plist", name))
 	return err
 }
 
-func (d darwinLaunchctl) start(name string) error {
-	_, err := d.cmd.RunCommand("launchctl", "start", name)
+func (d darwinLaunchctl) start(ctx context.Context, name string) error {
+	_, err := d.cmd.RunCommand(ctx, "launchctl", "start", name)
 	return err
 }
 
-func (d darwinLaunchctl) stop(name string) error {
-	_, err := d.cmd.RunCommand("launchctl", "stop", name)
+func (d darwinLaunchctl) stop(ctx context.Context, name string) error {
+	_, err := d.cmd.RunCommand(ctx, "launchctl", "stop", name)
 	return err
 }
 
-func (d darwinLaunchctl) restart(name string) error {
-	if _, err := d.cmd.RunCommand("launchctl", "stop", name); err != nil {
+func (d darwinLaunchctl) restart(ctx context.Context, name string) error {
+	if _, err := d.cmd.RunCommand(ctx, "launchctl", "stop", name); err != nil {
 		return err
 	}
-	_, err := d.cmd.RunCommand("launchctl", "start", name)
+	_, err := d.cmd.RunCommand(ctx, "launchctl", "start", name)
 	return err
 }
 
-func (d darwinLaunchctl) reload(name string) error {
-	if _, err := d.cmd.RunCommand("launchctl", "stop", name); err != nil {
+func (d darwinLaunchctl) reload(ctx context.Context, name string) error {
+	if _, err := d.cmd.RunCommand(ctx, "launchctl", "stop", name); err != nil {
 		return err
 	}
-	_, err := d.cmd.RunCommand("launchctl", "start", name)
+	_, err := d.cmd.RunCommand(ctx, "launchctl", "start", name)
 	return err
 }
 
-func (d darwinLaunchctl) isEnabled(name string) (bool, error) {
+func (d darwinLaunchctl) isEnabled(ctx context.Context, name string) (bool, error) {
 	path := fmt.Sprintf("/Library/LaunchAgents/%s.plist", name)
 	data, err := d.fs.ReadFile(path)
 	if err != nil {
@@ -152,7 +153,7 @@ func (d darwinLaunchctl) isEnabled(name string) (bool, error) {
 	return bytes.Contains(data, []byte("<key>RunAtLoad</key>")), nil
 }
 
-func (d darwinLaunchctl) enableAutoStart(name, serviceFilePath string) error {
+func (d darwinLaunchctl) enableAutoStart(ctx context.Context, name, serviceFilePath string) error {
 	data, err := d.fs.ReadFile(serviceFilePath)
 	if err != nil {
 		return err
@@ -166,14 +167,14 @@ func (d darwinLaunchctl) enableAutoStart(name, serviceFilePath string) error {
 	if err := d.fs.WriteFile(serviceFilePath, data, 0644); err != nil {
 		return err
 	}
-	if _, err := d.cmd.RunCommand("launchctl", "unload", serviceFilePath); err != nil {
+	if _, err := d.cmd.RunCommand(ctx, "launchctl", "unload", serviceFilePath); err != nil {
 		return err
 	}
-	_, err = d.cmd.RunCommand("launchctl", "load", serviceFilePath)
+	_, err = d.cmd.RunCommand(ctx, "launchctl", "load", serviceFilePath)
 	return err
 }
 
-func (d darwinLaunchctl) disableAutoStart(name string) error {
+func (d darwinLaunchctl) disableAutoStart(ctx context.Context, name string) error {
 	path := fmt.Sprintf("/Library/LaunchAgents/%s.plist", name)
 	data, err := d.fs.ReadFile(path)
 	if err != nil {
@@ -202,10 +203,10 @@ func (d darwinLaunchctl) disableAutoStart(name string) error {
 	if err := d.fs.WriteFile(path, data, 0644); err != nil {
 		return err
 	}
-	if _, err := d.cmd.RunCommand("launchctl", "unload", path); err != nil {
+	if _, err := d.cmd.RunCommand(ctx, "launchctl", "unload", path); err != nil {
 		return err
 	}
-	_, err = d.cmd.RunCommand("launchctl", "load", path)
+	_, err = d.cmd.RunCommand(ctx, "launchctl", "load", path)
 	return err
 }
 
@@ -249,58 +250,60 @@ func NewOSServiceManager(cmd CommandRunner, fs FileSystem) *OSServiceManager {
 	return &OSServiceManager{cmd: cmd, fs: fs}
 }
 
-func (s *OSServiceManager) EnableAutoStart(name, serviceFilePath string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.enableAutoStart(name, serviceFilePath) })
+func (s *OSServiceManager) EnableAutoStart(ctx context.Context, name, serviceFilePath string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error {
+		return strat.enableAutoStart(ctx, name, serviceFilePath)
+	})
 }
 
-func (s *OSServiceManager) DisableAutoStart(name string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.disableAutoStart(name) })
+func (s *OSServiceManager) DisableAutoStart(ctx context.Context, name string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.disableAutoStart(ctx, name) })
 }
 
-func (s *OSServiceManager) AutoStartEnabled(name string) (bool, error) {
+func (s *OSServiceManager) AutoStartEnabled(ctx context.Context, name string) (bool, error) {
 	strat, err := s.strategy()
 	if err != nil {
 		return false, err
 	}
-	return strat.isEnabled(name)
+	return strat.isEnabled(ctx, name)
 }
 
-func (s *OSServiceManager) withStrategy(f func(osStrategy) error) error {
+func (s *OSServiceManager) withStrategy(ctx context.Context, f func(context.Context, osStrategy) error) error {
 	strat, err := s.strategy()
 	if err != nil {
 		return err
 	}
-	return f(strat)
+	return f(ctx, strat)
 }
 
-func (s *OSServiceManager) IsRunning(name string) (bool, error) {
+func (s *OSServiceManager) IsRunning(ctx context.Context, name string) (bool, error) {
 	strat, err := s.strategy()
 	if err != nil {
 		return false, err
 	}
-	return strat.isActive(name)
+	return strat.isActive(ctx, name)
 }
 
-func (s *OSServiceManager) Register(name, serviceFilePath string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.enable(name, serviceFilePath) })
+func (s *OSServiceManager) Register(ctx context.Context, name, serviceFilePath string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.enable(ctx, name, serviceFilePath) })
 }
 
-func (s *OSServiceManager) Unregister(name string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.disable(name) })
+func (s *OSServiceManager) Unregister(ctx context.Context, name string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.disable(ctx, name) })
 }
 
-func (s *OSServiceManager) Start(name string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.start(name) })
+func (s *OSServiceManager) Start(ctx context.Context, name string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.start(ctx, name) })
 }
 
-func (s *OSServiceManager) Stop(name string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.stop(name) })
+func (s *OSServiceManager) Stop(ctx context.Context, name string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.stop(ctx, name) })
 }
 
-func (s *OSServiceManager) Restart(name string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.restart(name) })
+func (s *OSServiceManager) Restart(ctx context.Context, name string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.restart(ctx, name) })
 }
 
-func (s *OSServiceManager) Reload(name string) error {
-	return s.withStrategy(func(strat osStrategy) error { return strat.reload(name) })
+func (s *OSServiceManager) Reload(ctx context.Context, name string) error {
+	return s.withStrategy(ctx, func(ctx context.Context, strat osStrategy) error { return strat.reload(ctx, name) })
 }

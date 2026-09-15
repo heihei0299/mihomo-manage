@@ -361,6 +361,7 @@ config updated
 | 生成配置 | `grep -c "proxies" /opt/mihomo/etc/config.yaml` | 输出 > 0（包含代理节点） |
 | 备份文件 | `ls /opt/mihomo/etc/config.yaml.bak.*` | 至少存在一个备份 |
 | 服务状态 | `systemctl is-active mihomo` | 输出 `active`（reload 后不中断） |
+| 配置应用状态 | `mihomo-manager status` | 输出 `config: applied`；reload 失败时输出 `config: pending-reload` |
 
 ### 更新流程
 

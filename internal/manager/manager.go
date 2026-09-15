@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -101,16 +102,16 @@ type Status struct {
 }
 
 type ServiceManager interface {
-	IsRunning(name string) (bool, error)
-	Register(name, serviceFilePath string) error
-	Unregister(name string) error
-	Start(name string) error
-	Stop(name string) error
-	Restart(name string) error
-	Reload(name string) error
-	EnableAutoStart(name, serviceFilePath string) error
-	DisableAutoStart(name string) error
-	AutoStartEnabled(name string) (bool, error)
+	IsRunning(ctx context.Context, name string) (bool, error)
+	Register(ctx context.Context, name, serviceFilePath string) error
+	Unregister(ctx context.Context, name string) error
+	Start(ctx context.Context, name string) error
+	Stop(ctx context.Context, name string) error
+	Restart(ctx context.Context, name string) error
+	Reload(ctx context.Context, name string) error
+	EnableAutoStart(ctx context.Context, name, serviceFilePath string) error
+	DisableAutoStart(ctx context.Context, name string) error
+	AutoStartEnabled(ctx context.Context, name string) (bool, error)
 }
 
 func NewConfigValidator() ConfigValidator {
@@ -131,8 +132,8 @@ func looksLikeVersion(s string) bool {
 	return s[1] >= '0' && s[1] <= '9'
 }
 
-func parseVersion(cmd CommandRunner, binaryPath string) (string, error) {
-	out, err := cmd.RunCommand(binaryPath, "-v")
+func parseVersion(ctx context.Context, cmd CommandRunner, binaryPath string) (string, error) {
+	out, err := cmd.RunCommand(ctx, binaryPath, "-v")
 	if err != nil {
 		return "", err
 	}
@@ -153,19 +154,21 @@ const (
 	filePermUserRW  = 0644
 	filePermUserRWX = 0755
 
-	binaryPath             = "/opt/mihomo/bin/mihomo"
-	configDir              = "/opt/mihomo/etc"
-	OverrideFilePath       = "/opt/mihomo/etc/override.yaml"
-	legacyTemplatePath     = "/opt/mihomo/etc/config-template.yaml"
-	configYAML             = "/opt/mihomo/etc/config.yaml"
-	defaultServiceUnitPath = "/etc/systemd/system/mihomo.service"
-	ServiceName            = "mihomo"
-	stateDir               = "/opt/mihomo-manager/state"
-	subscriptionDataFile   = "/opt/mihomo-manager/state/subscription-data.txt"
-	subscriptionURLFile    = "/opt/mihomo-manager/state/subscription-url.txt"
-	subscriptionSourceFile = "/opt/mihomo-manager/state/subscription-source.txt"
-	RoutingRulesPath       = "/opt/mihomo/etc/rules.txt"
-	scheduleFile           = "/opt/mihomo-manager/state/schedule.txt"
+	binaryPath                 = "/opt/mihomo/bin/mihomo"
+	configDir                  = "/opt/mihomo/etc"
+	OverrideFilePath           = "/opt/mihomo/etc/override.yaml"
+	legacyTemplatePath         = "/opt/mihomo/etc/config-template.yaml"
+	configYAML                 = "/opt/mihomo/etc/config.yaml"
+	defaultServiceUnitPath     = "/etc/systemd/system/mihomo.service"
+	ServiceName                = "mihomo"
+	stateDir                   = "/opt/mihomo-manager/state"
+	subscriptionDataFile       = "/opt/mihomo-manager/state/subscription-data.txt"
+	subscriptionURLFile        = "/opt/mihomo-manager/state/subscription-url.txt"
+	subscriptionSourceFile     = "/opt/mihomo-manager/state/subscription-source.txt"
+	RoutingRulesPath           = "/opt/mihomo/etc/rules.txt"
+	scheduleFile               = "/opt/mihomo-manager/state/schedule.txt"
+	subscriptionUpdateLockFile = "/opt/mihomo-manager/state/config-update.lock"
+	configApplyStatusFile      = "/opt/mihomo-manager/state/config-apply-status.json"
 )
 
 var serviceName = ServiceName

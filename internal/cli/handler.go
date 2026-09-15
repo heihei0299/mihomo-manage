@@ -52,6 +52,14 @@ func (h *Handler) Status(ctx context.Context) int {
 	if status.AutoStartEnabled {
 		autostart = "on"
 	}
+	configStatus, configErr := h.config.LastConfigApply(ctx)
+	if configErr != nil {
+		h.printf("config: unknown (%v)\n", configErr)
+	} else if configStatus.ErrorSummary != "" {
+		h.printf("config: %s (%s)\n", configStatus.State, configStatus.ErrorSummary)
+	} else {
+		h.printf("config: %s\n", configStatus.State)
+	}
 
 	switch status.InstanceState {
 	case manager.Running:

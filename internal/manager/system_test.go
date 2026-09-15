@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestOSSystemRunCommandHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (OSSystem{}).RunCommand(ctx, "sleep", "10"); err == nil {
+		t.Fatal("RunCommand should return an error after cancellation")
+	}
+}
+
 func TestOSSystemDownloadHonorsCancellation(t *testing.T) {
 	started := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

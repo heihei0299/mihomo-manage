@@ -95,6 +95,8 @@ type mockConfig struct {
 	updateConfigFn    func() error
 	adoptConfigFn     func(force bool) (manager.AdoptReport, error)
 	validateConfigFn  func() error
+	lastConfig        manager.ConfigApplyStatus
+	lastConfigErr     error
 }
 
 func (m *mockConfig) AdoptConfig(ctx context.Context, force bool) (manager.AdoptReport, error) {
@@ -130,6 +132,13 @@ func (m *mockConfig) ValidateConfig(ctx context.Context) error {
 		return m.validateConfigFn()
 	}
 	return nil
+}
+
+func (m *mockConfig) LastConfigApply(ctx context.Context) (manager.ConfigApplyStatus, error) {
+	if m.lastConfig.State != "" || m.lastConfigErr != nil {
+		return m.lastConfig, m.lastConfigErr
+	}
+	return manager.ConfigApplyStatus{State: manager.ConfigUnknown}, nil
 }
 
 type mockSchedule struct {
@@ -170,6 +179,20 @@ func TestStatusRunning(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "running") {
 		t.Errorf("stdout should contain 'running', got %q", stdout.String())
+	}
+}
+
+func TestStatusShowsLatestConfigApply(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		lastConfig: manager.ConfigApplyStatus{State: manager.ConfigPendingReload},
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.Status(context.Background()); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "config: pending-reload") {
+		t.Fatalf("stdout = %q, want config status", stdout.String())
 	}
 }
 
