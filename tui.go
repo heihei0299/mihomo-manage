@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/anomalyco/mihomo-manager/internal/manager"
 
@@ -19,6 +21,7 @@ const (
 	modeConfirmUninstall
 	modeChooseVersion
 	modeConfig
+	modeSchedule
 )
 
 type configTab int
@@ -61,20 +64,24 @@ var actionRegistry = map[action]actionDef{
 }
 
 type model struct {
-	ctx          context.Context
-	control      manager.ServiceControl
-	lifecycle    manager.LifecycleManager
-	config       manager.ConfigManager
-	status       *manager.Status
-	statusErr    error
-	configStatus manager.ConfigApplyStatus
-	configErr    error
-	ready        bool
-	executing    action
-	execResult   string
-	actionErr    error
-	phaseLabel   string
-	phaseMsg     string
+	ctx              context.Context
+	control          manager.ServiceControl
+	lifecycle        manager.LifecycleManager
+	config           manager.ConfigManager
+	schedule         manager.ScheduleManager
+	status           *manager.Status
+	statusErr        error
+	configStatus     manager.ConfigApplyStatus
+	configErr        error
+	scheduleInterval time.Duration
+	scheduleActive   bool
+	scheduleErr      error
+	ready            bool
+	executing        action
+	execResult       string
+	actionErr        error
+	phaseLabel       string
+	phaseMsg         string
 
 	mode           viewMode
 	keepBackup     bool
@@ -85,10 +92,13 @@ type model struct {
 }
 
 type statusMsg struct {
-	status       *manager.Status
-	err          error
-	configStatus manager.ConfigApplyStatus
-	configErr    error
+	status           *manager.Status
+	err              error
+	configStatus     manager.ConfigApplyStatus
+	configErr        error
+	scheduleInterval time.Duration
+	scheduleActive   bool
+	scheduleErr      error
 }
 
 type actionDoneMsg struct {
@@ -115,6 +125,13 @@ type configPreviewMsg struct {
 type subscriptionEditMsg struct {
 	err error
 }
+
+type scheduleDoneMsg struct {
+	interval time.Duration
+	err      error
+}
+
+var schedulePresets = []time.Duration{0, time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour}
 
 func editorCommand(editor, path string) (*exec.Cmd, error) {
 	parts := strings.Fields(editor)
@@ -169,14 +186,20 @@ func tuiContext(ctx context.Context) context.Context {
 }
 
 func (m model) Init() tea.Cmd {
-	return fetchStatusCmd(m.control, m.config, tuiContext(m.ctx))
+	return fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
 }
 
-func fetchStatusCmd(ctrl manager.ServiceControl, cfg manager.ConfigManager, ctx context.Context) tea.Cmd {
+func fetchStatusCmd(ctrl manager.ServiceControl, cfg manager.ConfigManager, schedule manager.ScheduleManager, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		s, err := ctrl.Status(ctx)
 		configStatus, configErr := cfg.LastConfigApply(ctx)
-		return statusMsg{status: s, err: err, configStatus: configStatus, configErr: configErr}
+		var interval time.Duration
+		var active bool
+		var scheduleErr error
+		if schedule != nil {
+			interval, active, scheduleErr = schedule.ScheduleStatus(ctx)
+		}
+		return statusMsg{status: s, err: err, configStatus: configStatus, configErr: configErr, scheduleInterval: interval, scheduleActive: active, scheduleErr: scheduleErr}
 	}
 }
 
@@ -262,6 +285,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateChooseVersion(msg)
 		case modeConfig:
 			return m.updateConfigMode(msg)
+		case modeSchedule:
+			return m.updateScheduleMode(msg)
 		}
 
 		switch msg.String() {
@@ -275,7 +300,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 			}
 		case "r":
-			return m, fetchStatusCmd(m.control, m.config, tuiContext(m.ctx))
+			return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
 		case "1":
 			if isActionAllowed(m.status, actStart) {
 				return m.startAction(actStart, "latest")
@@ -310,6 +335,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m.startAction(actAutostartOn, "")
 			}
+		case "t":
+			if isInstalled(m.status) {
+				m.mode = modeSchedule
+				m.selectedIdx = schedulePresetIndex(m.scheduleInterval, m.scheduleActive)
+				return m, nil
+			}
 		case "u":
 			if isInstalled(m.status) {
 				m.mode = modeConfirmUninstall
@@ -325,6 +356,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusErr = msg.err
 		m.configStatus = msg.configStatus
 		m.configErr = msg.configErr
+		m.scheduleInterval = msg.scheduleInterval
+		m.scheduleActive = msg.scheduleActive
+		m.scheduleErr = msg.scheduleErr
 		m.execResult = ""
 		m.actionErr = nil
 		return m, nil
@@ -340,6 +374,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewContent = msg.content
 		}
 		return m, nil
+
+	case scheduleDoneMsg:
+		m.mode = modeStatus
+		m.execResult = ""
+		m.actionErr = msg.err
+		if msg.err != nil {
+			m.execResult = "failed"
+		} else {
+			m.execResult = "success"
+		}
+		return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
 
 	case subscriptionEditMsg:
 		m.execResult = ""
@@ -366,7 +411,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.execResult = "success"
 			m.actionErr = nil
 		}
-		return m, fetchStatusCmd(m.control, m.config, tuiContext(m.ctx))
+		return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
 	}
 	return m, nil
 }
@@ -408,6 +453,68 @@ func (m model) updateChooseVersion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func schedulePresetLabel(interval time.Duration) string {
+	if interval == 0 {
+		return "off"
+	}
+	return interval.String()
+}
+
+func schedulePresetIndex(interval time.Duration, active bool) int {
+	if !active {
+		return 0
+	}
+	for i, preset := range schedulePresets {
+		if preset == interval {
+			return i
+		}
+	}
+	return 0
+}
+
+func scheduleCommand(sched manager.ScheduleManager, ctx context.Context, interval time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if interval == 0 {
+			err = sched.StopSchedule(ctx)
+		} else {
+			err = sched.SetSchedule(ctx, interval)
+		}
+		return scheduleDoneMsg{interval: interval, err: err}
+	}
+}
+
+func (m model) updateScheduleMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		m.mode = modeStatus
+		return m, nil
+	case "up", "k":
+		if m.selectedIdx > 0 {
+			m.selectedIdx--
+		}
+	case "down", "j":
+		if m.selectedIdx < len(schedulePresets)-1 {
+			m.selectedIdx++
+		}
+	case "enter":
+		return m, scheduleCommand(m.schedule, tuiContext(m.ctx), schedulePresets[m.selectedIdx])
+	}
+	return m, nil
+}
+
+func (m model) scheduleView() string {
+	view := "Schedule subscription-update (enter to apply, q to cancel):\n\n"
+	for i, preset := range schedulePresets {
+		prefix := "  "
+		if i == m.selectedIdx {
+			prefix = "> "
+		}
+		view += fmt.Sprintf("%s%s\n", prefix, schedulePresetLabel(preset))
+	}
+	return view
 }
 
 func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -487,6 +594,8 @@ func (m model) View() string {
 		return m.versionChoiceView()
 	case modeConfig:
 		return m.configView()
+	case modeSchedule:
+		return m.scheduleView()
 	}
 
 	return m.statusView()
@@ -581,6 +690,7 @@ func (m model) statusView() string {
 		}
 		actions += "\n5) Upgrade"
 		actions += "\na) Autostart: " + autostart + "  (toggle)"
+		actions += "\nt) Schedule"
 		actions += "\nu) Uninstall"
 	}
 
@@ -595,15 +705,27 @@ func (m model) statusView() string {
 	if configState == "" || m.configErr != nil {
 		configState = "unknown"
 	}
+	scheduleState := "off"
+	if m.scheduleErr != nil {
+		var legacy manager.LegacyScheduleError
+		if errors.As(m.scheduleErr, &legacy) {
+			scheduleState = "legacy"
+		} else {
+			scheduleState = "unknown"
+		}
+	} else if m.scheduleActive {
+		scheduleState = "every " + m.scheduleInterval.String()
+	}
 	return fmt.Sprintf(
 		"┌────────────────────────────┐\n"+
 			"│ mihomo: %-18s │\n"+
 			"│ version: %-18s │\n"+
 			"│ autostart: %-15s │\n"+
 			"│ config: %-17s │\n"+
+			"│ schedule: %-15s │\n"+
 			"└────────────────────────────┘%s%s\n\n"+
 			"r) Refresh    q) Quit",
-		stateStr, version, autostart, configState, actions, result,
+		stateStr, version, autostart, configState, scheduleState, actions, result,
 	)
 }
 
@@ -646,8 +768,8 @@ func (m model) configView() string {
 	return tabLine + content + "\n\nTab/← → switch tab  r) refresh preview  q) back"
 }
 
-func startTUI(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager) error {
-	p := tea.NewProgram(model{ctx: ctx, control: ctrl, lifecycle: lifecycle, config: cfg}, tea.WithContext(ctx))
+func startTUI(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, schedule manager.ScheduleManager) error {
+	p := tea.NewProgram(model{ctx: ctx, control: ctrl, lifecycle: lifecycle, config: cfg, schedule: schedule}, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
 }

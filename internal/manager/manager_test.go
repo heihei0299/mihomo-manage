@@ -303,8 +303,8 @@ func newTestManager() *testManager {
 		svc:   svc,
 		ctrl:  NewServiceControl(fs, cmd, svc),
 		life:  NewLifecycleManager(fs, cmd, gh, svc),
-		cfg:   NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error { return svc.Reload(context.Background(), serviceName) }),
-		sched: NewScheduleManager(fs, func(ctx context.Context) {}),
+		cfg:   NewConfigManager(fs, gh, &configValidator{}, func(ctx context.Context) error { return svc.Reload(ctx, serviceName) }),
+		sched: NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager"),
 	}
 }
 

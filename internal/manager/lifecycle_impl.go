@@ -16,14 +16,19 @@ import (
 )
 
 type lifecycleManager struct {
-	fs     FileSystem
-	cmd    CommandRunner
-	gh     GitHubReleases
-	svcMgr ServiceManager
+	fs       FileSystem
+	cmd      CommandRunner
+	gh       GitHubReleases
+	svcMgr   ServiceManager
+	schedule ScheduleManager
 }
 
-func NewLifecycleManager(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager) LifecycleManager {
-	return &lifecycleManager{fs: fs, cmd: cmd, gh: gh, svcMgr: svcMgr}
+func NewLifecycleManager(fs FileSystem, cmd CommandRunner, gh GitHubReleases, svcMgr ServiceManager, schedules ...ScheduleManager) LifecycleManager {
+	var schedule ScheduleManager
+	if len(schedules) > 0 {
+		schedule = schedules[0]
+	}
+	return &lifecycleManager{fs: fs, cmd: cmd, gh: gh, svcMgr: svcMgr, schedule: schedule}
 }
 
 func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) string {
@@ -293,6 +298,11 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onProgress ProgressCallback) error {
 	if !m.fs.FileExists(binaryPath) {
 		return fmt.Errorf("mihomo is not installed")
+	}
+	if m.schedule != nil {
+		if err := m.schedule.StopSchedule(ctx); err != nil {
+			return fmt.Errorf("stop subscription schedule: %w", err)
+		}
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseUninstallStop, Message: "Stopping mihomo"})

@@ -31,7 +31,7 @@
 | NN | Status | Commit | Review | Tests |
 |---|---|---|---|---|
 | 02 | resolved | `65363bf` | completed; no blocking findings | `go test ./internal/manager && go test .`
-| 03 | resolved | `HEAD` (implementation commit) | completed; no blocking findings | `go test . ./internal/cli ./internal/manager`
-| 04 | resolved | `HEAD` (implementation commit) | completed; no blocking findings | `go test ./internal/manager && go test .`
-| 05 | blocked | — | — | — |
-| 06 | blocked | — | — | — |
+| 03 | resolved | `566fb04` | completed; no blocking findings | `go test . ./internal/cli ./internal/manager`
+| 04 | resolved | `c0e882e` | completed; no blocking findings | `go test ./internal/manager && go test .`
+| 05 | resolved | `HEAD` (implementation commit) | completed; no blocking findings | `go test . ./internal/cli ./internal/manager` + Arch Incus acceptance
+| 06 | planned | — | — | — |

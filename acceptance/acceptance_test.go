@@ -441,6 +441,13 @@ func TestAcceptanceSchedule(t *testing.T) {
 	assertExitCode(t, r, 0)
 	assertStdoutContains(t, r, "schedule: every 6h0m0s")
 
+	enabled := runSudo(t, "systemctl", "is-enabled", "mihomo-manager-subscription-update.timer")
+	assertExitCode(t, enabled, 0)
+	assertStdoutContains(t, enabled, "enabled")
+	unit := runSudo(t, "systemctl", "cat", "mihomo-manager-subscription-update.service")
+	assertExitCode(t, unit, 0)
+	assertStdoutContains(t, unit, "ExecStart=/usr/local/bin/mihomo-manager subscription update --quiet")
+
 	r = runMihomo(t, binary, "subscription", "schedule", "--off")
 	assertExitCode(t, r, 0)
 
@@ -449,6 +456,9 @@ func TestAcceptanceSchedule(t *testing.T) {
 	r = runMihomo(t, binary, "subscription", "schedule")
 	assertExitCode(t, r, 0)
 	assertStdoutContains(t, r, "schedule: off")
+	if fileExists("/etc/systemd/system/mihomo-manager-subscription-update.timer") || fileExists("/etc/systemd/system/mihomo-manager-subscription-update.service") {
+		t.Error("expected native schedule units to be removed after --off")
+	}
 
 	r = runMihomo(t, binary, "subscription", "schedule", "--interval", "30s")
 	if r.ExitCode == 0 {
@@ -513,7 +523,7 @@ func TestAcceptanceUninstall(t *testing.T) {
 	assertExitCode(t, r, 0)
 	assertStdoutContains(t, r, "[stop]")
 	assertStdoutContains(t, r, "[deregister]")
-	assertStdoutContains(t, r, "[clean]")
+	assertStdoutContains(t, r, "[cleanup]")
 
 	if fileExists(binaryPath) {
 		t.Error("expected /opt/mihomo/bin/mihomo to not exist after uninstall")

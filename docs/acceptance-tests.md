@@ -574,7 +574,7 @@ sudo cp /tmp/mihomo.real /opt/mihomo/bin/mihomo
 
 | 项目 | 内容 |
 |------|------|
-| **前置** | 已设置订阅 URL |
+| **前置** | mihomo-instance 已安装且已设置订阅 URL；Linux acceptance 运行在 systemd 主机 |
 | **命令** | `mihomo-manager subscription schedule --interval 6h` |
 | **通过条件** | 全部满足 |
 
@@ -588,10 +588,12 @@ schedule set to every 6h0m0s
 
 | 操作 | 命令 | 通过条件 |
 |------|------|----------|
-| 查看 | `mihomo-manager subscription schedule` | 输出 `schedule: every 6h0m0s` |
+| 查看 | `mihomo-manager subscription schedule` | 输出 `schedule: every 6h0m0s`，由 native systemd timer 提供状态 |
+| systemd timer | `systemctl is-enabled mihomo-manager-subscription-update.timer` | 输出 `enabled` |
+| systemd task | `systemctl cat mihomo-manager-subscription-update.service` | `ExecStart` 使用绝对 manager 路径执行 `subscription update --quiet` |
 | 关闭 | `mihomo-manager subscription schedule --off` | 输出 `schedule stopped`（`--quiet` 时无输出），退出码 0 |
 | 查看关闭后 | `mihomo-manager subscription schedule` | 输出 `schedule: off` |
-| 拒短 | `mihomo-manager subscription schedule --interval 30s` | 错误信息，不设置（间隔必须 ≥ 1m） |
+| 拒短 | `mihomo-manager subscription schedule --interval 30s` | 错误信息，不设置（间隔必须 ≥ 1h） |
 
 ### 退出码
 

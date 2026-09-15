@@ -114,7 +114,7 @@ Usage of mihomo-manager:
   config adopt [--force]  Adopt manual config.yaml changes into override
   subscription set string  Set subscription source
   subscription update     Refresh and apply subscription
-  subscription schedule [--interval|--off]  View/configure auto-refresh
+  subscription schedule [--interval|--off]  View/configure auto-refresh (Linux systemd task; Darwin follows issue 06)
   config override edit  Edit override file ($EDITOR)
 ```
 
@@ -138,6 +138,8 @@ TUI 的 Config → Subscription 页面支持按 `e` 使用 `$EDITOR` 输入 URL 
 想保留手动修改，运行 `config adopt` 将差异迁移进覆写文件（候选差异 ≥5 字段需 `--force` 确认）。
 
 `subscription update` 会先生成并校验临时配置，再原子替换最终配置；reload 失败时保留生成物并报告 `pending-reload`。`status` 和 TUI 状态页显示最近一次配置应用结果（`applied`、`pending-reload` 或 `validation-failed`）。
+
+scheduled subscription-update 由 Linux systemd timer 负责，manager CLI 退出后仍会执行；关闭或卸载时会移除 native task。Darwin launchd 支持由后续平台切片提供。
 
 `start`/`restart` 前会自动校验配置，非法配置拒绝启动。
 

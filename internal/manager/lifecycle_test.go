@@ -215,9 +215,23 @@ func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 	}
 }
 
+func TestUninstallStopsNativeSchedule(t *testing.T) {
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	platform := &fakePlatformScheduler{active: true, interval: time.Hour}
+	schedule := NewScheduleManagerWithPlatform(fs, platform, "/opt/mihomo-manager/bin/mihomo-manager")
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeGitHubReleases{}, &mockServiceManager{}, schedule)
+
+	if err := m.Uninstall(context.Background(), false, noopProgress); err != nil {
+		t.Fatalf("Uninstall failed: %v", err)
+	}
+	if platform.active {
+		t.Fatal("Uninstall should stop the native schedule")
+	}
+}
+
 func TestScheduleSetAndStop(t *testing.T) {
-	fs := &fakeFileSystem{}
-	m := NewScheduleManager(fs, func(ctx context.Context) {})
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	m := NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager")
 
 	err := m.SetSchedule(context.Background(), time.Hour)
 	if err != nil {
@@ -250,8 +264,8 @@ func TestScheduleSetAndStop(t *testing.T) {
 }
 
 func TestScheduleRejectsShortInterval(t *testing.T) {
-	fs := &fakeFileSystem{}
-	m := NewScheduleManager(fs, func(ctx context.Context) {})
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	m := NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager")
 
 	err := m.SetSchedule(context.Background(), time.Minute)
 	if err == nil {

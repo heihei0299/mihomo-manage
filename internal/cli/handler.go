@@ -251,7 +251,13 @@ func (h *Handler) AdoptConfig(ctx context.Context, force bool) int {
 func (h *Handler) ScheduleStatus(ctx context.Context) int {
 	interval, active, err := h.schedule.ScheduleStatus(ctx)
 	if err != nil {
-		// not treated as error — the file may not exist
+		var legacy manager.LegacyScheduleError
+		if errors.As(err, &legacy) {
+			h.errorf("schedule: %v\n", err)
+			return 1
+		}
+		h.errorf("schedule status failed: %v\n", err)
+		return 1
 	}
 	if active {
 		h.printf("schedule: every %v\n", interval)

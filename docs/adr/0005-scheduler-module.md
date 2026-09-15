@@ -1,5 +1,7 @@
 # Extract Scheduler as a self-contained module
 
+Status: superseded by ADR-0008.
+
 ## Context
 
 The subscription update scheduler (`schedule.go`) manages a goroutine with `time.Ticker` that periodically calls `UpdateConfig`. Its lifecycle state (`mu`, `ticker`, `stopCh`) lives as fields on the `manager` struct. The interface (3 methods) is shallow — implementation is also 3 methods. The goroutine silently swallows errors from `UpdateConfig`:

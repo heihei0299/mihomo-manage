@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,9 +20,8 @@ type RunResult struct {
 
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	tmpDir := t.TempDir()
-	tmpPath := filepath.Join(tmpDir, "mihomo-manager")
-	cmd := exec.Command("go", "build", "-o", tmpPath, ".")
+	tmpPath := "/usr/local/bin/mihomo-manager"
+	cmd := exec.Command("go", "build", "-o", tmpPath, "..")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build failed: %v\n%s", err, out)
@@ -317,4 +315,4 @@ func ensureBackToRunning(t *testing.T, binary string) {
 }
 
 var installPhases = []string{"[fetch]", "[deploy]", "[bootstrap]", "[register]", "[start]"}
-var uninstallPhases = []string{"[stop]", "[deregister]", "[clean]"}
+var uninstallPhases = []string{"[stop]", "[deregister]", "[cleanup]"}
