@@ -22,6 +22,11 @@ func assertFileExists(t *testing.T, fs *fakeFileSystem, path string, msg string)
 	t.Errorf("%s: expected %q to exist (written or renamed)", msg, path)
 }
 
+func newLifecycleTestManager(fs *fakeFileSystem, source *fakeReleaseSource, svc *mockServiceManager) LifecycleManager {
+	linkStorage(fs, source)
+	return NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+}
+
 func TestLifecycleInstallThenStatus(t *testing.T) {
 	fs := &fakeFileSystem{}
 	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}

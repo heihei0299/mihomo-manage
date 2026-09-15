@@ -42,11 +42,9 @@ func TestUpgradeDownloadFails(t *testing.T) {
 
 func TestUpgradeHappyPath(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
-	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
-	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := newLifecycleTestManager(fs, source, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err != nil {

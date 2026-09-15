@@ -9,11 +9,9 @@ import (
 
 func TestLifecycleInstall(t *testing.T) {
 	fs := &fakeFileSystem{}
-	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
-	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := newLifecycleTestManager(fs, source, svc)
 
 	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err != nil {
@@ -159,11 +157,9 @@ func TestInstallDownloadFails(t *testing.T) {
 
 func TestInstallHappyPath(t *testing.T) {
 	fs := &fakeFileSystem{}
-	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
-	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := newLifecycleTestManager(fs, source, svc)
 
 	var phases []InstallationPhase
 	var lastErr error
@@ -191,11 +187,9 @@ func TestInstallHappyPath(t *testing.T) {
 
 func TestInstallCreatesServiceFile(t *testing.T) {
 	fs := &fakeFileSystem{}
-	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
-	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := newLifecycleTestManager(fs, source, svc)
 
 	m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {})
 
