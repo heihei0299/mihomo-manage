@@ -6,9 +6,10 @@ adding architectural layers that the project does not need.
 
 ## Current package strategy
 
-`internal/manager` remains one package for now. Logical boundaries are enforced
-by file ownership and small interfaces before physical package splits are
-considered.
+`internal/manager` remains the orchestration package. Logical domains stay
+inside manager until a physical split has demonstrated value. Mature platform
+implementations may be extracted one domain at a time; the native scheduler is
+the first compile-time boundary.
 
 ### File ownership
 
@@ -17,7 +18,8 @@ considered.
 | Config | `config*.go`, `merge.go`, `adopt.go`, `lock.go` | subscription state, rendering, validation, transactional apply, adopt |
 | Lifecycle | `lifecycle*.go` | install, upgrade, uninstall, rollback |
 | Service | `service*.go`, `servicemanager.go` | service process control and platform service registration |
-| Schedule | `native_scheduler.go`, `schedule_manager.go` | systemd/launchd scheduling and legacy schedule migration |
+| Schedule orchestration | `native_scheduler.go`, `schedule_manager.go` | installed prerequisite, legacy schedule migration, platform selection, caller-facing errors |
+| Native scheduler | `internal/scheduler/*` | systemd/launchd generation, native runtime state interpretation, platform scheduling |
 | OS seams | `system.go` | filesystem, command execution, release/network boundary implementations |
 | Shared contract | `manager.go`, role interface files, `errors.go` | shared domain contracts, public role contracts, caller-branchable errors |
 | Shared paths | `paths.go` | genuinely cross-domain filesystem paths and shared filesystem permissions |
@@ -29,11 +31,14 @@ Rules:
    cross-domain helpers in a generic utility file.
 2. Config internals must not call lifecycle internals; lifecycle may depend on
    role interfaces, not config implementation details.
-3. Scheduler implementations own platform state interpretation. Callers must
-   not infer systemd/launchd state from files.
-4. Add interfaces only at replaceable side-effect boundaries or stable role
+3. Native scheduler implementations own systemd/launchd state interpretation.
+   Callers must not infer platform state from persisted files.
+4. Dependency direction is one-way: `internal/manager` may depend on
+   `internal/scheduler`; `internal/scheduler` must not import
+   `internal/manager`.
+5. Add interfaces only at replaceable side-effect boundaries or stable role
    boundaries. Internal pipeline stages remain ordinary functions.
-5. Do not add repository/service/usecase/controller layers or a DI framework.
+6. Do not add repository/service/usecase/controller layers or a DI framework.
 
 ## State machines are executable contracts
 
@@ -62,6 +67,7 @@ Current branchable categories include:
 - subscription source not configured;
 - mihomo not installed / already running / not running;
 - adopt requiring confirmation;
+- legacy scheduler configuration;
 - unsupported scheduler platform.
 
 Operational errors remain wrapped with `fmt.Errorf("context: %w", err)`.
@@ -91,6 +97,22 @@ needed, introduce a separate concrete implementation/seam rather than growing
 
 The current three implementations may remain on one concrete type while they
 stay thin stdlib adapters.
+
+## Architecture guards
+
+`internal/manager/architecture_test.go` protects the lowest-cost structural
+rules that are not naturally enforced by the current package layout.
+
+It must remain small and standard-library-only. Its responsibilities are:
+
+- every manager production file has an explicit domain owner;
+- generic dumping-ground names such as `utils.go`, `common.go`, or
+  `constants.go` are rejected;
+- `internal/scheduler` cannot import `internal/manager`.
+
+Do not grow this into a symbol-level dependency analyzer. When a logical
+boundary needs compiler-enforced symbol isolation, extract that mature domain
+into its own package instead.
 
 ## Tests
 
@@ -136,9 +158,12 @@ when at least two of these signals persist across multiple changes:
 5. Circular ownership pressure appears: helpers are moved to shared files only
    so two areas can reach them.
 
-When a split is justified, extract one mature area at a time. Prefer `config`
-or `schedule` first if their independence is demonstrated. Keep orchestration
-small; do not perform a package-wide layered rewrite.
+When a split is justified, extract one mature area at a time. The native
+scheduler extraction is the reference pattern: keep orchestration and
+caller-facing semantics in manager, move mature platform mechanics behind a
+small one-way boundary, and avoid a package-wide layered rewrite.
+
+Do not extract Config, Lifecycle, or Service merely for symmetry.
 
 ## AI-assisted retrieval
 
@@ -149,7 +174,8 @@ package for a config-only, scheduler-only, or lifecycle-only change.
 Preferred first-read boundaries:
 
 - **Config:** `config*.go`, `merge.go`, `adopt.go`, `lock.go`, and the matching `config_*_test.go` files. Expand to service, lifecycle, or scheduler only for an explicit call dependency.
-- **Schedule:** `native_scheduler.go`, `schedule_manager.go`, and their tests. Do not read config or lifecycle implementation merely because it is in the same package.
+- **Schedule orchestration:** `native_scheduler.go`, `schedule_manager.go`, and manager schedule tests.
+- **Native scheduler:** `internal/scheduler/*` only. Expand to manager only when reviewing the package boundary or constructor wiring.
 - **Lifecycle:** `lifecycle*.go`, service role contracts, and the matching lifecycle tests. Expand only when the lifecycle path calls another area.
 
 This rule is intended to improve both human navigation and AI context/cache
