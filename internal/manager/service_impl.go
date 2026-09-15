@@ -70,7 +70,7 @@ func (m *serviceController) Start(ctx context.Context) error {
 		return err
 	}
 	if running {
-		return fmt.Errorf("mihomo is already running")
+		return ErrMihomoAlreadyRunning
 	}
 	return m.svcMgr.Start(ctx, serviceName)
 }
@@ -84,7 +84,7 @@ func (m *serviceController) Stop(ctx context.Context) error {
 		return err
 	}
 	if !running {
-		return fmt.Errorf("mihomo is not running")
+		return ErrMihomoNotRunning
 	}
 	return m.svcMgr.Stop(ctx, serviceName)
 }
@@ -105,7 +105,7 @@ func (m *serviceController) Reload(ctx context.Context) error {
 		return err
 	}
 	if !running {
-		return fmt.Errorf("mihomo is not running")
+		return ErrMihomoNotRunning
 	}
 	return m.svcMgr.Reload(ctx, serviceName)
 }
