@@ -54,6 +54,10 @@ type ReleaseSource interface {
 	LatestVersion(ctx context.Context, owner, repo string) (string, error)
 }
 
+// OSSystem is the thin production adapter for FileSystem, CommandRunner, and
+// ReleaseSource. Keep these methods as stdlib/network boundary adapters only.
+// Do not add a fourth responsibility here; introduce a separate seam for new
+// capabilities such as process inspection, archive handling, or system info.
 type OSSystem struct{}
 
 func (OSSystem) FileExists(path string) bool {
