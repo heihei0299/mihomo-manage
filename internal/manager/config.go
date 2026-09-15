@@ -29,8 +29,6 @@ func WithConfigUpdateLock(lock ConfigUpdateLock) ConfigManagerOption {
 	return func(opts *ConfigPipelineOptions) { opts.Lock = lock }
 }
 
-var ErrConfigUpdateBusy = errors.New("configuration update already in progress")
-
 type noopConfigUpdateLock struct{}
 
 func (noopConfigUpdateLock) Acquire(context.Context) (func(), error) {
@@ -353,7 +351,7 @@ func (p *configPipeline) refreshSubscription(ctx context.Context) error {
 		return err
 	}
 	if source == "" {
-		return fmt.Errorf("subscription source is not configured")
+		return ErrSubscriptionSourceNotConfigured
 	}
 	if source != remoteSubscriptionSource {
 		return nil
