@@ -99,50 +99,23 @@ sudo mihomo-manager install
 
 ## 命令
 
+常用命令：
+
+```bash
+mihomo-manager install
+mihomo-manager status
+mihomo-manager subscription set <url-or-data>
+mihomo-manager subscription update
+mihomo-manager config preview
+mihomo-manager config override edit
+mihomo-manager upgrade
+mihomo-manager uninstall
 ```
-Usage: mihomo-manager [command]
 
-Flags:
-  -c              Preview generated config
-  -h, --help      Show this help
-  -i              Install mihomo (alias: install)
-  -q, --quiet     Suppress non-error output
-  -s <url>        Set subscription source
-  -t [opt]        View/configure auto-refresh (--interval|--off)
-  -u              Refresh and apply subscription
-  -v, --version   Show version
+完整命令及参数请运行：
 
-Basic operations:
-  status                  Show mihomo status
-  start                   Start mihomo
-  stop                    Stop mihomo
-  restart                 Restart mihomo
-  reload                  Reload config
-  logs [--tail=N] [--follow]  View mihomo logs
-
-Subscription:
-  subscription set <s>        Set subscription source
-  subscription update         Refresh and apply subscription
-  subscription schedule [opt] View/configure auto-refresh (--interval|--off)
-
-Config:
-  config preview              Preview generated config
-  config adopt [--force]      Adopt manual config.yaml changes into override
-  config override edit        Edit override file ($EDITOR)
-
-Lifecycle:
-  install/i [ver] [--no-autostart] [--from <path>]   Install mihomo (default: latest; --from for local .gz/binary)
-  upgrade/ug [ver]                    Upgrade mihomo (default: latest)
-  uninstall/ui [--keep-backup]        Remove mihomo
-  autostart on|off                    Toggle auto-start on boot
-  versions/v                          List available versions
-
-
-
-
-
-
-
+```bash
+mihomo-manager --help
 ```
 
 ## 配置

@@ -1,5 +1,9 @@
 # Incremental Review Remediation Plan
 
+Status: completed
+
+This document is a historical execution record. Current maintenance rules are defined in `docs/maintainability.md`; do not use this plan as the source of truth for current architecture or runtime behavior.
+
 ## Scope
 
 This document captures the follow-up remediation plan from the incremental review after:
