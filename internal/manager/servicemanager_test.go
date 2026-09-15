@@ -7,10 +7,11 @@ import (
 )
 
 type commandRecorder struct {
-	captured []cmdCall
-	output   string
-	cmdErr   error
-	lastCtx  context.Context
+	captured  []cmdCall
+	output    string
+	cmdErr    error
+	responses []commandResponse
+	lastCtx   context.Context
 }
 
 type cmdCall struct {
@@ -18,9 +19,19 @@ type cmdCall struct {
 	args []string
 }
 
+type commandResponse struct {
+	output string
+	err    error
+}
+
 func (r *commandRecorder) RunCommand(ctx context.Context, name string, args ...string) (string, error) {
 	r.lastCtx = ctx
 	r.captured = append(r.captured, cmdCall{name, args})
+	if len(r.responses) > 0 {
+		response := r.responses[0]
+		r.responses = r.responses[1:]
+		return response.output, response.err
+	}
 	if r.cmdErr != nil {
 		return "inactive", r.cmdErr
 	}

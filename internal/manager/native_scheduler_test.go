@@ -73,20 +73,63 @@ func TestLinuxPlatformSchedulerStatusReadsNativeTimer(t *testing.T) {
 	}
 }
 
-func TestDarwinPlatformSchedulerWritesLaunchdPlist(t *testing.T) {
+func TestDarwinPlatformSchedulerSetIsRepeatable(t *testing.T) {
 	fs := &fakeFileSystem{}
-	cmd := &commandRecorder{}
+	cmd := &commandRecorder{responses: []commandResponse{{}, {}, {}}}
 	scheduler := NewDarwinPlatformScheduler(fs, cmd)
 
 	if err := scheduler.Set(context.Background(), 2*time.Hour, "/usr/local/bin/mihomo-manager"); err != nil {
-		t.Fatalf("Set failed: %v", err)
+		t.Fatalf("first Set failed: %v", err)
+	}
+	if err := scheduler.Set(context.Background(), 3*time.Hour, "/usr/local/bin/mihomo-manager"); err != nil {
+		t.Fatalf("second Set failed: %v", err)
 	}
 	plist := string(fs.written[launchdSchedulePlist])
-	if !strings.Contains(plist, "<string>/usr/local/bin/mihomo-manager</string>") || !strings.Contains(plist, "<integer>7200</integer>") {
-		t.Fatalf("plist = %q, missing command or interval", plist)
+	if !strings.Contains(plist, "<string>/usr/local/bin/mihomo-manager</string>") || !strings.Contains(plist, "<integer>10800</integer>") {
+		t.Fatalf("plist = %q, missing command or updated interval", plist)
 	}
-	if len(cmd.captured) != 1 || cmd.captured[0].args[0] != "bootstrap" || cmd.captured[0].args[1] != "system" {
-		t.Fatalf("commands = %v, want launchctl bootstrap system", cmd.captured)
+	if len(cmd.captured) != 3 || cmd.captured[0].args[0] != "bootstrap" || cmd.captured[1].args[0] != "bootout" || cmd.captured[2].args[0] != "bootstrap" {
+		t.Fatalf("commands = %v, want bootstrap, bootout, bootstrap", cmd.captured)
+	}
+}
+
+func TestDarwinPlatformSchedulerSetRecoversFromUnloadedJob(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("stale plist")},
+	}
+	cmd := &commandRecorder{responses: []commandResponse{
+		{output: "Could not find service \\\"mihomo-manager-subscription-update\\\" in domain for system", err: errors.New("exit status 3")},
+		{},
+	}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	if err := scheduler.Set(context.Background(), 3*time.Hour, "/usr/local/bin/mihomo-manager"); err != nil {
+		t.Fatalf("Set should recover an unloaded job: %v", err)
+	}
+	if !strings.Contains(string(fs.written[launchdSchedulePlist]), "<integer>10800</integer>") {
+		t.Fatalf("plist = %q, want updated interval", fs.written[launchdSchedulePlist])
+	}
+	if len(cmd.captured) != 2 || cmd.captured[0].args[0] != "bootout" || cmd.captured[1].args[0] != "bootstrap" {
+		t.Fatalf("commands = %v, want bootout then bootstrap", cmd.captured)
+	}
+}
+
+func TestDarwinPlatformSchedulerSetPropagatesBootoutFailure(t *testing.T) {
+	const oldPlist = "old plist"
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte(oldPlist)},
+	}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "Operation not permitted", err: errors.New("exit status 1")}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	err := scheduler.Set(context.Background(), 3*time.Hour, "/usr/local/bin/mihomo-manager")
+	if err == nil || !strings.Contains(err.Error(), "unloading launchd schedule") {
+		t.Fatalf("Set error = %v, want bootout failure", err)
+	}
+	if string(fs.written[launchdSchedulePlist]) != oldPlist {
+		t.Fatal("plist should not be rewritten when bootout fails")
 	}
 }
 
@@ -117,18 +160,86 @@ func TestDarwinPlatformSchedulerStatusPropagatesQueryFailure(t *testing.T) {
 	}
 }
 
-func TestDarwinPlatformSchedulerStopRemovesPlist(t *testing.T) {
+func TestDarwinPlatformSchedulerStopIsRepeatable(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{launchdSchedulePlist: true},
 		written:    map[string][]byte{launchdSchedulePlist: []byte("plist")},
 	}
-	scheduler := NewDarwinPlatformScheduler(fs, &commandRecorder{})
+	cmd := &commandRecorder{responses: []commandResponse{{}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
 
 	if err := scheduler.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop failed: %v", err)
+		t.Fatalf("first Stop failed: %v", err)
+	}
+	if err := scheduler.Stop(context.Background()); err != nil {
+		t.Fatalf("second Stop failed: %v", err)
 	}
 	if _, ok := fs.written[launchdSchedulePlist]; ok {
 		t.Fatal("launchd plist should be removed")
+	}
+	if len(cmd.captured) != 1 {
+		t.Fatalf("commands = %v, want one bootout for the loaded job", cmd.captured)
+	}
+}
+
+func TestDarwinPlatformSchedulerStopRemovesUnloadedPlist(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("stale plist")},
+	}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "Boot-out failed: 3: No such process", err: errors.New("exit status 3")}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	if err := scheduler.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop should remove an unloaded plist: %v", err)
+	}
+	if _, ok := fs.written[launchdSchedulePlist]; ok {
+		t.Fatal("stale launchd plist should be removed")
+	}
+}
+
+func TestDarwinPlatformSchedulerStopWithoutPlist(t *testing.T) {
+	cmd := &commandRecorder{}
+	scheduler := NewDarwinPlatformScheduler(&fakeFileSystem{}, cmd)
+
+	if err := scheduler.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop without a plist should succeed: %v", err)
+	}
+	if len(cmd.captured) != 0 {
+		t.Fatalf("commands = %v, want no bootout when the plist is absent", cmd.captured)
+	}
+}
+
+func TestDarwinPlatformSchedulerStopPropagatesBootoutFailure(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("plist")},
+	}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "Operation not permitted", err: errors.New("exit status 1")}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	err := scheduler.Stop(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unloading launchd schedule") {
+		t.Fatalf("Stop error = %v, want bootout failure", err)
+	}
+	if _, ok := fs.written[launchdSchedulePlist]; !ok {
+		t.Fatal("plist should remain when bootout fails")
+	}
+}
+
+func TestDarwinPlatformSchedulerStopDoesNotIgnoreSimilarFailure(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{launchdSchedulePlist: true},
+		written:    map[string][]byte{launchdSchedulePlist: []byte("plist")},
+	}
+	cmd := &commandRecorder{responses: []commandResponse{{output: "permission denied: service not found", err: errors.New("exit status 1")}}}
+	scheduler := NewDarwinPlatformScheduler(fs, cmd)
+
+	if err := scheduler.Stop(context.Background()); err == nil {
+		t.Fatal("Stop should not ignore an unrelated not-found phrase")
+	}
+	if _, ok := fs.written[launchdSchedulePlist]; !ok {
+		t.Fatal("plist should remain when bootout fails")
 	}
 }
 

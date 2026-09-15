@@ -2,8 +2,10 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -238,8 +240,8 @@ func (s *darwinPlatformScheduler) Set(ctx context.Context, interval time.Duratio
 `, launchdScheduleLabel, commandPath, int64(interval.Seconds()))
 	plist = strings.Replace(plist, "</dict>\n</plist>", "  <key>StandardOutPath</key>\n  <string>/var/log/mihomo-manager-subscription-update.log</string>\n  <key>StandardErrorPath</key>\n  <string>/var/log/mihomo-manager-subscription-update.err.log</string>\n</dict>\n</plist>", 1)
 	if s.fs.FileExists(launchdSchedulePlist) {
-		if _, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system", launchdSchedulePlist); err != nil {
-			return fmt.Errorf("unloading launchd schedule: %w", err)
+		if err := s.bootout(ctx); err != nil {
+			return err
 		}
 	}
 	if err := s.fs.WriteFile(launchdSchedulePlist, []byte(plist), filePermUserRW); err != nil {
@@ -253,11 +255,42 @@ func (s *darwinPlatformScheduler) Set(ctx context.Context, interval time.Duratio
 
 func (s *darwinPlatformScheduler) Stop(ctx context.Context) error {
 	if s.fs.FileExists(launchdSchedulePlist) {
-		if _, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system", launchdSchedulePlist); err != nil {
-			return fmt.Errorf("unloading launchd schedule: %w", err)
+		if err := s.bootout(ctx); err != nil {
+			return err
 		}
 	}
 	return s.fs.Remove(launchdSchedulePlist)
+}
+
+func (s *darwinPlatformScheduler) bootout(ctx context.Context) error {
+	output, err := s.cmd.RunCommand(ctx, "launchctl", "bootout", "system", launchdSchedulePlist)
+	if err == nil || isLaunchdJobNotLoadedError(output, err) {
+		return nil
+	}
+	return fmt.Errorf("unloading launchd schedule: %w", err)
+}
+
+func isLaunchdJobNotLoadedError(output string, err error) bool {
+	if err == nil {
+		return false
+	}
+	diagnostics := []string{output, err.Error()}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		diagnostics = append(diagnostics, string(exitErr.Stderr))
+	}
+	for _, diagnostic := range diagnostics {
+		for _, line := range strings.Split(strings.ToLower(diagnostic), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "could not find service") ||
+				strings.HasPrefix(line, "could not find specified service") ||
+				strings.HasPrefix(line, "boot-out failed: 3: no such process") ||
+				line == "service not found" || line == "job not found" || line == "job not loaded" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *darwinPlatformScheduler) Status(ctx context.Context) (time.Duration, bool, error) {
