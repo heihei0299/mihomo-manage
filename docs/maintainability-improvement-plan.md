@@ -118,17 +118,32 @@ Reverse dependency introduced or strengthened: no
 
 **执行步骤**
 
-- [ ] 先增加聚焦测试：当前 install root 为 `/opt/mihomo`、manager root 为 `/opt/mihomo-manager`；非 keep-backup 只删除这两个根。keep-backup 生成的 `/opt/mihomo.bak.<unix>` 位于两根之外且必须保留；升级回滚备份 `/opt/mihomo-manager/backups/mihomo.bak` 属于 manager root，非 keep-backup 时随 manager root 删除。
-- [ ] 在 `paths.go` 只增加或复用最少的 `installRoot`、`managerRoot`、`backupDir` 常量/路径定义。
-- [ ] 用这些路径替换 lifecycle 中剩余硬编码 `/opt/...` 路径。
-- [ ] 删除无通配能力且误导的 `binaryPath + ".bak."` 条目；实现只删除当前 `installRoot` 与 `managerRoot`，不扫描、匹配或删除 `/opt/mihomo.bak.*`，不得以 glob 或扫描方式补偿它。
-- [ ] 运行聚焦测试，精确断言上述路径及删除集合，检查 diff 确认没有扩大数据删除范围。
-- [ ] 按 [`docs/maintainability.md`](maintainability.md) 完成 compact change review record（字段要求见 M2 执行步骤）。
+- [x] 先增加聚焦测试：当前 install root 为 `/opt/mihomo`、manager root 为 `/opt/mihomo-manager`；非 keep-backup 只删除这两个根。keep-backup 生成的 `/opt/mihomo.bak.<unix>` 位于两根之外且必须保留；升级回滚备份 `/opt/mihomo-manager/backups/mihomo.bak` 属于 manager root，非 keep-backup 时随 manager root 删除。
+- [x] 在 `paths.go` 集中 `installRoot`、`managerRoot` 两个跨域根路径；`backupDir` 保持为 lifecycle 内部路径。
+- [x] 用这些路径替换 lifecycle 中剩余硬编码 `/opt/...` 路径。
+- [x] 删除无通配能力且误导的 `binaryPath + ".bak."` 条目；实现只删除当前 `installRoot` 与 `managerRoot`，不扫描、匹配或删除 `/opt/mihomo.bak.*`，不得以 glob 或扫描方式补偿它。
+- [x] 运行聚焦测试，精确断言上述路径及删除集合，检查 diff 确认没有扩大数据删除范围。
+- [x] 按 [`docs/maintainability.md`](maintainability.md) 完成 compact change review record（字段要求见 M2 执行步骤）。
 
 **最小验证命令**：`go test ./internal/manager -run 'Test.*(Lifecycle|Uninstall|Backup)'`。  
 **验收标准**：仅删除 `/opt/mihomo` 与 `/opt/mihomo-manager`；`/opt/mihomo.bak.<unix>` 始终保留，`/opt/mihomo-manager/backups/mihomo.bak` 随 manager root 删除；删除无效 `binaryPath+".bak."` 条目；不扫描/匹配/删除 `/opt/mihomo.bak.*`，无 glob、递归扩删或额外删除路径；路径定义集中且生命周期状态/错误不变，并有维护文档要求的 compact change review record（见执行步骤）。
 
 **风险/回退**：路径常量错误可能误删或漏删；先由 fake filesystem 测试锁定删除集合，发现范围变化立即回退路径替换，禁止通过更宽删除规则“修复”。
+
+**Compact change review record**
+
+Owner: Lifecycle
+Production files inside owner: `internal/manager/paths.go`, `internal/manager/lifecycle_impl.go`
+Production files outside owner: none
+Unrelated manager context required: no
+Helper/type promoted to shared: no
+New cross-domain dependency: no
+State or invariant owner: `lifecycleManager.Uninstall` owns cleanup boundaries; lifecycle upgrade owns the manager backup path
+Why this dependency is necessary: lifecycle cleanup must remove only the two managed roots while keeping timestamped uninstall backups outside them
+Caller can use an existing role interface: not applicable; no new cross-domain call was added
+Reverse dependency introduced or strengthened: no
+
+**执行记录**：聚焦生命周期测试通过（19 passed）；最终普通 Go 测试通过（217 passed in 4 packages），`go vet ./...` 与 diff check 通过。`lifecycle_impl.go` 不再包含硬编码 `/opt/...` 或 `binaryPath + ".bak."` 清理项；无 glob、扫描或扩展删除范围，并覆盖时间戳备份保留及清理错误顺序。
 
 ## M5：公共身份与平台支持决策门（不自动执行）
 

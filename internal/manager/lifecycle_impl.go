@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const backupDir = managerRoot + "/backups"
+
 type lifecycleManager struct {
 	fs       FileSystem
 	cmd      CommandRunner
@@ -335,8 +337,8 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 
 	onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Cleaning up files"})
 	if keepBackup {
-		backupPath := fmt.Sprintf("/opt/mihomo.bak.%d", time.Now().Unix())
-		if err := m.fs.Rename("/opt/mihomo", backupPath); err != nil {
+		backupPath := fmt.Sprintf("%s.bak.%d", installRoot, time.Now().Unix())
+		if err := m.fs.Rename(installRoot, backupPath); err != nil {
 			return fmt.Errorf("backup uninstall files: %w", err)
 		}
 		onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Files backed up to " + backupPath})
@@ -344,7 +346,7 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 	}
 
 	var cleanupErrs []error
-	for _, path := range []string{binaryPath + ".bak.", configDir, "/opt/mihomo", "/opt/mihomo-manager"} {
+	for _, path := range []string{installRoot, managerRoot} {
 		if err := m.fs.Remove(path); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s: %w", path, err))
 		}
@@ -400,7 +402,6 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Backing up old binary"})
-	backupDir := "/opt/mihomo-manager/backups"
 	if err := m.fs.MkdirAll(backupDir, filePermUserRWX); err != nil {
 		return withCleanupError(errors.Join(fmt.Errorf("create backup directory: %w", err), resumeService()), m.fs, tempPath)
 	}
