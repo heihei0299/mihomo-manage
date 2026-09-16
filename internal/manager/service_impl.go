@@ -30,13 +30,17 @@ func parseVersion(ctx context.Context, cmd CommandRunner, binaryPath string) (st
 }
 
 type serviceController struct {
-	fs     FileSystem
-	cmd    CommandRunner
-	svcMgr ServiceManager
+	fs             FileSystem
+	cmd            CommandRunner
+	svcMgr         ServiceManager
+	validateConfig func(context.Context) error
 }
 
-func NewServiceControl(fs FileSystem, cmd CommandRunner, svcMgr ServiceManager) ServiceControl {
-	return &serviceController{fs: fs, cmd: cmd, svcMgr: svcMgr}
+func NewServiceControl(fs FileSystem, cmd CommandRunner, svcMgr ServiceManager, validateConfig func(context.Context) error) ServiceControl {
+	if validateConfig == nil {
+		panic("manager: config validation function is required")
+	}
+	return &serviceController{fs: fs, cmd: cmd, svcMgr: svcMgr, validateConfig: validateConfig}
 }
 
 func (m *serviceController) Status(ctx context.Context) (*Status, error) {
@@ -86,6 +90,9 @@ func (m *serviceController) SetAutoStart(ctx context.Context, enabled bool) erro
 }
 
 func (m *serviceController) Start(ctx context.Context) error {
+	if err := m.validateConfig(ctx); err != nil {
+		return err
+	}
 	if !m.fs.FileExists(binaryPath) {
 		return ErrMihomoNotInstalled
 	}
@@ -114,6 +121,9 @@ func (m *serviceController) Stop(ctx context.Context) error {
 }
 
 func (m *serviceController) Restart(ctx context.Context) error {
+	if err := m.validateConfig(ctx); err != nil {
+		return err
+	}
 	if !m.fs.FileExists(binaryPath) {
 		return ErrMihomoNotInstalled
 	}

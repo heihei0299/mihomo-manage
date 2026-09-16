@@ -15,6 +15,8 @@ import (
 type tuiMockControl struct {
 	startCalled   bool
 	restartCalled bool
+	startErr      error
+	restartErr    error
 }
 
 func (m *tuiMockControl) Status(ctx context.Context) (*manager.Status, error) {
@@ -23,14 +25,14 @@ func (m *tuiMockControl) Status(ctx context.Context) (*manager.Status, error) {
 
 func (m *tuiMockControl) Start(ctx context.Context) error {
 	m.startCalled = true
-	return nil
+	return m.startErr
 }
 
 func (m *tuiMockControl) Stop(ctx context.Context) error { return nil }
 
 func (m *tuiMockControl) Restart(ctx context.Context) error {
 	m.restartCalled = true
-	return nil
+	return m.restartErr
 }
 
 func (m *tuiMockControl) Reload(ctx context.Context) error { return nil }
@@ -60,7 +62,6 @@ func (m *tuiMockLifecycle) ListVersions(ctx context.Context) ([]manager.VersionI
 }
 
 type tuiMockConfig struct {
-	validateErr  error
 	updateCalled bool
 }
 
@@ -75,7 +76,7 @@ func (m *tuiMockConfig) UpdateConfig(ctx context.Context) error {
 	return nil
 }
 
-func (m *tuiMockConfig) ValidateConfig(ctx context.Context) error { return m.validateErr }
+func (m *tuiMockConfig) ValidateConfig(ctx context.Context) error { return nil }
 
 func (m *tuiMockConfig) LastConfigApply(ctx context.Context) (manager.ConfigApplyStatus, error) {
 	return manager.ConfigApplyStatus{State: manager.ConfigUnknown}, nil
@@ -86,8 +87,8 @@ func (m *tuiMockConfig) AdoptConfig(ctx context.Context, force bool) (manager.Ad
 }
 
 // runActionCmd executes an action command synchronously and returns its error.
-func runActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, a action) error {
-	cmd := execActionCmd(ctrl, lifecycle, cfg, a, nil, "", false)
+func runActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, a action) error {
+	cmd := execActionCmd(ctrl, lifecycle, a, nil, "", false)
 	msg := cmd()
 	done, ok := msg.(actionDoneMsg)
 	if !ok {
@@ -147,52 +148,42 @@ func TestEditorCommandPreservesArguments(t *testing.T) {
 	}
 }
 
-func TestTUIStartRejectedWhenValidationFails(t *testing.T) {
-	ctrl := &tuiMockControl{}
-	cfg := &tuiMockConfig{validateErr: errors.New("config invalid")}
+func TestTUIStartPropagatesServiceControlError(t *testing.T) {
+	want := errors.New("start failed")
+	ctrl := &tuiMockControl{startErr: want}
 
-	err := runActionCmd(ctrl, &tuiMockLifecycle{}, cfg, actStart)
-	if err == nil {
-		t.Fatal("expected validation error to reject start")
-	}
-	if ctrl.startCalled {
-		t.Error("Start should not be called when config validation fails")
+	if err := runActionCmd(ctrl, &tuiMockLifecycle{}, actStart); !errors.Is(err, want) {
+		t.Fatalf("start error = %v, want %v", err, want)
 	}
 }
 
-func TestTUIStartProceedsWhenValidationPasses(t *testing.T) {
+func TestTUIStartCallsServiceControl(t *testing.T) {
 	ctrl := &tuiMockControl{}
-	cfg := &tuiMockConfig{}
 
-	if err := runActionCmd(ctrl, &tuiMockLifecycle{}, cfg, actStart); err != nil {
+	if err := runActionCmd(ctrl, &tuiMockLifecycle{}, actStart); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ctrl.startCalled {
-		t.Error("Start should be called when config validation passes")
+		t.Error("Start should be called")
 	}
 }
 
-func TestTUIRestartRejectedWhenValidationFails(t *testing.T) {
-	ctrl := &tuiMockControl{}
-	cfg := &tuiMockConfig{validateErr: errors.New("config invalid")}
+func TestTUIRestartPropagatesServiceControlError(t *testing.T) {
+	want := errors.New("restart failed")
+	ctrl := &tuiMockControl{restartErr: want}
 
-	err := runActionCmd(ctrl, &tuiMockLifecycle{}, cfg, actRestart)
-	if err == nil {
-		t.Fatal("expected validation error to reject restart")
-	}
-	if ctrl.restartCalled {
-		t.Error("Restart should not be called when config validation fails")
+	if err := runActionCmd(ctrl, &tuiMockLifecycle{}, actRestart); !errors.Is(err, want) {
+		t.Fatalf("restart error = %v, want %v", err, want)
 	}
 }
 
-func TestTUIRestartProceedsWhenValidationPasses(t *testing.T) {
+func TestTUIRestartCallsServiceControl(t *testing.T) {
 	ctrl := &tuiMockControl{}
-	cfg := &tuiMockConfig{}
 
-	if err := runActionCmd(ctrl, &tuiMockLifecycle{}, cfg, actRestart); err != nil {
+	if err := runActionCmd(ctrl, &tuiMockLifecycle{}, actRestart); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ctrl.restartCalled {
-		t.Error("Restart should be called when config validation passes")
+		t.Error("Restart should be called")
 	}
 }

@@ -34,7 +34,7 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 	linkStorage(fs, source)
 	svc := &mockServiceManager{}
 	life := NewLifecycleManager(fs, cmd, source, svc)
-	ctrl := NewServiceControl(fs, cmd, svc)
+	ctrl := NewServiceControl(fs, cmd, svc, passConfigValidation)
 
 	life.Install(context.Background(), "v1.18.0", true, noopProgress)
 

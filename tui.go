@@ -217,27 +217,19 @@ func fetchVersionsCmd(lifecycle manager.LifecycleManager, ctx context.Context) t
 	}
 }
 
-func execActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
-	return execActionCmdWithContext(context.Background(), ctrl, lifecycle, cfg, a, progressCh, version, keepBackup)
+func execActionCmd(ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
+	return execActionCmdWithContext(context.Background(), ctrl, lifecycle, a, progressCh, version, keepBackup)
 }
 
-func execActionCmdWithContext(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
+func execActionCmdWithContext(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, a action, progressCh chan<- progressMsg, version string, keepBackup bool) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		switch a {
 		case actStart:
-			if verr := cfg.ValidateConfig(ctx); verr != nil {
-				err = verr
-				break
-			}
 			err = ctrl.Start(ctx)
 		case actStop:
 			err = ctrl.Stop(ctx)
 		case actRestart:
-			if verr := cfg.ValidateConfig(ctx); verr != nil {
-				err = verr
-				break
-			}
 			err = ctrl.Restart(ctx)
 		case actReload:
 			err = ctrl.Reload(ctx)
@@ -544,7 +536,7 @@ func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
 	ch := make(chan progressMsg, 20)
 	return m, tea.Batch(
 		progressReaderCmd(ch),
-		execActionCmdWithContext(tuiContext(m.ctx), m.control, m.lifecycle, m.config, a, ch, version, m.keepBackup),
+		execActionCmdWithContext(tuiContext(m.ctx), m.control, m.lifecycle, a, ch, version, m.keepBackup),
 	)
 }
 

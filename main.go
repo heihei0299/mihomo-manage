@@ -25,12 +25,12 @@ var (
 func main() {
 	oss := &manager.OSSystem{}
 	svcMgr := manager.NewOSServiceManager(oss, oss)
-	ctrl := manager.NewServiceControl(oss, oss, svcMgr)
 	sched := manager.NewNativeScheduleManager(oss, oss)
 	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svcMgr, sched)
 	cfg := manager.NewConfigManager(oss, oss, manager.NewConfigValidator(), func(ctx context.Context) error {
 		return svcMgr.Reload(ctx, manager.ServiceName)
 	}, manager.WithConfigUpdateLock(manager.NewFileConfigUpdateLock()))
+	ctrl := manager.NewServiceControl(oss, oss, svcMgr, cfg.ValidateConfig)
 
 	var args []string
 	showHelp := false

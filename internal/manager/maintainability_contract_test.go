@@ -55,6 +55,7 @@ func TestBranchableErrorContracts(t *testing.T) {
 			&fakeFileSystem{fileExists: installed},
 			&fakeCmdRunner{},
 			&mockServiceManager{running: true},
+			passConfigValidation,
 		)
 		if err := running.Start(context.Background()); !errors.Is(err, ErrMihomoAlreadyRunning) {
 			t.Fatalf("Start error = %v, want ErrMihomoAlreadyRunning", err)
@@ -64,6 +65,7 @@ func TestBranchableErrorContracts(t *testing.T) {
 			&fakeFileSystem{fileExists: installed},
 			&fakeCmdRunner{},
 			&mockServiceManager{running: false},
+			passConfigValidation,
 		)
 		if err := stopped.Stop(context.Background()); !errors.Is(err, ErrMihomoNotRunning) {
 			t.Fatalf("Stop error = %v, want ErrMihomoNotRunning", err)

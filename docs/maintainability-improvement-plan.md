@@ -44,17 +44,32 @@
 
 **执行步骤**
 
-- [ ] 先写失败行为测试：构造 `NewServiceControl` 时显式注入 `func(context.Context) error`，验证 Start/Restart 验证失败时不调用 control；验证成功时先验证、后调用 control。
-- [ ] 在 `NewServiceControl` 增加该函数参数；在 `serviceController.Start/Restart` 内统一调用验证函数。
-- [ ] 调整 `main.go`：先构造 config，再构造 control，并注入验证函数。
-- [ ] 只删除或迁移重复的配置校验实现断言；保留 CLI/TUI 用户可观察输出、错误呈现和 wiring 测试。
-- [ ] 将保留的测试放在 ServiceControl 接口行为处，明确覆盖验证失败阻止 Start/Restart、验证成功继续、成功顺序和 control 错误透传。
-- [ ] 按 [`docs/maintainability.md`](maintainability.md) 完成 compact change review record（owner、owner 内/外生产文件、是否读取无关 manager 上下文、shared symbol 是否提升、新跨域依赖、状态/不变量 owner、必要性、现有 role interface 可否复用、是否强化反向依赖）。
+- [x] 先写失败行为测试：构造 `NewServiceControl` 时显式注入 `func(context.Context) error`，验证 Start/Restart 验证失败时不调用 control；验证成功时先验证、后调用 control。
+- [x] 在 `NewServiceControl` 增加该函数参数；在 `serviceController.Start/Restart` 内统一调用验证函数。
+- [x] 调整 `main.go`：先构造 config，再构造 control，并注入验证函数。
+- [x] 只删除或迁移重复的配置校验实现断言；保留 CLI/TUI 用户可观察输出、错误呈现和 wiring 测试。
+- [x] 将保留的测试放在 ServiceControl 接口行为处，明确覆盖验证失败阻止 Start/Restart、验证成功继续、成功顺序和 control 错误透传。
+- [x] 按 [`docs/maintainability.md`](maintainability.md) 完成 compact change review record（owner、owner 内/外生产文件、是否读取无关 manager 上下文、shared symbol 是否提升、新跨域依赖、状态/不变量 owner、必要性、现有 role interface 可否复用、是否强化反向依赖）。
 
 **最小验证命令**：`go test ./internal/manager -run 'Test.*(Service|Start|Restart)'`。  
 **验收标准**：所有 Start/Restart 路径均经 ServiceControl 验证；验证失败不触发 control，验证成功继续且顺序不变；CLI/TUI 不再重复配置校验实现断言，但保留用户可观察输出、错误呈现和 wiring 测试；无新接口或分层，并有维护文档要求的 compact change review record（见执行步骤）。
 
 **风险/回退**：构造函数调用点遗漏会导致编译失败，验证函数为 nil 可能导致运行时问题；保留显式注入并在构造处传入真实函数，回退时恢复原构造签名和调用方校验，但不保留两套长期逻辑。
+
+**Compact change review record**
+
+Owner: Service
+Production files inside owner: `internal/manager/service_impl.go`
+Production files outside owner: `main.go`（wiring）、`internal/cli/handler.go`、`tui.go`（caller delegation）
+Unrelated manager context required: no
+Helper/type promoted to shared: no
+New cross-domain dependency: yes; main injects the existing config validation capability as a function seam
+State or invariant owner: `ServiceControl.Start/Restart` owns validation-before-control
+Why this dependency is necessary: every Start/Restart caller must share the same validation invariant without duplicating config calls
+Caller can use an existing role interface: no; using `ConfigManager` would couple ServiceControl to the broader config contract, while the required capability is one function
+Reverse dependency introduced or strengthened: no
+
+**执行记录**：局部 manager 测试 36 passed；CLI/root 测试 31 passed；保留 CLI 的 Start/Restart 输出与错误测试以及 TUI 的 control wiring/error propagation 测试。nil validator 在构造处显式拒绝，避免静默绕过配置验证。
 
 ## M3：Config 深模块收敛
 
