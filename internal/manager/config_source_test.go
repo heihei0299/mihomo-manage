@@ -81,11 +81,11 @@ func TestOldTemplatePlaceholderWarning(t *testing.T) {
 			OverrideFilePath: []byte(`proxies: {{subscription}}`),
 		},
 	}
-	p := newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{
+	p := newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{
 		Warn: func(msg string) { warned = msg },
 	})
 
-	_, err := p.Preview(context.Background())
+	_, err := p.PreviewConfig(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestPipelineMigratesLegacyTemplate(t *testing.T) {
 		fileExists: map[string]bool{legacyTemplatePath: true},
 		written:    map[string][]byte{legacyTemplatePath: []byte("port: 8888\n")},
 	}
-	newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{Warn: func(msg string) { warned = msg }})
+	newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{Warn: func(msg string) { warned = msg }})
 
 	if !fs.FileExists(OverrideFilePath) {
 		t.Errorf("legacy template should be migrated to %s", OverrideFilePath)
@@ -122,7 +122,7 @@ func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
 		fileExists: map[string]bool{legacyTemplatePath: true, OverrideFilePath: true},
 		written:    map[string][]byte{OverrideFilePath: []byte("port: 9999\n")},
 	}
-	newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{})
+	newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{})
 
 	if len(fs.renamed) != 0 {
 		t.Errorf("no rename should happen when override already exists, got: %v", fs.renamed)
@@ -131,7 +131,7 @@ func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
 
 func TestPipelineMigrationNoopWhenNothingExists(t *testing.T) {
 	fs := &fakeFileSystem{}
-	newConfigPipeline(fs, &fakeReleaseSource{}, ConfigPipelineOptions{})
+	newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{})
 	if len(fs.renamed) != 0 {
 		t.Errorf("no rename should happen when neither file exists, got: %v", fs.renamed)
 	}

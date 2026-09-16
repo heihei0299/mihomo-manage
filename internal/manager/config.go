@@ -25,10 +25,10 @@ type ConfigUpdateLock interface {
 	Acquire(ctx context.Context) (release func(), err error)
 }
 
-type ConfigManagerOption func(*ConfigPipelineOptions)
+type configManagerOption func(*configPipelineOptions)
 
-func WithConfigUpdateLock(lock ConfigUpdateLock) ConfigManagerOption {
-	return func(opts *ConfigPipelineOptions) { opts.Lock = lock }
+func WithConfigUpdateLock(lock ConfigUpdateLock) configManagerOption {
+	return func(opts *configPipelineOptions) { opts.Lock = lock }
 }
 
 type noopConfigUpdateLock struct{}
@@ -48,14 +48,7 @@ func (v *configValidator) Validate(ctx context.Context, configPath string) error
 	return nil
 }
 
-type ConfigPipeline interface {
-	SetSubscriptionSource(ctx context.Context, source string) error
-	Preview(ctx context.Context) (string, error)
-	Apply(ctx context.Context) error
-	LastConfigApply(ctx context.Context) (ConfigApplyStatus, error)
-}
-
-type ConfigPipelineOptions struct {
+type configPipelineOptions struct {
 	OnReload  func(ctx context.Context) error
 	Validator ConfigValidator
 	Warn      func(msg string)
@@ -71,7 +64,7 @@ type configPipeline struct {
 	lock     ConfigUpdateLock
 }
 
-func newConfigPipeline(fs FileSystem, source ReleaseSource, opts ConfigPipelineOptions) *configPipeline {
+func newConfigPipeline(fs FileSystem, source ReleaseSource, opts configPipelineOptions) *configPipeline {
 	p := &configPipeline{fs: fs, source: source}
 	if opts.OnReload != nil {
 		p.onReload = opts.OnReload
@@ -279,7 +272,7 @@ func (p *configPipeline) subscriptionSource() (string, error) {
 	}
 }
 
-func (p *configPipeline) Preview(ctx context.Context) (string, error) {
+func (p *configPipeline) PreviewConfig(ctx context.Context) (string, error) {
 	if _, err := p.subscriptionSource(); err != nil {
 		return "", err
 	}
@@ -396,7 +389,7 @@ func (p *configPipeline) refreshSubscription(ctx context.Context) error {
 }
 
 func (p *configPipeline) buildApplyPreview(ctx context.Context) (string, error) {
-	preview, err := p.Preview(ctx)
+	preview, err := p.PreviewConfig(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -447,7 +440,7 @@ func (p *configPipeline) commitConfig(staged stagedConfig) (postCommitCleanupErr
 	return p.fs.Remove(staged.dir), nil
 }
 
-func (p *configPipeline) Apply(ctx context.Context) (applyErr error) {
+func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 	release, err := p.lock.Acquire(ctx)
 	if err != nil {
 		return err
@@ -553,7 +546,7 @@ func (p *configPipeline) LastConfigApply(ctx context.Context) (ConfigApplyStatus
 
 // Validate runs the configured ConfigValidator against the generated config.
 // A nil validator means validation is a no-op (validation not configured).
-func (p *configPipeline) Validate(ctx context.Context) error {
+func (p *configPipeline) ValidateConfig(ctx context.Context) error {
 	if p.validate == nil {
 		return nil
 	}

@@ -81,17 +81,32 @@ Reverse dependency introduced or strengthened: no
 
 **执行步骤（机械收敛）**
 
-- [ ] 搜索全部生产调用点，确认 `ConfigPipeline` 未被生产代码作为独立契约使用。
-- [ ] 使 `configPipeline` 直接满足 `ConfigManager`；按需将 `Preview/Apply/Adopt/Validate` 重命名为 caller-facing 方法，逐一更新调用点。
-- [ ] 删除未被生产使用的 `ConfigPipeline` 接口、纯转发 `configManager` 及其无用字段。
-- [ ] 让 `NewConfigManager` 直接返回 pipeline；内部 options 能收回非导出则一并收回，不扩大 API。
-- [ ] 保留现有事务步骤、锁/状态更新顺序和错误包装，测试只改因类型/方法名变化而必须改的部分。
-- [ ] 按 [`docs/maintainability.md`](maintainability.md) 完成 compact change review record（字段要求见 M2 执行步骤）。
+- [x] 搜索全部生产调用点，确认 `ConfigPipeline` 未被生产代码作为独立契约使用。
+- [x] 使 `configPipeline` 直接满足 `ConfigManager`；按需将 `Preview/Apply/Adopt/Validate` 重命名为 caller-facing 方法，逐一更新调用点。
+- [x] 删除未被生产使用的 `ConfigPipeline` 接口、纯转发 `configManager` 及其无用字段。
+- [x] 让 `NewConfigManager` 直接返回 pipeline；内部 options 能收回非导出则一并收回，不扩大 API。
+- [x] 保留现有事务步骤、锁/状态更新顺序和错误包装，测试只改因类型/方法名变化而必须改的部分。
+- [x] 按 [`docs/maintainability.md`](maintainability.md) 完成 compact change review record（字段要求见 M2 执行步骤）。
 
 **最小验证命令**：`go test ./internal/manager -run 'Test.*Config'`。  
 **验收标准**：`ConfigManager` 是唯一保留的 caller-facing 配置契约；生产代码不依赖 `ConfigPipeline` 或纯转发 manager；配置行为、事务顺序、状态和错误完全不变；无新增接口和包；compact change review record 已按维护文档要求完成（见执行步骤）。
 
 **风险/回退**：遗漏的测试或调用点会编译失败，重命名可能误改外部语义；按编译错误和局部测试逐点修正，若行为差异无法解释则回退结构收敛，不改流程以“修测试”。
+
+**Compact change review record**
+
+Owner: Config
+Production files inside owner: `internal/manager/config.go`, `internal/manager/config_impl.go`, `internal/manager/adopt.go`
+Production files outside owner: none
+Unrelated manager context required: no
+Helper/type promoted to shared: no
+New cross-domain dependency: no
+State or invariant owner: `configPipeline` owns configuration rendering, apply transaction, validation, and apply status
+Why this dependency is necessary: the pipeline already owns the full config behavior; removing the pure forwarding layer reduces indirection without changing the transaction
+Caller can use an existing role interface: not applicable; no new cross-domain call was added
+Reverse dependency introduced or strengthened: no
+
+**执行记录**：`go test ./internal/manager -run 'Test.*Config'` 通过（52 passed）；生产代码不再引用 `ConfigPipeline` 或 `configManager`，事务步骤、锁/状态更新和错误包装未改。
 
 ## M4：Lifecycle 路径清理
 

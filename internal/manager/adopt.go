@@ -24,7 +24,7 @@ type AdoptReport struct {
 // existing content. Array differences are reported but never adopted. A large
 // diff (>= 5 fields) requires force. Idempotent: a second run reports no
 // changes once the differences have been adopted.
-func (p *configPipeline) Adopt(ctx context.Context, force bool) (AdoptReport, error) {
+func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptReport, error) {
 	report := AdoptReport{}
 
 	cur, err := p.fs.ReadFile(configYAML)
@@ -35,7 +35,7 @@ func (p *configPipeline) Adopt(ctx context.Context, force bool) (AdoptReport, er
 		return report, err
 	}
 
-	rendered, err := p.Preview(ctx)
+	rendered, err := p.PreviewConfig(ctx)
 	if err != nil {
 		return report, err
 	}
