@@ -211,6 +211,31 @@ func TestUpgradeFailureReturnsNonZeroAndExplainsFailure(t *testing.T) {
 	}
 }
 
+func TestUpgradePrintsLifecycleProgressOnSuccess(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{
+		upgradeFn: func(_ string, cb manager.ProgressCallback) error {
+			for _, phase := range []manager.InstallationPhase{
+				manager.PhaseUpgradeStop,
+				manager.PhaseUpgradeReplace,
+				manager.PhaseUpgradeStart,
+			} {
+				cb(manager.ProgressEvent{Phase: phase, Message: phase.String() + " complete"})
+			}
+			return nil
+		},
+	}, &mockConfig{}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.Upgrade(context.Background(), "v1.2.3"); code != 0 {
+		t.Fatalf("expected success, got %d: %s", code, stderr.String())
+	}
+	for _, phase := range []string{"[stop]", "[replace]", "[start]", "upgrade complete"} {
+		if !strings.Contains(stdout.String(), phase) {
+			t.Errorf("stdout = %q, want %q", stdout.String(), phase)
+		}
+	}
+}
+
 func TestStatusShowsLatestConfigApply(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{

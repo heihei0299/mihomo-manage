@@ -440,6 +440,11 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 		return errors.Join(err, m.svcMgr.Stop(context.WithoutCancel(ctx), serviceName), m.restoreBinary(ctx, backupPath, "", wasRunning))
 	}
 
+	if !wasRunning {
+		onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Keeping mihomo stopped"})
+		return nil
+	}
+
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Starting mihomo"})
 	if err := m.svcMgr.Start(ctx, serviceName); err != nil {
 		if rbErr := m.restoreBinary(ctx, backupPath, "", wasRunning); rbErr != nil {
@@ -449,6 +454,13 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, m.svcMgr.Stop(context.WithoutCancel(ctx), serviceName), m.restoreBinary(ctx, backupPath, "", wasRunning))
+	}
+	running, err := m.svcMgr.IsRunning(ctx, serviceName)
+	if err != nil {
+		return withRollbackError(fmt.Errorf("confirm service running: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+	}
+	if !running {
+		return withRollbackError(errors.New("service did not become running after start"), m.restoreBinary(ctx, backupPath, "", wasRunning))
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + resolvedVersion})
 

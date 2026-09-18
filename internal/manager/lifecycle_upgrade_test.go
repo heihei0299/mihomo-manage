@@ -106,14 +106,88 @@ func containsPhase(phases []InstallationPhase, want InstallationPhase) bool {
 }
 
 func TestUpgradeHappyPath(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
 	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
 	m := newLifecycleTestManager(fs, source, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !svc.running {
+		t.Fatal("running instance should be running after a successful upgrade")
+	}
+	if got := string(fs.written[backupDir+"/mihomo.bak"]); got != "old binary" {
+		t.Fatalf("backup binary = %q, want old binary", got)
+	}
+}
+
+func TestUpgradeStoppedInstanceRemainsStopped(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: false}
+	m := newLifecycleTestManager(fs, source, svc)
+
+	if err := m.Upgrade(context.Background(), "v1.19.0", noopProgress); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if svc.running {
+		t.Fatal("stopped instance should remain stopped after a successful upgrade")
+	}
+}
+
+func TestUpgradeRequiresServiceToBeRunningAfterStart(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: true, startDoesNotRun: true}
+	m := newLifecycleTestManager(fs, source, svc)
+
+	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
+	if err == nil || !strings.Contains(err.Error(), "running") {
+		t.Fatalf("Upgrade error = %v, want post-start running error", err)
+	}
+}
+
+func TestUpgradeReportsReplacementPhases(t *testing.T) {
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: true}
+	m := newLifecycleTestManager(fs, source, svc)
+	var phases []InstallationPhase
+
+	if err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {
+		phases = append(phases, e.Phase)
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []InstallationPhase{PhaseUpgradeCheck, PhaseUpgradeFetch, PhaseUpgradeStop, PhaseUpgradeReplace, PhaseUpgradeStart}
+	last := -1
+	for _, phase := range want {
+		found := -1
+		for i := last + 1; i < len(phases); i++ {
+			if phases[i] == phase {
+				found = i
+				break
+			}
+		}
+		if found == -1 {
+			t.Fatalf("phases = %v, want %v in order", phases, want)
+		}
+		last = found
 	}
 }
 

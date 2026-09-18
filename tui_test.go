@@ -177,6 +177,24 @@ func TestTUIStartPropagatesServiceControlError(t *testing.T) {
 	}
 }
 
+func TestTUIUpgradeCompletionRefreshesStatus(t *testing.T) {
+	m := model{
+		executing: actUpgrade,
+		status:    &manager.Status{Installed: true, InstanceState: manager.Stopped},
+		control:   &tuiMockControl{},
+		config:    &tuiMockConfig{},
+	}
+
+	updated, refresh := m.Update(actionDoneMsg{action: actUpgrade})
+	if updated.(model).executing != actNone {
+		t.Fatal("completed upgrade should leave executing mode")
+	}
+	status, ok := refresh().(statusMsg)
+	if !ok || status.status == nil || status.status.InstanceState != manager.Running {
+		t.Fatalf("refresh result = %#v, want running status", status)
+	}
+}
+
 func TestTUIStartCallsServiceControl(t *testing.T) {
 	ctrl := &tuiMockControl{}
 

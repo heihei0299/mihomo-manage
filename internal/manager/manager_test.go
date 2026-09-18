@@ -189,6 +189,7 @@ type mockServiceManager struct {
 	err              error
 	registerErr      error
 	startErr         error
+	startDoesNotRun  bool
 	stopErr          error
 	restartErr       error
 	reloadErr        error
@@ -217,7 +218,9 @@ func (m *mockServiceManager) Start(ctx context.Context, name string) error {
 	if m.startErr != nil {
 		return m.startErr
 	}
-	m.running = true
+	if !m.startDoesNotRun {
+		m.running = true
+	}
 	return nil
 }
 
