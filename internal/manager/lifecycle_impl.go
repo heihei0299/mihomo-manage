@@ -66,6 +66,11 @@ func withCleanupError(primary error, fs FileSystem, paths ...string) error {
 }
 
 func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback, checkPhase, fetchPhase InstallationPhase) (string, error) {
+	if version == "latest" {
+		if resolved, err := m.resolveVersion(ctx, version); err == nil {
+			version = resolved
+		}
+	}
 	tempPath := fmt.Sprintf("%s.tmp.%s", binaryPath, version)
 	gzPath := tempPath + ".gz"
 	assetURL := releaseURL(runtime.GOOS, runtime.GOARCH, version)
@@ -187,12 +192,7 @@ func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, er
 }
 
 func (m *lifecycleManager) Install(ctx context.Context, version string, autoStart bool, onProgress ProgressCallback) error {
-	resolvedVersion, err := m.resolveVersion(ctx, version)
-	if err != nil {
-		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Version lookup failed", Error: err})
-		return err
-	}
-	tempPath, err := m.downloadAndDecompress(ctx, resolvedVersion, onProgress, PhaseFetch, PhaseFetch)
+	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress, PhaseFetch, PhaseFetch)
 	if err != nil {
 		return err
 	}
