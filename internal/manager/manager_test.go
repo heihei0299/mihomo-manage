@@ -117,9 +117,13 @@ type fakeReleaseSource struct {
 }
 
 func fakeReleaseArchive() []byte {
+	return fakeReleaseArchiveWith("proxies:\n  - server: fetched-node\n")
+}
+
+func fakeReleaseArchiveWith(content string) []byte {
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
-	gw.Write([]byte("proxies:\n  - server: fetched-node\n"))
+	gw.Write([]byte(content))
 	gw.Close()
 	return buf.Bytes()
 }
@@ -189,9 +193,13 @@ type mockServiceManager struct {
 	err              error
 	registerErr      error
 	startErr         error
+	startErrors      []error
 	startDoesNotRun  bool
 	runningStates    []bool
+	reportedStates   []bool
 	runningCalls     int
+	startCalls       int
+	stopCalls        int
 	stopErr          error
 	restartErr       error
 	reloadErr        error
@@ -202,6 +210,11 @@ type mockServiceManager struct {
 
 func (m *mockServiceManager) IsRunning(ctx context.Context, name string) (bool, error) {
 	m.runningCalls++
+	if len(m.reportedStates) > 0 {
+		reported := m.reportedStates[0]
+		m.reportedStates = m.reportedStates[1:]
+		return reported, m.err
+	}
 	if len(m.runningStates) > 0 {
 		m.running = m.runningStates[0]
 		m.runningStates = m.runningStates[1:]
@@ -222,6 +235,14 @@ func (m *mockServiceManager) Unregister(ctx context.Context, name string) error 
 }
 
 func (m *mockServiceManager) Start(ctx context.Context, name string) error {
+	m.startCalls++
+	if len(m.startErrors) > 0 {
+		err := m.startErrors[0]
+		m.startErrors = m.startErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
 	if m.startErr != nil {
 		return m.startErr
 	}
@@ -232,6 +253,7 @@ func (m *mockServiceManager) Start(ctx context.Context, name string) error {
 }
 
 func (m *mockServiceManager) Stop(ctx context.Context, name string) error {
+	m.stopCalls++
 	if m.stopErr != nil {
 		return m.stopErr
 	}

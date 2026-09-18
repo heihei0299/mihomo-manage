@@ -395,58 +395,83 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 		return withCleanupError(err, m.fs, tempPath)
 	}
 
+	reportFailure := func(phase InstallationPhase, message string, failure error) error {
+		onProgress(ProgressEvent{Phase: phase, Message: message, Error: failure})
+		return failure
+	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopping mihomo"})
 	wasRunning, statusErr := m.svcMgr.IsRunning(ctx, serviceName)
 	if statusErr != nil {
 		return withCleanupError(fmt.Errorf("check service state: %w", statusErr), m.fs, tempPath)
 	}
 	resumeService := func() error {
-		if wasRunning {
-			return m.svcMgr.Start(context.WithoutCancel(ctx), serviceName)
+		if !wasRunning {
+			return nil
+		}
+		resumeCtx := context.WithoutCancel(ctx)
+		if err := m.svcMgr.Start(resumeCtx, serviceName); err != nil {
+			return fmt.Errorf("resume service: %w", err)
+		}
+		running, err := m.svcMgr.IsRunning(resumeCtx, serviceName)
+		if err != nil {
+			return fmt.Errorf("confirm resumed service: %w", err)
+		}
+		if !running {
+			return errors.New("resumed service is not running")
 		}
 		return nil
 	}
 	if wasRunning {
 		if err := m.svcMgr.Stop(ctx, serviceName); err != nil {
-			return withCleanupError(fmt.Errorf("stop failed: %w", err), m.fs, tempPath)
+			failure := withCleanupError(fmt.Errorf("stop failed: %w", err), m.fs, tempPath)
+			return reportFailure(PhaseUpgradeStop, "Stop failed", failure)
 		}
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopped"})
 	if err := ctx.Err(); err != nil {
-		return withCleanupError(errors.Join(err, resumeService()), m.fs, tempPath)
+		failure := withCleanupError(errors.Join(err, resumeService()), m.fs, tempPath)
+		return reportFailure(PhaseUpgradeStop, "Upgrade canceled", failure)
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Backing up old binary"})
 	if err := m.fs.MkdirAll(backupDir, filePermUserRWX); err != nil {
-		return withCleanupError(errors.Join(fmt.Errorf("create backup directory: %w", err), resumeService()), m.fs, tempPath)
+		failure := withCleanupError(errors.Join(fmt.Errorf("create backup directory: %w", err), resumeService()), m.fs, tempPath)
+		return reportFailure(PhaseUpgradeReplace, "Backup failed", failure)
 	}
 	backupPath := backupDir + "/mihomo.bak"
 	if err := m.fs.Rename(binaryPath, backupPath); err != nil {
-		return withCleanupError(errors.Join(fmt.Errorf("backup binary: %w", err), resumeService()), m.fs, tempPath)
+		failure := withCleanupError(errors.Join(fmt.Errorf("backup binary: %w", err), resumeService()), m.fs, tempPath)
+		return reportFailure(PhaseUpgradeReplace, "Backup failed", failure)
 	}
 	if err := ctx.Err(); err != nil {
-		return errors.Join(err, m.restoreBinary(ctx, backupPath, tempPath, wasRunning))
+		failure := withRollbackError(err, m.restoreBinary(ctx, backupPath, tempPath, wasRunning))
+		return reportFailure(PhaseUpgradeReplace, "Upgrade canceled; rolled back", failure)
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Replacing binary"})
 	if err := m.fs.Chmod(tempPath, filePermUserRWX); err != nil {
-		return withRollbackError(fmt.Errorf("chmod failed: %w", err), m.restoreBinary(ctx, backupPath, tempPath, wasRunning))
+		failure := withRollbackError(fmt.Errorf("chmod failed: %w", err), m.restoreBinary(ctx, backupPath, tempPath, wasRunning))
+		return reportFailure(PhaseUpgradeReplace, "Replacement failed; rolled back", failure)
 	}
 	if err := m.fs.Rename(tempPath, binaryPath); err != nil {
-		return withRollbackError(fmt.Errorf("rename failed: %w", err), m.restoreBinary(ctx, backupPath, tempPath, wasRunning))
+		failure := withRollbackError(fmt.Errorf("rename failed: %w", err), m.restoreBinary(ctx, backupPath, tempPath, wasRunning))
+		return reportFailure(PhaseUpgradeReplace, "Replacement failed; rolled back", failure)
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeReplace, Message: "Binary replaced"})
 	if err := ctx.Err(); err != nil {
-		return errors.Join(err, m.svcMgr.Stop(context.WithoutCancel(ctx), serviceName), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		failure := withRollbackError(err, m.restoreBinary(ctx, backupPath, "", wasRunning))
+		return reportFailure(PhaseUpgradeReplace, "Upgrade canceled; rolled back", failure)
 	}
 
 	if !wasRunning {
 		running, err := m.svcMgr.IsRunning(ctx, serviceName)
 		if err != nil {
-			return withRollbackError(fmt.Errorf("confirm service stopped: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+			failure := withRollbackError(fmt.Errorf("confirm service stopped: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+			return reportFailure(PhaseUpgradeStart, "Stopped-state confirmation failed; rolled back", failure)
 		}
 		if running {
-			return withRollbackError(errors.New("service did not remain stopped after upgrade"), m.restoreBinary(ctx, backupPath, "", wasRunning))
+			failure := withRollbackError(errors.New("service did not remain stopped after upgrade"), m.restoreBinary(ctx, backupPath, "", wasRunning))
+			return reportFailure(PhaseUpgradeStart, "Stopped-state confirmation failed; rolled back", failure)
 		}
 		onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Keeping mihomo stopped"})
 		return nil
@@ -454,20 +479,21 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Starting mihomo"})
 	if err := m.svcMgr.Start(ctx, serviceName); err != nil {
-		if rbErr := m.restoreBinary(ctx, backupPath, "", wasRunning); rbErr != nil {
-			return errors.Join(fmt.Errorf("start failed: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
-		}
-		return fmt.Errorf("start failed, rolled back: %w", err)
+		failure := withRollbackError(fmt.Errorf("start failed: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		return reportFailure(PhaseUpgradeStart, "Start failed; rolled back", failure)
 	}
 	if err := ctx.Err(); err != nil {
-		return errors.Join(err, m.svcMgr.Stop(context.WithoutCancel(ctx), serviceName), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		failure := withRollbackError(err, m.restoreBinary(ctx, backupPath, "", wasRunning))
+		return reportFailure(PhaseUpgradeStart, "Upgrade canceled; rolled back", failure)
 	}
 	running, err := m.svcMgr.IsRunning(ctx, serviceName)
 	if err != nil {
-		return withRollbackError(fmt.Errorf("confirm service running: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		failure := withRollbackError(fmt.Errorf("confirm service running: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		return reportFailure(PhaseUpgradeStart, "Running-state confirmation failed; rolled back", failure)
 	}
 	if !running {
-		return withRollbackError(errors.New("service did not become running after start"), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		failure := withRollbackError(errors.New("service did not become running after start"), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		return reportFailure(PhaseUpgradeStart, "Running-state confirmation failed; rolled back", failure)
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + resolvedVersion})
 
@@ -478,16 +504,25 @@ func withRollbackError(primary, rollback error) error {
 	if rollback == nil {
 		return primary
 	}
-	return errors.Join(primary, fmt.Errorf("rollback failed: %w", rollback))
+	return errors.Join(primary, fmt.Errorf("rollback failed; manual recovery may be required: %w", rollback))
 }
 
 func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPath string, restart bool) error {
 	rollbackCtx := context.WithoutCancel(ctx)
 	var restoreErrs []error
+	serviceStopped := true
+	if err := m.svcMgr.Stop(rollbackCtx, serviceName); err != nil {
+		serviceStopped = false
+		restoreErrs = append(restoreErrs, fmt.Errorf("stop service before restore: %w", err))
+	}
+
+	binaryRestored := true
 	if err := m.fs.Remove(binaryPath); err != nil {
+		binaryRestored = false
 		restoreErrs = append(restoreErrs, fmt.Errorf("remove new binary: %w", err))
 	}
 	if err := m.fs.Rename(backupPath, binaryPath); err != nil {
+		binaryRestored = false
 		restoreErrs = append(restoreErrs, fmt.Errorf("restore old binary: %w", err))
 	}
 	if tempPath != "" {
@@ -495,9 +530,20 @@ func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPa
 			restoreErrs = append(restoreErrs, fmt.Errorf("remove temporary binary: %w", err))
 		}
 	}
-	if restart {
-		if err := m.svcMgr.Start(rollbackCtx, serviceName); err != nil {
-			restoreErrs = append(restoreErrs, fmt.Errorf("restart service: %w", err))
+
+	if serviceStopped && binaryRestored {
+		if restart {
+			if err := m.svcMgr.Start(rollbackCtx, serviceName); err != nil {
+				restoreErrs = append(restoreErrs, fmt.Errorf("restart service: %w", err))
+			} else if running, err := m.svcMgr.IsRunning(rollbackCtx, serviceName); err != nil {
+				restoreErrs = append(restoreErrs, fmt.Errorf("confirm restored service running: %w", err))
+			} else if !running {
+				restoreErrs = append(restoreErrs, errors.New("restored service is not running"))
+			}
+		} else if running, err := m.svcMgr.IsRunning(rollbackCtx, serviceName); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("confirm restored service stopped: %w", err))
+		} else if running {
+			restoreErrs = append(restoreErrs, errors.New("restored service is running"))
 		}
 	}
 	return errors.Join(restoreErrs...)

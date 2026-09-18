@@ -199,15 +199,15 @@ func TestUpgradeFailureReturnsNonZeroAndExplainsFailure(t *testing.T) {
 	var stdout, stderr strings.Builder
 	h := New(&mockControl{}, &mockLifecycle{
 		upgradeFn: func(string, manager.ProgressCallback) error {
-			return errors.New("rollback failed: restart service failed")
+			return errors.New("rollback failed; manual recovery may be required: restart service failed")
 		},
 	}, &mockConfig{}, &mockSchedule{}, &stdout, &stderr)
 
 	if code := h.Upgrade(context.Background(), "v1.2.3"); code == 0 {
 		t.Fatal("failed upgrade should return a non-zero result")
 	}
-	if !strings.Contains(stderr.String(), "rollback failed") {
-		t.Fatalf("stderr = %q, want failure details", stderr.String())
+	if !strings.Contains(stderr.String(), "rollback failed") || !strings.Contains(stderr.String(), "manual recovery") {
+		t.Fatalf("stderr = %q, want failure details and manual-recovery guidance", stderr.String())
 	}
 }
 

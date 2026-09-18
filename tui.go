@@ -353,8 +353,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scheduleInterval = msg.scheduleInterval
 		m.scheduleActive = msg.scheduleActive
 		m.scheduleErr = msg.scheduleErr
-		m.execResult = ""
-		m.actionErr = nil
 		return m, nil
 
 	case versionsMsg:

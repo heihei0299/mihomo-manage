@@ -195,6 +195,28 @@ func TestTUIUpgradeCompletionRefreshesStatus(t *testing.T) {
 	}
 }
 
+func TestTUIUpgradeFailureStillRefreshesStatus(t *testing.T) {
+	m := model{
+		executing: actUpgrade,
+		status:    &manager.Status{Installed: true, InstanceState: manager.Running},
+		control:   &tuiMockControl{},
+		config:    &tuiMockConfig{},
+	}
+
+	updated, refresh := m.Update(actionDoneMsg{action: actUpgrade, err: errors.New("rollback failed")})
+	if updated.(model).execResult != "failed" {
+		t.Fatal("failed upgrade should be displayed as failed")
+	}
+	status, ok := refresh().(statusMsg)
+	if !ok || status.status == nil {
+		t.Fatalf("refresh result = %#v, want status refresh", status)
+	}
+	refreshed, _ := updated.(model).Update(status)
+	if !strings.Contains(refreshed.(model).statusView(), "rollback failed") {
+		t.Fatal("status refresh should retain the upgrade failure diagnostic")
+	}
+}
+
 func TestTUIStartCallsServiceControl(t *testing.T) {
 	ctrl := &tuiMockControl{}
 
