@@ -49,6 +49,19 @@ func (fs *upgradeTestFileSystem) Remove(path string) error {
 	return fs.fakeFileSystem.Remove(path)
 }
 
+type upgradeServiceManager struct {
+	*mockServiceManager
+	stopErrStops bool
+}
+
+func (m *upgradeServiceManager) Stop(ctx context.Context, name string) error {
+	if m.stopErrStops && m.stopErr != nil {
+		m.running = false
+		m.stopped = true
+	}
+	return m.mockServiceManager.Stop(ctx, name)
+}
+
 func TestLifecycleUpgradeRejectsChecksumBeforeStopping(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{binaryPath: true},
@@ -366,8 +379,11 @@ func TestUpgradeStopErrorRecoversIfStopMayHaveSucceeded(t *testing.T) {
 	}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
-	svc := &mockServiceManager{running: true, stopErr: primary, stopErrStops: true}
-	m := newLifecycleTestManager(fs, source, svc)
+	svc := &upgradeServiceManager{
+		mockServiceManager: &mockServiceManager{running: true, stopErr: primary},
+		stopErrStops:       true,
+	}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) {
@@ -390,13 +406,15 @@ func TestUpgradeStopErrorPreservesRecoveryFailure(t *testing.T) {
 	}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
-	svc := &mockServiceManager{
-		running:      true,
-		stopErr:      primary,
+	svc := &upgradeServiceManager{
+		mockServiceManager: &mockServiceManager{
+			running:  true,
+			stopErr:  primary,
+			startErr: recovery,
+		},
 		stopErrStops: true,
-		startErr:     recovery,
 	}
-	m := newLifecycleTestManager(fs, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) || !errors.Is(err, recovery) {

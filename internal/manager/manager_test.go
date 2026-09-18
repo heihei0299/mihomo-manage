@@ -201,7 +201,6 @@ type mockServiceManager struct {
 	startCalls       int
 	stopCalls        int
 	stopErr          error
-	stopErrStops     bool
 	restartErr       error
 	reloadErr        error
 	registered       string
@@ -256,10 +255,6 @@ func (m *mockServiceManager) Start(ctx context.Context, name string) error {
 func (m *mockServiceManager) Stop(ctx context.Context, name string) error {
 	m.stopCalls++
 	if m.stopErr != nil {
-		if m.stopErrStops {
-			m.running = false
-			m.stopped = true
-		}
 		return m.stopErr
 	}
 	m.running = false
