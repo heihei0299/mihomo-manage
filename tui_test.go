@@ -111,6 +111,26 @@ func TestTUIStatusShowsConfigApplyFailure(t *testing.T) {
 	}
 }
 
+func TestTUIVersionSelectionShowsLookupFailure(t *testing.T) {
+	m := model{mode: modeChooseVersion}
+	updated, _ := m.Update(versionsMsg{err: errors.New("release lookup failed")})
+
+	view := updated.(model).versionChoiceView()
+	if !strings.Contains(view, "release lookup failed") {
+		t.Fatalf("version choice view = %q, want lookup failure", view)
+	}
+}
+
+func TestTUIVersionSelectionShowsEmptyResult(t *testing.T) {
+	m := model{mode: modeChooseVersion}
+	updated, _ := m.Update(versionsMsg{versions: []manager.VersionInfo{}})
+
+	view := updated.(model).versionChoiceView()
+	if !strings.Contains(view, "No releases") {
+		t.Fatalf("version choice view = %q, want empty-result message", view)
+	}
+}
+
 func TestTUIScheduleStatusShowsLegacy(t *testing.T) {
 	m := model{
 		status:      &manager.Status{Installed: true, InstanceState: manager.Running},

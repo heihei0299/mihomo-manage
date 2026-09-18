@@ -283,6 +283,10 @@ func (h *Handler) Versions(ctx context.Context) int {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
+	if len(versions) == 0 {
+		h.errorf("error: no versions available\n")
+		return 1
+	}
 	for _, v := range versions {
 		h.println(v.Tag)
 	}

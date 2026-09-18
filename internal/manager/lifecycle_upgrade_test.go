@@ -28,9 +28,13 @@ func TestLifecycleUpgradeRejectsChecksumBeforeStopping(t *testing.T) {
 }
 
 func TestUpgradeDownloadFails(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{downloadErr: testError{"network error"}}
+	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
 	m := NewLifecycleManager(fs, cmd, source, svc)
 
@@ -38,6 +42,67 @@ func TestUpgradeDownloadFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+	if svc.stopped {
+		t.Fatal("download failure must not stop the running service")
+	}
+	if got := string(fs.written[binaryPath]); got != "old binary" {
+		t.Fatalf("binary after rejected upgrade = %q", got)
+	}
+}
+
+func TestUpgradeLatestLookupFailsBeforeStopping(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{latestErr: testError{"release lookup failed"}}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: true}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+
+	err := m.Upgrade(context.Background(), "latest", noopProgress)
+	if err == nil || !strings.Contains(err.Error(), "latest") {
+		t.Fatalf("Upgrade error = %v, want latest lookup error", err)
+	}
+	if source.latestCalls != 1 {
+		t.Fatalf("latest lookup calls = %d, want 1", source.latestCalls)
+	}
+	if svc.stopped {
+		t.Fatal("latest lookup failure must not stop the running service")
+	}
+	if got := string(fs.written[binaryPath]); got != "old binary" {
+		t.Fatalf("binary after rejected upgrade = %q", got)
+	}
+}
+
+func TestUpgradeReportsCheckAndFetchPhases(t *testing.T) {
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: false}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	var phases []InstallationPhase
+
+	if err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {
+		phases = append(phases, e.Phase)
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !containsPhase(phases, PhaseUpgradeCheck) {
+		t.Fatalf("phases = %v, want check phase", phases)
+	}
+	if !containsPhase(phases, PhaseUpgradeFetch) {
+		t.Fatalf("phases = %v, want fetch phase", phases)
+	}
+}
+
+func containsPhase(phases []InstallationPhase, want InstallationPhase) bool {
+	for _, phase := range phases {
+		if phase == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUpgradeHappyPath(t *testing.T) {
@@ -87,5 +152,14 @@ func TestListVersions(t *testing.T) {
 	}
 	if versions[0].Tag != "v1.19.0" {
 		t.Errorf("expected first version v1.19.0, got %q", versions[0].Tag)
+	}
+}
+
+func TestListVersionsRejectsEmptyResult(t *testing.T) {
+	m := NewLifecycleManager(&fakeFileSystem{}, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{})
+
+	_, err := m.ListVersions(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no versions") {
+		t.Fatalf("ListVersions error = %v, want empty-result error", err)
 	}
 }

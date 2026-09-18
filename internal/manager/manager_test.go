@@ -111,6 +111,9 @@ type fakeReleaseSource struct {
 	written          map[string][]byte
 	versions         []VersionInfo
 	versionsErr      error
+	latestVersion    string
+	latestErr        error
+	latestCalls      int
 }
 
 func fakeReleaseArchive() []byte {
@@ -167,6 +170,13 @@ func (m *fakeReleaseSource) ListVersions(ctx context.Context, owner, repo string
 }
 
 func (m *fakeReleaseSource) LatestVersion(ctx context.Context, owner, repo string) (string, error) {
+	m.latestCalls++
+	if m.latestErr != nil {
+		return "", m.latestErr
+	}
+	if m.latestVersion != "" {
+		return m.latestVersion, nil
+	}
 	if len(m.versions) > 0 {
 		return m.versions[0].Tag, nil
 	}

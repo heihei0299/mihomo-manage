@@ -86,6 +86,7 @@ type model struct {
 	mode           viewMode
 	keepBackup     bool
 	versions       []manager.VersionInfo
+	versionsErr    error
 	selectedIdx    int
 	configTab      configTab
 	previewContent string
@@ -313,6 +314,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.status != nil && m.status.Installed {
 				m.mode = modeChooseVersion
 				m.versions = nil
+				m.versionsErr = nil
 				m.selectedIdx = 0
 				return m, fetchVersionsCmd(m.lifecycle, tuiContext(m.ctx))
 			}
@@ -356,8 +358,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case versionsMsg:
+		m.versionsErr = msg.err
 		if msg.err == nil {
 			m.versions = msg.versions
+		} else {
+			m.versions = nil
 		}
 		return m, nil
 
@@ -637,6 +642,12 @@ func (m model) uninstallView() string {
 
 func (m model) versionChoiceView() string {
 	s := "Select version (enter to confirm, q to cancel):\n\n"
+	if m.versionsErr != nil {
+		return s + "Error loading versions: " + m.versionsErr.Error() + "\n"
+	}
+	if len(m.versions) == 0 {
+		return s + "No releases available.\n"
+	}
 	for i, v := range m.versions {
 		prefix := "  "
 		if i == m.selectedIdx {

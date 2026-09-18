@@ -34,15 +34,18 @@ func NewLifecycleManager(fs FileSystem, cmd CommandRunner, source ReleaseSource,
 	return &lifecycleManager{fs: fs, cmd: cmd, source: source, svcMgr: svcMgr, schedule: schedule}
 }
 
-func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) string {
+func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) (string, error) {
 	if version != "latest" {
-		return version
+		return version, nil
 	}
 	tag, err := m.source.LatestVersion(ctx, "MetaCubeX", "mihomo")
-	if err != nil || tag == "" {
-		return version
+	if err != nil {
+		return "", fmt.Errorf("resolve latest version: %w", err)
 	}
-	return tag
+	if strings.TrimSpace(tag) == "" {
+		return "", errors.New("resolve latest version: release has no tag")
+	}
+	return tag, nil
 }
 
 func cleanupArtifacts(fs FileSystem, paths ...string) error {
@@ -62,37 +65,36 @@ func withCleanupError(primary error, fs FileSystem, paths ...string) error {
 	return primary
 }
 
-func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback) (string, error) {
-	version = m.resolveVersion(ctx, version)
+func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback, checkPhase, fetchPhase InstallationPhase) (string, error) {
 	tempPath := fmt.Sprintf("%s.tmp.%s", binaryPath, version)
 	gzPath := tempPath + ".gz"
 	assetURL := releaseURL(runtime.GOOS, runtime.GOARCH, version)
 	assetName := releaseAssetName(assetURL)
 
-	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Verifying mihomo %s", version)})
+	onProgress(ProgressEvent{Phase: checkPhase, Message: fmt.Sprintf("Checking mihomo %s", version)})
 	expected, err := m.source.ExpectedChecksum(ctx, "MetaCubeX", "mihomo", version, assetName)
 	if err != nil {
-		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum unavailable", Error: err})
+		onProgress(ProgressEvent{Phase: checkPhase, Message: "Checksum unavailable", Error: err})
 		return "", fmt.Errorf("checksum unavailable: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
-	onProgress(ProgressEvent{Phase: PhaseFetch, Message: fmt.Sprintf("Downloading mihomo %s", version)})
+	onProgress(ProgressEvent{Phase: fetchPhase, Message: fmt.Sprintf("Downloading mihomo %s", version)})
 	if err := m.source.Download(ctx, assetURL, gzPath); err != nil {
-		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download failed", Error: err})
+		onProgress(ProgressEvent{Phase: fetchPhase, Message: "Download failed", Error: err})
 		return "", withCleanupError(fmt.Errorf("download failed: %w", err), m.fs, gzPath, tempPath)
 	}
 	if err := ctx.Err(); err != nil {
 		return "", withCleanupError(err, m.fs, gzPath, tempPath)
 	}
 	if err := verifyChecksum(m.fs, gzPath, expected, assetName); err != nil {
-		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum verification failed", Error: err})
+		onProgress(ProgressEvent{Phase: checkPhase, Message: "Checksum verification failed", Error: err})
 		return "", withCleanupError(err, m.fs, gzPath, tempPath)
 	}
-	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Checksum verified"})
-	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Decompressing"})
+	onProgress(ProgressEvent{Phase: checkPhase, Message: "Checksum verified"})
+	onProgress(ProgressEvent{Phase: fetchPhase, Message: "Decompressing"})
 	if err := m.decompressGzip(gzPath, tempPath); err != nil {
 		return "", withCleanupError(fmt.Errorf("decompress failed: %w", err), m.fs, gzPath, tempPath)
 	}
@@ -102,7 +104,7 @@ func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version st
 	if err := m.fs.Remove(gzPath); err != nil {
 		return "", withCleanupError(fmt.Errorf("cleanup downloaded artifact: %w", err), m.fs, gzPath, tempPath)
 	}
-	onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Download complete"})
+	onProgress(ProgressEvent{Phase: fetchPhase, Message: "Download complete"})
 	return tempPath, nil
 }
 
@@ -152,10 +154,11 @@ func (m *lifecycleManager) decompressGzip(src, dest string) error {
 // rollbackInstall defines the install recovery boundary.
 //
 // State contract:
-//   pre-deploy failure       -> no rollback-owned state exists
-//   post-deploy failure      -> stop/unregister service and remove deployed files
-//   rollback step failure    -> preserve both the primary failure and rollback failure
-//   canceled caller context  -> rollback still runs with context.WithoutCancel
+//
+//	pre-deploy failure       -> no rollback-owned state exists
+//	post-deploy failure      -> stop/unregister service and remove deployed files
+//	rollback step failure    -> preserve both the primary failure and rollback failure
+//	canceled caller context  -> rollback still runs with context.WithoutCancel
 //
 // Keep this contract aligned with the lifecycle rollback behavior tests.
 func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, err error) error {
@@ -184,7 +187,12 @@ func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, er
 }
 
 func (m *lifecycleManager) Install(ctx context.Context, version string, autoStart bool, onProgress ProgressCallback) error {
-	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress)
+	resolvedVersion, err := m.resolveVersion(ctx, version)
+	if err != nil {
+		onProgress(ProgressEvent{Phase: PhaseFetch, Message: "Version lookup failed", Error: err})
+		return err
+	}
+	tempPath, err := m.downloadAndDecompress(ctx, resolvedVersion, onProgress, PhaseFetch, PhaseFetch)
 	if err != nil {
 		return err
 	}
@@ -361,18 +369,25 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 // Upgrade is transactional around binary replacement.
 //
 // Recovery contract:
-//   failure before backup       -> leave installed binary untouched
-//   failure after service stop  -> resume the previously running service
-//   failure after backup        -> restore the old binary
-//   failure after replacement   -> restore old binary and prior running state
-//   rollback failure            -> return both primary and rollback errors
+//
+//	failure before backup       -> leave installed binary untouched
+//	failure after service stop  -> resume the previously running service
+//	failure after backup        -> restore the old binary
+//	failure after replacement   -> restore old binary and prior running state
+//	rollback failure            -> return both primary and rollback errors
 func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error {
-	version = m.resolveVersion(ctx, version)
 	if !m.fs.FileExists(binaryPath) {
 		return ErrMihomoNotInstalled
 	}
 
-	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress)
+	onProgress(ProgressEvent{Phase: PhaseUpgradeCheck, Message: "Checking upgrade target"})
+	resolvedVersion, err := m.resolveVersion(ctx, version)
+	if err != nil {
+		onProgress(ProgressEvent{Phase: PhaseUpgradeCheck, Message: "Version lookup failed", Error: err})
+		return err
+	}
+
+	tempPath, err := m.downloadAndDecompress(ctx, resolvedVersion, onProgress, PhaseUpgradeCheck, PhaseUpgradeFetch)
 	if err != nil {
 		return err
 	}
@@ -435,7 +450,7 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, m.svcMgr.Stop(context.WithoutCancel(ctx), serviceName), m.restoreBinary(ctx, backupPath, "", wasRunning))
 	}
-	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + version})
+	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + resolvedVersion})
 
 	return nil
 }
@@ -470,5 +485,12 @@ func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPa
 }
 
 func (m *lifecycleManager) ListVersions(ctx context.Context) ([]VersionInfo, error) {
-	return m.source.ListVersions(ctx, "MetaCubeX", "mihomo", 5)
+	versions, err := m.source.ListVersions(ctx, "MetaCubeX", "mihomo", 5)
+	if err != nil {
+		return nil, fmt.Errorf("list versions: %w", err)
+	}
+	if len(versions) == 0 {
+		return nil, errors.New("no versions available")
+	}
+	return versions, nil
 }

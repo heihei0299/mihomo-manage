@@ -58,6 +58,7 @@ func (m *mockControl) SetAutoStart(ctx context.Context, enabled bool) error {
 
 type mockLifecycle struct {
 	installFn      func(version string, autoStart bool, cb manager.ProgressCallback) error
+	upgradeFn      func(version string, cb manager.ProgressCallback) error
 	listVersionsFn func() ([]manager.VersionInfo, error)
 }
 
@@ -80,6 +81,9 @@ func (m *mockLifecycle) Uninstall(ctx context.Context, keepBackup bool, onProgre
 }
 
 func (m *mockLifecycle) Upgrade(ctx context.Context, version string, onProgress manager.ProgressCallback) error {
+	if m.upgradeFn != nil {
+		return m.upgradeFn(version, onProgress)
+	}
 	return nil
 }
 
@@ -174,6 +178,36 @@ func TestStatusRunning(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "running") {
 		t.Errorf("stdout should contain 'running', got %q", stdout.String())
+	}
+}
+
+func TestVersionsEmptyReturnsFailure(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{
+		listVersionsFn: func() ([]manager.VersionInfo, error) { return nil, nil },
+	}, &mockConfig{}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.Versions(context.Background()); code == 0 {
+		t.Fatal("empty version list should return a non-zero result")
+	}
+	if !strings.Contains(stderr.String(), "no versions") {
+		t.Fatalf("stderr = %q, want clear empty-result message", stderr.String())
+	}
+}
+
+func TestUpgradeFailureReturnsNonZeroAndExplainsFailure(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{
+		upgradeFn: func(string, manager.ProgressCallback) error {
+			return errors.New("rollback failed: restart service failed")
+		},
+	}, &mockConfig{}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.Upgrade(context.Background(), "v1.2.3"); code == 0 {
+		t.Fatal("failed upgrade should return a non-zero result")
+	}
+	if !strings.Contains(stderr.String(), "rollback failed") {
+		t.Fatalf("stderr = %q, want failure details", stderr.String())
 	}
 }
 
