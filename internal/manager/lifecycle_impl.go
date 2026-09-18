@@ -67,11 +67,6 @@ func withCleanupError(primary error, fs FileSystem, paths ...string) error {
 }
 
 func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback, checkPhase, fetchPhase InstallationPhase) (string, error) {
-	if version == "latest" {
-		if resolved, err := m.resolveVersion(ctx, version); err == nil {
-			version = resolved
-		}
-	}
 	tempPath := fmt.Sprintf("%s.tmp.%s", binaryPath, version)
 	gzPath := tempPath + ".gz"
 	assetURL := releaseURL(runtime.GOOS, runtime.GOARCH, version)
@@ -193,6 +188,11 @@ func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, er
 }
 
 func (m *lifecycleManager) Install(ctx context.Context, version string, autoStart bool, onProgress ProgressCallback) error {
+	if version == "latest" {
+		if resolved, err := m.resolveVersion(ctx, version); err == nil {
+			version = resolved
+		}
+	}
 	tempPath, err := m.downloadAndDecompress(ctx, version, onProgress, PhaseFetch, PhaseFetch)
 	if err != nil {
 		return err
@@ -425,8 +425,8 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	}
 	if wasRunning {
 		if err := m.svcMgr.Stop(ctx, serviceName); err != nil {
-			failure := withCleanupError(fmt.Errorf("stop failed: %w", err), m.fs, tempPath)
-			return reportFailure(PhaseUpgradeStop, "Stop failed", failure)
+			failure := withCleanupError(withRecoveryError(fmt.Errorf("stop failed: %w", err), resumeService()), m.fs, tempPath)
+			return reportFailure(PhaseUpgradeStop, "Stop failed; service recovery attempted", failure)
 		}
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStop, Message: "Stopped"})
@@ -500,6 +500,13 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + resolvedVersion})
 
 	return nil
+}
+
+func withRecoveryError(primary, recovery error) error {
+	if recovery == nil {
+		return primary
+	}
+	return errors.Join(primary, fmt.Errorf("recovery failed: %w", recovery))
 }
 
 func withRollbackError(primary, rollback error) error {

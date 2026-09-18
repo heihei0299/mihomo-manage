@@ -111,6 +111,7 @@ type progressMsg struct {
 	phase   manager.InstallationPhase
 	message string
 	err     error
+	nextCmd tea.Cmd
 }
 
 type versionsMsg struct {
@@ -394,7 +395,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case progressMsg:
 		m.phaseLabel = msg.phase.String()
 		m.phaseMsg = msg.message
-		return m, nil
+		return m, msg.nextCmd
 
 	case actionDoneMsg:
 		m.executing = actNone
@@ -549,6 +550,7 @@ func progressReaderCmd(ch <-chan progressMsg) tea.Cmd {
 		if !ok {
 			return nil
 		}
+		e.nextCmd = progressReaderCmd(ch)
 		return e
 	}
 }

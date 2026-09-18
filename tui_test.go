@@ -177,6 +177,71 @@ func TestTUIStartPropagatesServiceControlError(t *testing.T) {
 	}
 }
 
+func TestProgressReaderConsumesMultipleMessages(t *testing.T) {
+	ch := make(chan progressMsg, 2)
+	ch <- progressMsg{phase: manager.PhaseUpgradeCheck, message: "first"}
+	ch <- progressMsg{phase: manager.PhaseUpgradeFetch, message: "second"}
+	close(ch)
+
+	m := model{}
+	msg := progressReaderCmd(ch)()
+	updated, next := m.Update(msg)
+	if updated.(model).phaseMsg != "first" {
+		t.Fatalf("first progress = %q, want first", updated.(model).phaseMsg)
+	}
+	if next == nil {
+		t.Fatal("first progress should schedule the next channel read")
+	}
+
+	msg = next()
+	updated, next = updated.(model).Update(msg)
+	if updated.(model).phaseMsg != "second" {
+		t.Fatalf("second progress = %q, want second", updated.(model).phaseMsg)
+	}
+	if next == nil {
+		t.Fatal("second progress should consume the closed-channel read")
+	}
+	if msg = next(); msg != nil {
+		t.Fatalf("closed progress channel returned %#v, want nil", msg)
+	}
+}
+
+type tuiProgressLifecycle struct {
+	*tuiMockLifecycle
+	err error
+}
+
+func (m *tuiProgressLifecycle) Upgrade(ctx context.Context, version string, onProgress manager.ProgressCallback) error {
+	onProgress(manager.ProgressEvent{Phase: manager.PhaseUpgradeFetch, Message: "fetching"})
+	return m.err
+}
+
+func TestProgressReaderKeepsActionDoneError(t *testing.T) {
+	want := errors.New("upgrade failed")
+	progressCh := make(chan progressMsg, 2)
+	cmd := execActionCmdWithContext(
+		context.Background(),
+		&tuiMockControl{},
+		&tuiProgressLifecycle{tuiMockLifecycle: &tuiMockLifecycle{}, err: want},
+		actUpgrade,
+		progressCh,
+		"v1.2.3",
+		false,
+	)
+
+	msg := cmd()
+	done, ok := msg.(actionDoneMsg)
+	if !ok || !errors.Is(done.err, want) {
+		t.Fatalf("action result = %#v, want actionDone error %v", msg, want)
+	}
+	if progress, ok := <-progressCh; !ok || progress.message != "fetching" {
+		t.Fatalf("progress = %#v, want fetching progress", progress)
+	}
+	if _, ok := <-progressCh; ok {
+		t.Fatal("progress channel should close after actionDone is produced")
+	}
+}
+
 func TestTUIUpgradeCompletionRefreshesStatus(t *testing.T) {
 	m := model{
 		executing: actUpgrade,

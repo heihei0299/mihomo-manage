@@ -70,6 +70,21 @@ func TestLifecycleUpgradeRejectsChecksumBeforeStopping(t *testing.T) {
 	}
 }
 
+func TestInstallLatestLookupFailureKeepsFallback(t *testing.T) {
+	fs := &fakeFileSystem{}
+	source := &fakeReleaseSource{latestErr: errors.New("release lookup failed")}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+
+	if err := m.Install(context.Background(), "latest", false, noopProgress); err != nil {
+		t.Fatalf("Install error = %v, want existing latest fallback", err)
+	}
+	if !source.downloadCalled {
+		t.Fatal("Install should still attempt the existing latest download fallback")
+	}
+}
+
 func TestUpgradeDownloadFails(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{binaryPath: true},
@@ -90,6 +105,24 @@ func TestUpgradeDownloadFails(t *testing.T) {
 	}
 	if got := string(fs.written[binaryPath]); got != "old binary" {
 		t.Fatalf("binary after rejected upgrade = %q", got)
+	}
+}
+
+func TestUpgradeLatestIsResolvedOnlyOnce(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{latestVersion: "latest"}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{}
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+
+	if err := m.Upgrade(context.Background(), "latest", noopProgress); err != nil {
+		t.Fatalf("Upgrade error = %v", err)
+	}
+	if source.latestCalls != 1 {
+		t.Fatalf("latest lookup calls = %d, want 1", source.latestCalls)
 	}
 }
 
@@ -322,6 +355,52 @@ func TestUpgradeStopFailureLeavesInstanceUntouched(t *testing.T) {
 	}
 	if got := string(fs.written[binaryPath]); got != "old binary" {
 		t.Fatalf("binary after stop failure = %q, want old binary", got)
+	}
+}
+
+func TestUpgradeStopErrorRecoversIfStopMayHaveSucceeded(t *testing.T) {
+	primary := errors.New("stop reported failure")
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: true, stopErr: primary, stopErrStops: true}
+	m := newLifecycleTestManager(fs, source, svc)
+
+	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
+	if !errors.Is(err, primary) {
+		t.Fatalf("Upgrade error = %v, want stop error", err)
+	}
+	if !svc.running || svc.startCalls != 1 {
+		t.Fatalf("service after stop error: running=%v startCalls=%d, want recovered running", svc.running, svc.startCalls)
+	}
+	if got := string(fs.written[binaryPath]); got != "old binary" {
+		t.Fatalf("binary after stop error = %q, want old binary", got)
+	}
+}
+
+func TestUpgradeStopErrorPreservesRecoveryFailure(t *testing.T) {
+	primary := errors.New("stop reported failure")
+	recovery := errors.New("resume failed")
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{
+		running:      true,
+		stopErr:      primary,
+		stopErrStops: true,
+		startErr:     recovery,
+	}
+	m := newLifecycleTestManager(fs, source, svc)
+
+	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
+	if !errors.Is(err, primary) || !errors.Is(err, recovery) {
+		t.Fatalf("Upgrade error = %v, want stop and recovery errors", err)
 	}
 }
 
