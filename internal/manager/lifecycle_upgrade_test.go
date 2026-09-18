@@ -3,17 +3,19 @@ package manager
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
 
 type upgradeTestFileSystem struct {
 	*fakeFileSystem
-	failOnRename int
-	renameErr    error
-	mkdirErr     error
-	cancel       context.CancelFunc
-	renameCalls  int
+	failOnRename          int
+	renameErr             error
+	mkdirErr              error
+	missingBinaryOnRemove bool
+	cancel                context.CancelFunc
+	renameCalls           int
 }
 
 func (fs *upgradeTestFileSystem) Rename(oldPath, newPath string) error {
@@ -36,6 +38,15 @@ func (fs *upgradeTestFileSystem) MkdirAll(path string, perm uint32) error {
 		return fs.mkdirErr
 	}
 	return fs.fakeFileSystem.MkdirAll(path, perm)
+}
+
+func (fs *upgradeTestFileSystem) Remove(path string) error {
+	if fs.missingBinaryOnRemove && path == binaryPath {
+		delete(fs.written, path)
+		delete(fs.fileExists, path)
+		return os.ErrNotExist
+	}
+	return fs.fakeFileSystem.Remove(path)
 }
 
 func TestLifecycleUpgradeRejectsChecksumBeforeStopping(t *testing.T) {
@@ -262,6 +273,35 @@ func TestUpgradeRollbackStopsUnexpectedRunningService(t *testing.T) {
 	}
 }
 
+func TestUpgradeServiceStateCheckFailureReportsProgress(t *testing.T) {
+	primary := errors.New("state lookup failed")
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{running: true, err: primary}
+	m := newLifecycleTestManager(fs, source, svc)
+	var events []ProgressEvent
+
+	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {
+		events = append(events, e)
+	})
+	if !errors.Is(err, primary) {
+		t.Fatalf("Upgrade error = %v, want state error", err)
+	}
+	if svc.stopCalls != 0 {
+		t.Fatalf("stop calls = %d, want no stop after state check failure", svc.stopCalls)
+	}
+	for _, event := range events {
+		if event.Error != nil {
+			return
+		}
+	}
+	t.Fatalf("events = %v, want state-check failure event", events)
+}
+
 func TestUpgradeStopFailureLeavesInstanceUntouched(t *testing.T) {
 	primary := errors.New("stop failed")
 	fs := &fakeFileSystem{
@@ -318,8 +358,9 @@ func TestUpgradeReplacementFailureRestoresRunningInstance(t *testing.T) {
 			fileExists: map[string]bool{binaryPath: true},
 			written:    map[string][]byte{binaryPath: []byte("old binary")},
 		},
-		failOnRename: 2,
-		renameErr:    primary,
+		failOnRename:          2,
+		renameErr:             primary,
+		missingBinaryOnRemove: true,
 	}
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
