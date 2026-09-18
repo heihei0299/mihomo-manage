@@ -441,6 +441,13 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	}
 
 	if !wasRunning {
+		running, err := m.svcMgr.IsRunning(ctx, serviceName)
+		if err != nil {
+			return withRollbackError(fmt.Errorf("confirm service stopped: %w", err), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		}
+		if running {
+			return withRollbackError(errors.New("service did not remain stopped after upgrade"), m.restoreBinary(ctx, backupPath, "", wasRunning))
+		}
 		onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Keeping mihomo stopped"})
 		return nil
 	}

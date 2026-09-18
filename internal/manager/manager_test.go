@@ -190,6 +190,8 @@ type mockServiceManager struct {
 	registerErr      error
 	startErr         error
 	startDoesNotRun  bool
+	runningStates    []bool
+	runningCalls     int
 	stopErr          error
 	restartErr       error
 	reloadErr        error
@@ -199,6 +201,11 @@ type mockServiceManager struct {
 }
 
 func (m *mockServiceManager) IsRunning(ctx context.Context, name string) (bool, error) {
+	m.runningCalls++
+	if len(m.runningStates) > 0 {
+		m.running = m.runningStates[0]
+		m.runningStates = m.runningStates[1:]
+	}
 	return m.running, m.err
 }
 

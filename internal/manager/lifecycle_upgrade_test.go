@@ -161,6 +161,22 @@ func TestUpgradeRequiresServiceToBeRunningAfterStart(t *testing.T) {
 	}
 }
 
+func TestUpgradeRequiresStoppedServiceToRemainStopped(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{binaryPath: true},
+		written:    map[string][]byte{binaryPath: []byte("old binary")},
+	}
+	source := &fakeReleaseSource{}
+	linkStorage(fs, source)
+	svc := &mockServiceManager{runningStates: []bool{false, true}}
+	m := newLifecycleTestManager(fs, source, svc)
+
+	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
+	if err == nil || !strings.Contains(err.Error(), "stopped") {
+		t.Fatalf("Upgrade error = %v, want post-upgrade stopped-state error", err)
+	}
+}
+
 func TestUpgradeReportsReplacementPhases(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	source := &fakeReleaseSource{}
