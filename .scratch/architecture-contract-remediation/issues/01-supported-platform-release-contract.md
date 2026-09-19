@@ -4,14 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] 发布矩阵只包含当前正式支持的 Linux 和 Darwin 目标，并且构建命令显式使用每个目标的 OS 和架构。
-- [ ] 每个发布产物的实际目标平台和架构与其名称一致，而不是只改变文件名。
-- [ ] Windows 不再生成发布物；未支持平台返回可识别的 unsupported-platform 错误，不使用 systemd 等隐式默认实现。
-- [ ] README、Go module、内部导入、release workflow 和架构检查使用同一个 canonical repository identity。
-- [ ] 相关 CI 或架构检查能够在不启动真实服务的情况下验证支持平台契约。
-- [ ] 不改变 Linux/Darwin 已有的服务、调度和安装行为。
+- [x] 发布矩阵只包含当前正式支持的 Linux 和 Darwin 目标，并且构建命令显式使用每个目标的 OS 和架构。
+- [x] 每个发布产物的实际目标平台和架构与其名称一致，而不是只改变文件名。
+- [x] Windows 不再生成发布物；未支持平台返回可识别的 unsupported-platform 错误，不使用 systemd 等隐式默认实现。
+- [x] README、Go module、内部导入、release workflow 和架构检查使用同一个 canonical repository identity。
+- [x] 相关 CI 或架构检查能够在不启动真实服务的情况下验证支持平台契约。
+- [x] 不改变 Linux/Darwin 已有的服务、调度和安装行为。
 
 ## Comments
 
@@ -27,3 +27,5 @@ State or invariant owner: service and scheduler adapters own supported-platform 
 Why this dependency is necessary: lifecycle install must reject unsupported platforms before fetching or writing platform-specific service state
 Caller can use an existing role interface: yes; lifecycle already uses `ServiceManager` and `ScheduleManager`
 Reverse dependency introduced or strengthened: no
+
+Verification: `go test ./internal/manager -run 'TestSupportedReleaseContract|TestRepositoryIdentityIsConsistent|TestOSServiceManagerUnsupportedOS|TestManagerProductionFilesHaveExplicitOwner|TestSchedulerDoesNotImportManager' -count=1` passed; incremental review passed at `c6ce7ce`.
