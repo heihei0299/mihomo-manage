@@ -321,16 +321,22 @@ func (p *configPipeline) PreviewConfig(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer release()
-	return p.previewConfig(ctx)
+	return p.previewConfig(ctx, nil)
 }
 
-func (p *configPipeline) previewConfig(ctx context.Context) (string, error) {
+func (p *configPipeline) previewConfig(ctx context.Context, candidate *stagedSubscription) (string, error) {
 	if _, err := p.subscriptionSource(); err != nil {
 		return "", err
 	}
-	subData, err := p.fs.ReadFile(subscriptionDataFile)
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
+	var subData []byte
+	var err error
+	if candidate != nil {
+		subData = candidate.data
+	} else {
+		subData, err = p.fs.ReadFile(subscriptionDataFile)
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
 	}
 
 	tmpl, tmplErr := p.fs.ReadFile(OverrideFilePath)
@@ -379,11 +385,14 @@ func (p *configPipeline) writeConfigApplyStatus(status ConfigApplyStatus) error 
 	return nil
 }
 
-func (p *configPipeline) recordConfigApply(state ConfigApplyState, preview string, applyErr error) error {
+func (p *configPipeline) recordConfigApply(state ConfigApplyState, preview string, applyErr error, subscriptionData []byte) error {
 	status := ConfigApplyStatus{
 		State:       state,
 		AttemptedAt: time.Now().UTC(),
 		ConfigHash:  configContentHash(preview),
+	}
+	if len(subscriptionData) > 0 {
+		status.SubscriptionHash = configContentHash(string(subscriptionData))
 	}
 	if applyErr != nil {
 		status.ErrorSummary = applyErr.Error()
@@ -396,25 +405,30 @@ type stagedConfig struct {
 	path string
 }
 
-func (p *configPipeline) refreshSubscription(ctx context.Context) error {
+type stagedSubscription struct {
+	path string
+	data []byte
+}
+
+func (p *configPipeline) refreshSubscription(ctx context.Context) (*stagedSubscription, error) {
 	source, err := p.subscriptionSource()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if source == "" {
-		return ErrSubscriptionSourceNotConfigured
+		return nil, ErrSubscriptionSourceNotConfigured
 	}
 	if source != remoteSubscriptionSource {
-		return nil
+		return nil, nil
 	}
 
 	data, err := p.fs.ReadFile(subscriptionURLFile)
 	if err != nil {
-		return fmt.Errorf("reading subscription URL: %w", err)
+		return nil, fmt.Errorf("reading subscription URL: %w", err)
 	}
 	url := strings.TrimSpace(string(data))
 	if url == "" {
-		return nil
+		return nil, nil
 	}
 
 	tmpPath := subscriptionDataFile + ".tmp"
@@ -422,26 +436,34 @@ func (p *configPipeline) refreshSubscription(ctx context.Context) error {
 		return errors.Join(primary, p.fs.Remove(tmpPath))
 	}
 	if err := p.source.Download(ctx, url, tmpPath); err != nil {
-		return cleanupDownload(fmt.Errorf("fetching subscription: %w", err))
+		return nil, cleanupDownload(fmt.Errorf("fetching subscription: %w", err))
 	}
 	fetched, err := p.fs.ReadFile(tmpPath)
 	if err != nil {
-		return cleanupDownload(err)
+		return nil, cleanupDownload(err)
 	}
 	if len(bytes.TrimSpace(fetched)) == 0 {
-		return cleanupDownload(fmt.Errorf("fetched subscription content is empty"))
+		return nil, cleanupDownload(fmt.Errorf("fetched subscription content is empty"))
 	}
-	if err := p.fs.WriteFile(subscriptionDataFile, fetched, filePermUserRW); err != nil {
-		return cleanupDownload(fmt.Errorf("writing subscription data: %w", err))
-	}
-	if err := p.fs.Remove(tmpPath); err != nil {
-		return fmt.Errorf("removing downloaded subscription: %w", err)
-	}
-	return nil
+	return &stagedSubscription{path: tmpPath, data: fetched}, nil
 }
 
-func (p *configPipeline) buildApplyPreview(ctx context.Context) (string, error) {
-	preview, err := p.previewConfig(ctx)
+func (p *configPipeline) cleanupStagedSubscription(candidate *stagedSubscription, primary error) error {
+	if candidate == nil {
+		return primary
+	}
+	if cleanupErr := p.fs.Remove(candidate.path); cleanupErr != nil {
+		return errors.Join(primary, fmt.Errorf("cleanup subscription staging: %w", cleanupErr))
+	}
+	return primary
+}
+
+func (p *configPipeline) cleanupApplyStaging(staged stagedConfig, candidate *stagedSubscription, primary error) error {
+	return p.cleanupStagedSubscription(candidate, p.cleanupStagedConfig(staged, primary))
+}
+
+func (p *configPipeline) buildApplyPreview(ctx context.Context, candidate *stagedSubscription) (string, error) {
+	preview, err := p.previewConfig(ctx, candidate)
 	if err != nil {
 		return "", err
 	}
@@ -475,21 +497,56 @@ func (p *configPipeline) cleanupStagedConfig(staged stagedConfig, primary error)
 	return primary
 }
 
-func (p *configPipeline) commitConfig(staged stagedConfig) (postCommitCleanupErr, applyErr error) {
-	if p.fs.FileExists(configYAML) {
-		backupPath := fmt.Sprintf("%s.bak.%d", configYAML, time.Now().Unix())
-		existing, err := p.fs.ReadFile(configYAML)
+func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubscription) (postCommitCleanupErr, applyErr error) {
+	configSnapshot, err := p.snapshotFile(configYAML)
+	if err != nil {
+		return nil, p.cleanupApplyStaging(staged, candidate, err)
+	}
+	subscriptionSnapshot := fileSnapshot{}
+	if candidate != nil {
+		subscriptionSnapshot, err = p.snapshotFile(subscriptionDataFile)
 		if err != nil {
-			return nil, p.cleanupStagedConfig(staged, err)
-		}
-		if err := p.fs.WriteFile(backupPath, existing, filePermUserRW); err != nil {
-			return nil, p.cleanupStagedConfig(staged, err)
+			return nil, p.cleanupApplyStaging(staged, candidate, err)
 		}
 	}
+
+	if configSnapshot.exists {
+		backupPath := fmt.Sprintf("%s.bak.%d", configYAML, time.Now().UnixNano())
+		if err := p.fs.WriteFile(backupPath, configSnapshot.data, filePermUserRW); err != nil {
+			return nil, p.cleanupApplyStaging(staged, candidate, err)
+		}
+	}
+	if candidate != nil && subscriptionSnapshot.exists {
+		backupPath := fmt.Sprintf("%s.bak.%d", subscriptionDataFile, time.Now().UnixNano())
+		if err := p.fs.WriteFile(backupPath, subscriptionSnapshot.data, filePermUserRW); err != nil {
+			return nil, p.cleanupApplyStaging(staged, candidate, err)
+		}
+	}
+
 	if err := p.fs.Rename(staged.path, configYAML); err != nil {
-		return nil, p.cleanupStagedConfig(staged, fmt.Errorf("committing generated config: %w", err))
+		failure := fmt.Errorf("committing generated config: %w", err)
+		failure = errors.Join(failure, p.restoreFile(configYAML, configSnapshot))
+		return nil, p.cleanupApplyStaging(staged, candidate, failure)
 	}
-	return p.fs.Remove(staged.dir), nil
+	if candidate != nil {
+		if err := p.fs.Rename(candidate.path, subscriptionDataFile); err != nil {
+			failure := fmt.Errorf("committing subscription data: %w", err)
+			failure = errors.Join(failure, p.restoreFile(configYAML, configSnapshot))
+			failure = errors.Join(failure, p.restoreFile(subscriptionDataFile, subscriptionSnapshot))
+			return nil, p.cleanupApplyStaging(staged, candidate, failure)
+		}
+	}
+
+	var cleanupErrs []error
+	if err := p.fs.Remove(staged.dir); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup staged config: %w", err))
+	}
+	if candidate != nil {
+		if err := p.fs.Remove(candidate.path); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup subscription staging: %w", err))
+		}
+	}
+	return errors.Join(cleanupErrs...), nil
 }
 
 func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
@@ -500,10 +557,17 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 	defer release()
 
 	preview := ""
+	var candidate *stagedSubscription
 	statusRecorded := false
+	candidateData := func() []byte {
+		if candidate == nil {
+			return nil
+		}
+		return candidate.data
+	}
 	defer func() {
 		if applyErr != nil && !statusRecorded {
-			statusErr := p.recordConfigApply(ConfigApplyFailed, preview, applyErr)
+			statusErr := p.recordConfigApply(ConfigApplyFailed, preview, applyErr, candidateData())
 			statusRecorded = true
 			if statusErr != nil {
 				applyErr = errors.Join(applyErr, statusErr)
@@ -511,27 +575,31 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		}
 	}()
 
-	if err := p.refreshSubscription(ctx); err != nil {
-		return err
-	}
-	preview, err = p.buildApplyPreview(ctx)
+	candidate, err = p.refreshSubscription(ctx)
 	if err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return p.cleanupStagedSubscription(candidate, err)
+	}
+	preview, err = p.buildApplyPreview(ctx, candidate)
+	if err != nil {
+		return p.cleanupStagedSubscription(candidate, err)
 	}
 
 	staged, err := p.stageConfig(ctx, preview)
 	if err != nil {
-		return err
+		return p.cleanupStagedSubscription(candidate, err)
 	}
 
 	if p.validate != nil {
 		if err := p.validate.Validate(ctx, staged.path); err != nil {
-			failure := p.cleanupStagedConfig(staged, err)
+			failure := p.cleanupApplyStaging(staged, candidate, err)
 			state := ConfigValidationFailed
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				state = ConfigApplyFailed
 			}
-			statusErr := p.recordConfigApply(state, preview, err)
+			statusErr := p.recordConfigApply(state, preview, failure, candidateData())
 			statusRecorded = true
 			if statusErr != nil {
 				failure = errors.Join(failure, statusErr)
@@ -540,10 +608,10 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return p.cleanupStagedConfig(staged, err)
+		return p.cleanupApplyStaging(staged, candidate, err)
 	}
 
-	postCommitCleanupErr, applyErr := p.commitConfig(staged)
+	postCommitCleanupErr, applyErr := p.commitConfig(staged, candidate)
 	if applyErr != nil {
 		return applyErr
 	}
@@ -554,7 +622,7 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 			if postCommitCleanupErr != nil {
 				failure = errors.Join(failure, fmt.Errorf("cleanup staged config: %w", postCommitCleanupErr))
 			}
-			statusErr := p.recordConfigApply(ConfigPendingReload, preview, failure)
+			statusErr := p.recordConfigApply(ConfigPendingReload, preview, failure, candidateData())
 			statusRecorded = true
 			if statusErr != nil {
 				failure = errors.Join(failure, statusErr)
@@ -564,14 +632,14 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 	}
 
 	if postCommitCleanupErr != nil {
-		statusErr := p.recordConfigApply(ConfigApplied, preview, postCommitCleanupErr)
+		statusErr := p.recordConfigApply(ConfigApplied, preview, postCommitCleanupErr, candidateData())
 		statusRecorded = true
 		if statusErr != nil {
 			return errors.Join(postCommitCleanupErr, statusErr)
 		}
 		return postCommitCleanupErr
 	}
-	statusErr := p.recordConfigApply(ConfigApplied, preview, nil)
+	statusErr := p.recordConfigApply(ConfigApplied, preview, nil, candidateData())
 	statusRecorded = true
 	return statusErr
 }
