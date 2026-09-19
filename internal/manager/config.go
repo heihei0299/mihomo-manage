@@ -89,6 +89,18 @@ func newConfigPipeline(fs FileSystem, source ReleaseSource, opts configPipelineO
 // migrateLegacyTemplate renames the old config-template.yaml to the override
 // file on first use, so existing setups carry over without manual steps. It
 // runs once: after a successful rename the legacy path no longer exists.
+func (p *configPipeline) acquireConfigUpdate(ctx context.Context) (func(), error) {
+	release, err := p.lock.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
 func (p *configPipeline) migrateLegacyTemplate() {
 	if !p.fs.FileExists(legacyTemplatePath) || p.fs.FileExists(OverrideFilePath) {
 		return
@@ -144,6 +156,12 @@ func looksLikeURL(s string) bool {
 }
 
 func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source string) error {
+	release, err := p.acquireConfigUpdate(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
@@ -441,7 +459,7 @@ func (p *configPipeline) commitConfig(staged stagedConfig) (postCommitCleanupErr
 }
 
 func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
-	release, err := p.lock.Acquire(ctx)
+	release, err := p.acquireConfigUpdate(ctx)
 	if err != nil {
 		return err
 	}
