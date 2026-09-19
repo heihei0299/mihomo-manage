@@ -163,7 +163,7 @@ func editSubscriptionCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd
 			return subscriptionEditMsg{err: fmt.Errorf("subscription source cannot be empty")}
 		}
 		if err := cfg.SetSubscriptionSource(ctx, string(data)); err != nil {
-			return subscriptionEditMsg{err: fmt.Errorf("config update failed: %w", err)}
+			return subscriptionEditMsg{err: err}
 		}
 		return subscriptionEditMsg{}
 	})

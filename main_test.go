@@ -85,8 +85,8 @@ func TestConfigOverrideEditUnchangedResultDoesNotUpdate(t *testing.T) {
 	t.Setenv("EDITOR", script)
 	cfg := &tuiMockConfig{}
 
-	if code := cliEditFile(cfg, path, []string{"edit"}); code != 1 {
-		t.Fatalf("exit code = %d, want failure", code)
+	if code := cliEditFile(cfg, path, []string{"edit"}); code != 0 {
+		t.Fatalf("exit code = %d, want success for unchanged content", code)
 	}
 	if cfg.updateCalled {
 		t.Fatal("UpdateConfig must not be called when editor leaves content unchanged")

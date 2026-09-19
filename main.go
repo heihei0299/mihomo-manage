@@ -366,8 +366,10 @@ func cliEditFile(cfg manager.ConfigManager, path string, args []string) int {
 		return 1
 	}
 	if hadBefore && bytes.Equal(before, data) {
-		fmt.Fprintln(os.Stderr, "editor result is unchanged")
-		return 1
+		if !quietMode {
+			fmt.Println("config unchanged")
+		}
+		return 0
 	}
 	if err := cfg.UpdateConfig(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "config update failed: %v\n", err)
