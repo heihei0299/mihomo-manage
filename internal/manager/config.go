@@ -151,6 +151,7 @@ type configTransactionState struct {
 	ConfigBackup           string `json:"config_backup,omitempty"`
 	ConfigExisted          bool   `json:"config_existed"`
 	SubscriptionBackup     string `json:"subscription_backup,omitempty"`
+	SubscriptionStaged     bool   `json:"subscription_staged"`
 	SubscriptionExisted    bool   `json:"subscription_existed"`
 	StagedConfigDir        string `json:"staged_config_dir,omitempty"`
 	StagedSubscriptionPath string `json:"staged_subscription_path,omitempty"`
@@ -230,7 +231,7 @@ func (p *configPipeline) recoverConfigTransactionLocked() error {
 	if err := p.restoreTransactionFile(configYAML, transaction.ConfigBackup, transaction.ConfigExisted); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("restore config: %w", err))
 	}
-	if transaction.SubscriptionBackup != "" || transaction.SubscriptionExisted {
+	if transaction.SubscriptionStaged {
 		if err := p.restoreTransactionFile(subscriptionDataFile, transaction.SubscriptionBackup, transaction.SubscriptionExisted); err != nil {
 			restoreErrs = append(restoreErrs, fmt.Errorf("restore subscription data: %w", err))
 		}
@@ -634,6 +635,7 @@ func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubs
 	transaction := configTransactionState{
 		State:                  configTransactionPrepared,
 		ConfigExisted:          configSnapshot.exists,
+		SubscriptionStaged:     candidate != nil,
 		SubscriptionExisted:    subscriptionSnapshot.exists,
 		StagedConfigDir:        staged.dir,
 		StagedSubscriptionPath: "",

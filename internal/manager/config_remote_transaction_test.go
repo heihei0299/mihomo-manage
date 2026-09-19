@@ -365,6 +365,7 @@ func TestConfigManagerRecoversInterruptedRemoteCommit(t *testing.T) {
 		State:                  configTransactionConfigCommitted,
 		ConfigBackup:           configBackup,
 		ConfigExisted:          true,
+		SubscriptionStaged:     true,
 		SubscriptionBackup:     subscriptionBackup,
 		SubscriptionExisted:    true,
 		StagedConfigDir:        stagedDir,
@@ -403,6 +404,47 @@ func TestConfigManagerRecoversInterruptedRemoteCommit(t *testing.T) {
 	}
 	if _, exists := fs.written[configApplyTransactionFile]; exists {
 		t.Fatal("recovery transaction marker should be removed")
+	}
+}
+
+func TestConfigManagerRecoversInterruptedFirstRemoteCommit(t *testing.T) {
+	configBackup := configYAML + ".bak.first-recovery"
+	stagedDir := configDir + "/.mihomo-config-staging-first-recovery"
+	stagedSubscription := subscriptionDataFile + ".tmp.first-recovery"
+	transaction := configTransactionState{
+		State:                  configTransactionConfigCommitted,
+		ConfigBackup:           configBackup,
+		ConfigExisted:          true,
+		SubscriptionStaged:     true,
+		SubscriptionExisted:    false,
+		StagedConfigDir:        stagedDir,
+		StagedSubscriptionPath: stagedSubscription,
+	}
+	transactionData, err := json.Marshal(transaction)
+	if err != nil {
+		t.Fatalf("marshal transaction: %v", err)
+	}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			configApplyTransactionFile: true,
+			configYAML:                 true,
+			subscriptionDataFile:       true,
+			configBackup:               true,
+		},
+		written: map[string][]byte{
+			configApplyTransactionFile: transactionData,
+			configYAML:                 []byte("new config\n"),
+			subscriptionDataFile:       []byte("new subscription\n"),
+			configBackup:               []byte("old config\n"),
+		},
+	}
+
+	NewConfigManager(fs, &fakeReleaseSource{}, nil, nil)
+	if got := string(fs.written[configYAML]); got != "old config\n" {
+		t.Fatalf("recovered config = %q, want old config", got)
+	}
+	if _, exists := fs.written[subscriptionDataFile]; exists {
+		t.Fatal("recovery should remove first remote subscription cache")
 	}
 }
 
