@@ -58,6 +58,29 @@ func TestAdoptConfigUsesConfigUpdateLock(t *testing.T) {
 	}
 }
 
+type waitingConfigUpdateLock struct {
+	started chan struct{}
+}
+
+func (l *waitingConfigUpdateLock) Acquire(ctx context.Context) (func(), error) {
+	close(l.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestSetSubscriptionSourceHonorsCancellationWhileWaiting(t *testing.T) {
+	lock := &waitingConfigUpdateLock{started: make(chan struct{})}
+	m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- m.SetSubscriptionSource(ctx, "local") }()
+	<-lock.started
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("SetSubscriptionSource error = %v, want cancellation", err)
+	}
+}
+
 func TestConfigWriteOperationsPropagateLockCancellation(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -77,6 +100,60 @@ func TestConfigWriteOperationsPropagateLockCancellation(t *testing.T) {
 				t.Fatalf("operation error = %v, want cancellation", err)
 			}
 		})
+	}
+}
+
+func TestPreviewConfigUsesConfigUpdateLockForLegacyMigration(t *testing.T) {
+	lock := &fakeConfigUpdateLock{}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{OverrideFilePath: true, subscriptionDataFile: true},
+		written: map[string][]byte{
+			OverrideFilePath:     []byte("mode: rule\n"),
+			subscriptionDataFile: []byte("mode: rule\n"),
+		},
+	}
+	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+
+	if _, err := m.PreviewConfig(context.Background()); err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
+	if !lock.acquired {
+		t.Fatal("PreviewConfig should acquire the config update lock")
+	}
+}
+
+type failingOverrideStagingFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingOverrideStagingFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	if path == OverrideFilePath+".tmp" {
+		return fs.err
+	}
+	return fs.fakeFileSystem.WriteFile(path, data, perm)
+}
+
+func TestAdoptConfigStagingFailurePreservesOverride(t *testing.T) {
+	fs := &failingOverrideStagingFileSystem{
+		fakeFileSystem: &fakeFileSystem{
+			fileExists: map[string]bool{configYAML: true, OverrideFilePath: true, subscriptionSourceFile: true, subscriptionDataFile: true},
+			written: map[string][]byte{
+				configYAML:             []byte("mode: direct\n"),
+				OverrideFilePath:       []byte("mode: rule\n"),
+				subscriptionSourceFile: []byte("local\n"),
+				subscriptionDataFile:   []byte("mode: rule\n"),
+			},
+		},
+		err: errors.New("override staging failed"),
+	}
+	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil)
+
+	if _, err := m.AdoptConfig(context.Background(), false); err == nil {
+		t.Fatal("AdoptConfig should report override staging failure")
+	}
+	if got := string(fs.written[OverrideFilePath]); got != "mode: rule\n" {
+		t.Fatalf("override after staging failure = %q, want old override", got)
 	}
 }
 

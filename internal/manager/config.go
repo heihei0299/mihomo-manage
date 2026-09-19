@@ -86,9 +86,6 @@ func newConfigPipeline(fs FileSystem, source ReleaseSource, opts configPipelineO
 	return p
 }
 
-// migrateLegacyTemplate renames the old config-template.yaml to the override
-// file on first use, so existing setups carry over without manual steps. It
-// runs once: after a successful rename the legacy path no longer exists.
 func (p *configPipeline) acquireConfigUpdate(ctx context.Context) (func(), error) {
 	release, err := p.lock.Acquire(ctx)
 	if err != nil {
@@ -101,7 +98,19 @@ func (p *configPipeline) acquireConfigUpdate(ctx context.Context) (func(), error
 	return release, nil
 }
 
+// migrateLegacyTemplate renames the old config-template.yaml to the override
+// file on first use, so existing setups carry over without manual steps. It
+// runs once: after a successful rename the legacy path no longer exists.
 func (p *configPipeline) migrateLegacyTemplate() {
+	if !p.fs.FileExists(legacyTemplatePath) || p.fs.FileExists(OverrideFilePath) {
+		return
+	}
+	release, err := p.acquireConfigUpdate(context.Background())
+	if err != nil {
+		p.warn(fmt.Sprintf("failed to acquire config update lock for %s: %v", legacyTemplatePath, err))
+		return
+	}
+	defer release()
 	if !p.fs.FileExists(legacyTemplatePath) || p.fs.FileExists(OverrideFilePath) {
 		return
 	}
@@ -291,6 +300,15 @@ func (p *configPipeline) subscriptionSource() (string, error) {
 }
 
 func (p *configPipeline) PreviewConfig(ctx context.Context) (string, error) {
+	release, err := p.acquireConfigUpdate(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	return p.previewConfig(ctx)
+}
+
+func (p *configPipeline) previewConfig(ctx context.Context) (string, error) {
 	if _, err := p.subscriptionSource(); err != nil {
 		return "", err
 	}
@@ -407,7 +425,7 @@ func (p *configPipeline) refreshSubscription(ctx context.Context) error {
 }
 
 func (p *configPipeline) buildApplyPreview(ctx context.Context) (string, error) {
-	preview, err := p.PreviewConfig(ctx)
+	preview, err := p.previewConfig(ctx)
 	if err != nil {
 		return "", err
 	}
