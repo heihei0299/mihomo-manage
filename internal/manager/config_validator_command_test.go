@@ -8,17 +8,28 @@ import (
 )
 
 type validationCommandRunner struct {
-	name string
-	args []string
-	ctx  context.Context
-	out  string
-	err  error
+	name              string
+	args              []string
+	ctx               context.Context
+	out               string
+	err               error
+	started           chan struct{}
+	waitForCancel     bool
+	startedOnceClosed bool
 }
 
 func (r *validationCommandRunner) RunCommand(ctx context.Context, name string, args ...string) (string, error) {
 	r.ctx = ctx
 	r.name = name
 	r.args = append([]string(nil), args...)
+	if r.started != nil && !r.startedOnceClosed {
+		close(r.started)
+		r.startedOnceClosed = true
+	}
+	if r.waitForCancel {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	return r.out, r.err
 }
 
@@ -80,12 +91,18 @@ func TestConfigApplyStatusIncludesValidationCommandDiagnostic(t *testing.T) {
 }
 
 func TestConfigValidatorReturnsCancellationUnwrapped(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	runner := &validationCommandRunner{err: context.Canceled}
+	runner := &validationCommandRunner{started: make(chan struct{}), waitForCancel: true}
 	validator := NewConfigValidator(runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- validator.Validate(ctx, "/tmp/config.yaml") }()
+	<-runner.started
+	cancel()
 
-	if err := validator.Validate(ctx, "/tmp/config.yaml"); !errors.Is(err, context.Canceled) {
+	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Validate error = %v, want context cancellation", err)
+	}
+	if runner.ctx == nil || !errors.Is(runner.ctx.Err(), context.Canceled) {
+		t.Fatal("command runner did not receive the canceled context")
 	}
 }

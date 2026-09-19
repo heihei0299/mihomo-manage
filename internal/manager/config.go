@@ -49,6 +49,12 @@ func (v *configValidator) Validate(ctx context.Context, configPath string) error
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
