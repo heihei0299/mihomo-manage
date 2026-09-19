@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -283,5 +284,12 @@ func TestOSServiceManagerUnsupportedOS(t *testing.T) {
 	_, err := svc.IsRunning(context.Background(), "mihomo")
 	if err == nil {
 		t.Error("expected error for unsupported OS")
+	}
+	var unsupported UnsupportedPlatformError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("error = %v, want UnsupportedPlatformError", err)
+	}
+	if unsupported.Feature != "service" || unsupported.GOOS != "windows" {
+		t.Fatalf("unsupported error = %+v", unsupported)
 	}
 }
