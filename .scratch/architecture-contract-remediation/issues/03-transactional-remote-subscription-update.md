@@ -4,17 +4,17 @@
 
 **Blocked by:** 02: 统一配置写操作的序列化边界
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] 远程订阅下载结果在校验和提交前不会覆盖当前 subscription-data。
-- [ ] 候选订阅数据参与候选配置生成和 mihomo 配置校验。
-- [ ] 下载失败、生成失败、校验失败、备份失败或提交前失败时，旧配置和旧订阅缓存保持不变。
-- [ ] 成功 apply 后，生成配置和订阅缓存对应同一个候选版本。
-- [ ] 配置提交成功但 reload 失败时，状态为 `pending-reload`，并保留已提交配置和诊断信息。
-- [ ] 配置状态继续区分 validation failure、pre-commit apply failure、pending reload 和 applied。
-- [ ] 临时订阅文件、staging 目录和备份清理失败时，保留主错误与恢复错误，并记录可诊断状态。
-- [ ] 本地订阅源不发生无关的远程下载或缓存替换。
-- [ ] 通过 `ConfigManager` 的外部行为测试覆盖成功、失败、取消、恢复和状态记录，不改变调用方 interface。
+- [x] 远程订阅下载结果在校验和提交前不会覆盖当前 subscription-data。
+- [x] 候选订阅数据参与候选配置生成和 mihomo 配置校验。
+- [x] 下载失败、生成失败、校验失败、备份失败或提交前失败时，旧配置和旧订阅缓存保持不变。
+- [x] 成功 apply 后，生成配置和订阅缓存对应同一个候选版本。
+- [x] 配置提交成功但 reload 失败时，状态为 `pending-reload`，并保留已提交配置和诊断信息。
+- [x] 配置状态继续区分 validation failure、pre-commit apply failure、pending reload 和 applied。
+- [x] 临时订阅文件、staging 目录和备份清理失败时，保留主错误与恢复错误，并记录可诊断状态。
+- [x] 本地订阅源不发生无关的远程下载或缓存替换。
+- [x] 通过 `ConfigManager` 的外部行为测试覆盖成功、失败、取消、恢复和状态记录，不改变调用方 interface。
 
 ## Comments
 
@@ -30,3 +30,6 @@ State or invariant owner: config pipeline owns candidate subscription/config com
 Why this dependency is necessary: remote subscription data must remain staged until the generated config is validated and both persisted inputs can be recovered together
 Caller can use an existing role interface: yes; callers continue to use `ConfigManager`
 Reverse dependency introduced or strengthened: no
+
+Verification: `go test ./internal/manager -count=1` passed (220 tests); `go test . ./internal/cli -count=1` passed (47 tests).
+Review: full dual-axis review completed at `4d35075`; two incremental rounds completed, final review passed at `4f6f41a`.
