@@ -298,6 +298,35 @@ func TestPipelinePureSubscriptionWithoutOverride(t *testing.T) {
 	}
 }
 
+func TestDefaultOverrideDoesNotAssumeAutoProxy(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			OverrideFilePath:     true,
+			subscriptionDataFile: true,
+		},
+		written: map[string][]byte{
+			OverrideFilePath: defaultOverride,
+			subscriptionDataFile: []byte(`proxies:
+  - name: node1
+    type: ss
+    server: example.com
+    port: 443`),
+		},
+	}
+	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil)
+
+	preview, err := m.PreviewConfig(context.Background())
+	if err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
+	if !strings.Contains(preview, "include-all: true") {
+		t.Errorf("default proxy group should include all subscription proxies, got: %s", preview)
+	}
+	if strings.Contains(preview, "AUTO") {
+		t.Errorf("default proxy group must not assume an AUTO proxy, got: %s", preview)
+	}
+}
+
 // passValidator is a ConfigValidator that always passes
 type passValidator struct{}
 

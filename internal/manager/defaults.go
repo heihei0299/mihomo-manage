@@ -20,8 +20,9 @@ log-level: info
 proxy-groups:
   - name: Proxy
     type: select
+    include-all: true
     proxies:
-      - AUTO
+      - DIRECT
 
 rules:
   - MATCH,DIRECT
