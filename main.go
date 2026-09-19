@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -297,10 +298,16 @@ func cliLogs(args []string) int {
 }
 
 func cliLogsForOS(goos string, args []string) int {
-	if goos != "linux" {
-		err := manager.UnsupportedPlatformError{Feature: "logs", GOOS: goos}
+	if err := runCLILogsForOS(goos, args); err != nil {
 		fmt.Fprintf(os.Stderr, "logs failed: %v\n", err)
 		return 1
+	}
+	return 0
+}
+
+func runCLILogsForOS(goos string, args []string) error {
+	if goos != "linux" {
+		return manager.UnsupportedPlatformError{Feature: "logs", GOOS: goos}
 	}
 
 	follow := false
@@ -323,16 +330,18 @@ func cliLogsForOS(goos string, args []string) int {
 	cmd := exec.Command("journalctl", journalArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "logs failed: %v\n", err)
-		return 1
-	}
-	return 0
+	return cmd.Run()
 }
 
 func cliEditFile(cfg manager.ConfigManager, path string, args []string) int {
 	if len(args) != 1 || args[0] != "edit" {
 		fmt.Fprintf(os.Stderr, "usage: mihomo-manager %s edit\n", path)
+		return 1
+	}
+	before, beforeErr := os.ReadFile(path)
+	hadBefore := beforeErr == nil
+	if beforeErr != nil && !os.IsNotExist(beforeErr) {
+		fmt.Fprintf(os.Stderr, "editor result unavailable: %v\n", beforeErr)
 		return 1
 	}
 	cmd, err := configuredEditorCommand(path)
@@ -354,6 +363,10 @@ func cliEditFile(cfg manager.ConfigManager, path string, args []string) int {
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		fmt.Fprintln(os.Stderr, "editor result is empty")
+		return 1
+	}
+	if hadBefore && bytes.Equal(before, data) {
+		fmt.Fprintln(os.Stderr, "editor result is unchanged")
 		return 1
 	}
 	if err := cfg.UpdateConfig(context.Background()); err != nil {

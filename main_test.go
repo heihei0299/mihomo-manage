@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -72,6 +73,26 @@ func TestConfigOverrideEditSupportsEditorArguments(t *testing.T) {
 	}
 }
 
+func TestConfigOverrideEditUnchangedResultDoesNotUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(path, []byte("mode: rule\n"), 0o644); err != nil {
+		t.Fatalf("writing existing override: %v", err)
+	}
+	script := filepath.Join(t.TempDir(), "unchanged-editor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("writing editor script: %v", err)
+	}
+	t.Setenv("EDITOR", script)
+	cfg := &tuiMockConfig{}
+
+	if code := cliEditFile(cfg, path, []string{"edit"}); code != 1 {
+		t.Fatalf("exit code = %d, want failure", code)
+	}
+	if cfg.updateCalled {
+		t.Fatal("UpdateConfig must not be called when editor leaves content unchanged")
+	}
+}
+
 func TestConfigOverrideEditEmptyResultDoesNotUpdate(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "empty-editor.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\n: > \"$1\"\n"), 0o755); err != nil {
@@ -86,6 +107,17 @@ func TestConfigOverrideEditEmptyResultDoesNotUpdate(t *testing.T) {
 	}
 	if cfg.updateCalled {
 		t.Fatal("UpdateConfig must not be called for empty editor result")
+	}
+}
+
+func TestCLILogsForOSReturnsTypedUnsupportedError(t *testing.T) {
+	err := runCLILogsForOS("windows", nil)
+	var unsupported manager.UnsupportedPlatformError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("error = %v, want UnsupportedPlatformError", err)
+	}
+	if unsupported.Feature != "logs" || unsupported.GOOS != "windows" {
+		t.Fatalf("unsupported error = %+v", unsupported)
 	}
 }
 

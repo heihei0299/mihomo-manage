@@ -143,6 +143,8 @@ scheduled subscription-update 由 Linux systemd timer 或 Darwin launchd job 负
 
 `start`/`restart` 前会自动校验配置，非法配置拒绝启动。
 
+`logs` 使用 Linux 的 `journalctl`；Darwin 和其他非 Linux 平台返回明确的 unsupported 错误。
+
 ## 环境变量
 
 | 变量 | 说明 |

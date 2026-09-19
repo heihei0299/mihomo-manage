@@ -156,10 +156,31 @@ func TestTUIScheduleStatusShowsLegacy(t *testing.T) {
 	}
 }
 
+func TestTUIConfigViewShowsSubscriptionEditError(t *testing.T) {
+	m := model{configTab: configTabSubscription, execResult: "failed", actionErr: errors.New("config update failed")}
+	if got := m.configView(); !strings.Contains(got, "config update failed") {
+		t.Fatalf("config view = %q, want edit error", got)
+	}
+}
+
 func TestTUISubscriptionConfigOffersEditor(t *testing.T) {
 	m := model{configTab: configTabSubscription}
 	if !strings.Contains(m.configView(), "e) Edit") {
 		t.Fatalf("subscription config view should offer an editor: %s", m.configView())
+	}
+}
+
+func TestEditorCommandSupportsQuotedExecutable(t *testing.T) {
+	cmd, err := editorCommand(`"/tmp/my editor" --wait`, "/tmp/subscription")
+	if err != nil {
+		t.Fatalf("editorCommand failed: %v", err)
+	}
+	if cmd.Path != "/tmp/my editor" {
+		t.Fatalf("editor path = %q, want quoted path without quotes", cmd.Path)
+	}
+	want := []string{"/tmp/my editor", "--wait", "/tmp/subscription"}
+	if strings.Join(cmd.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("editor args = %v, want %v", cmd.Args, want)
 	}
 }
 

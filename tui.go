@@ -162,7 +162,10 @@ func editSubscriptionCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd
 		if strings.TrimSpace(string(data)) == "" {
 			return subscriptionEditMsg{err: fmt.Errorf("subscription source cannot be empty")}
 		}
-		return subscriptionEditMsg{err: cfg.SetSubscriptionSource(ctx, string(data))}
+		if err := cfg.SetSubscriptionSource(ctx, string(data)); err != nil {
+			return subscriptionEditMsg{err: fmt.Errorf("config update failed: %w", err)}
+		}
+		return subscriptionEditMsg{}
 	})
 }
 
@@ -277,6 +280,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeConfig
 				m.configTab = configTabSubscription
 				m.previewContent = ""
+				m.execResult = ""
+				m.actionErr = nil
 				return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 			}
 		case "r":
@@ -758,7 +763,13 @@ func (m model) configView() string {
 		}
 	}
 
-	return tabLine + content + "\n\nTab/← → switch tab  r) refresh preview  q) back"
+	editResult := ""
+	if m.execResult == "success" {
+		editResult = "\n✓ Configuration updated"
+	} else if m.execResult == "failed" {
+		editResult = fmt.Sprintf("\n✗ %v", m.actionErr)
+	}
+	return tabLine + content + editResult + "\n\nTab/← → switch tab  r) refresh preview  q) back"
 }
 
 func startTUI(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, schedule manager.ScheduleManager) error {
