@@ -4,12 +4,18 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] `SetSubscriptionSource`、`UpdateConfig` 和 `AdoptConfig` 等配置写操作使用同一个配置写入锁或等价的序列化边界。
-- [ ] 并发来源切换和订阅更新不会留下不匹配的 source marker、URL、subscription-data 或部分状态文件。
-- [ ] 并发 `config adopt` 和配置更新不会产生不完整的 override-file。
-- [ ] 锁等待、锁占用和上下文取消继续返回稳定、可分支的错误契约。
-- [ ] 写入失败时已有持久化状态保持可恢复，不引入新的部分提交状态。
-- [ ] 使用 fake filesystem、fake lock 和行为测试验证外部状态，不依赖真实 mihomo、网络或系统服务。
-- [ ] 不改变 YAML merge、override-file 或 `config adopt` 的业务语义。
+- [x] `SetSubscriptionSource`、`UpdateConfig` 和 `AdoptConfig` 等配置写操作使用同一个配置写入锁或等价的序列化边界。
+- [x] 并发来源切换和订阅更新不会留下不匹配的 source marker、URL、subscription-data 或部分状态文件。
+- [x] 并发 `config adopt` 和配置更新不会产生不完整的 override-file。
+- [x] 锁等待、锁占用和上下文取消继续返回稳定、可分支的错误契约。
+- [x] 写入失败时已有持久化状态保持可恢复，不引入新的部分提交状态。
+- [x] 使用 fake filesystem、fake lock 和行为测试验证外部状态，不依赖真实 mihomo、网络或系统服务。
+- [x] 不改变 YAML merge、override-file 或 `config adopt` 的业务语义。
+
+## Comments
+
+Verification: `go test ./internal/manager -run 'Test(SetSubscriptionSource|AdoptConfig|PreviewConfigUsesConfigUpdateLockForLegacyMigration|SetSubscriptionSourceHonorsCancellationWhileWaiting|ConfigWriteOperationsPropagateLockCancellation|UpdateConfig.*Lock|UpdateConfigPassesContextToLock|UpdateConfigReturnsBusyWhenLockUnavailable|UpdateConfigReleasesLockAfterSuccess|FileConfigUpdateLock)' -count=1` passed (24 tests).
+
+Review: full dual-axis review completed at `caa32ae`; two incremental rounds completed, final review passed at `fff2900`.
