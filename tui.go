@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -135,15 +134,6 @@ type scheduleDoneMsg struct {
 
 var schedulePresets = []time.Duration{0, time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour}
 
-func editorCommand(editor, path string) (*exec.Cmd, error) {
-	parts := strings.Fields(editor)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("editor is empty")
-	}
-	args := append(append([]string{}, parts[1:]...), path)
-	return exec.Command(parts[0], args...), nil
-}
-
 func editSubscriptionCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd {
 	file, err := os.CreateTemp("", "mihomo-subscription-*")
 	if err != nil {
@@ -155,11 +145,7 @@ func editSubscriptionCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd
 		return func() tea.Msg { return subscriptionEditMsg{err: err} }
 	}
 
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
-	command, err := editorCommand(editor, path)
+	command, err := configuredEditorCommand(path)
 	if err != nil {
 		os.Remove(path)
 		return func() tea.Msg { return subscriptionEditMsg{err: err} }

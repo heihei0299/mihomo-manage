@@ -40,11 +40,11 @@ func TestConfigOverrideEditOpensOverrideFile(t *testing.T) {
 	cfg := &tuiMockConfig{}
 	code := handleConfigCommand(&cli.Handler{}, cfg, context.Background(), []string{"override", "edit"})
 
-	if code != 0 {
-		t.Errorf("expected exit code 0, got %d", code)
+	if code != 1 {
+		t.Errorf("expected unreadable editor result to fail, got %d", code)
 	}
-	if !cfg.updateCalled {
-		t.Error("UpdateConfig should be called after editing")
+	if cfg.updateCalled {
+		t.Error("UpdateConfig must not be called when editor output cannot be read")
 	}
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -52,6 +52,53 @@ func TestConfigOverrideEditOpensOverrideFile(t *testing.T) {
 	}
 	if strings.TrimSpace(string(data)) != manager.OverrideFilePath {
 		t.Errorf("editor should open %s, got %q", manager.OverrideFilePath, string(data))
+	}
+}
+
+func TestConfigOverrideEditSupportsEditorArguments(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fake-editor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n[ \"$1\" = \"--wait\" ] || exit 7\nprintf 'mode: rule\\n' > \"$2\"\n"), 0o755); err != nil {
+		t.Fatalf("writing editor script: %v", err)
+	}
+	t.Setenv("EDITOR", script+" --wait")
+	path := filepath.Join(t.TempDir(), "override.yaml")
+	cfg := &tuiMockConfig{}
+
+	if code := cliEditFile(cfg, path, []string{"edit"}); code != 0 {
+		t.Fatalf("exit code = %d, want success", code)
+	}
+	if !cfg.updateCalled {
+		t.Fatal("UpdateConfig should be called after a non-empty editor result")
+	}
+}
+
+func TestConfigOverrideEditEmptyResultDoesNotUpdate(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "empty-editor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n: > \"$1\"\n"), 0o755); err != nil {
+		t.Fatalf("writing editor script: %v", err)
+	}
+	t.Setenv("EDITOR", script)
+	path := filepath.Join(t.TempDir(), "override.yaml")
+	cfg := &tuiMockConfig{}
+
+	if code := cliEditFile(cfg, path, []string{"edit"}); code != 1 {
+		t.Fatalf("exit code = %d, want failure", code)
+	}
+	if cfg.updateCalled {
+		t.Fatal("UpdateConfig must not be called for empty editor result")
+	}
+}
+
+func TestCLILogsRejectsUnsupportedPlatform(t *testing.T) {
+	var code int
+	errOut := captureStderr(t, func() {
+		code = cliLogsForOS("windows", nil)
+	})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want failure", code)
+	}
+	if !strings.Contains(errOut, "unsupported logs platform: windows") {
+		t.Fatalf("stderr = %q, want typed unsupported diagnostic", errOut)
 	}
 }
 
