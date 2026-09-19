@@ -365,6 +365,7 @@ func cliEditFile(cfg manager.ConfigManager, path string, args []string) int {
 		fmt.Fprintln(os.Stderr, "editor result is empty")
 		return 1
 	}
+	// A clean editor exit without changes is a successful no-op, not an apply.
 	if hadBefore && bytes.Equal(before, data) {
 		if !quietMode {
 			fmt.Println("config unchanged")
