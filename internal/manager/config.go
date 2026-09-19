@@ -98,6 +98,9 @@ func newConfigPipeline(fs FileSystem, source ReleaseSource, opts configPipelineO
 	} else {
 		p.lock = noopConfigUpdateLock{}
 	}
+	if err := p.recoverConfigTransaction(); err != nil {
+		p.warn(fmt.Sprintf("failed to recover config transaction: %v", err))
+	}
 	p.migrateLegacyTemplate()
 	return p
 }
@@ -135,6 +138,121 @@ func (p *configPipeline) migrateLegacyTemplate() {
 		return
 	}
 	p.warn("migrated config-template.yaml to override.yaml. The old file name is no longer recognized.")
+}
+
+const (
+	configTransactionPrepared        = "prepared"
+	configTransactionConfigCommitted = "config-committed"
+	configTransactionCommitted       = "committed"
+)
+
+type configTransactionState struct {
+	State                  string `json:"state"`
+	ConfigBackup           string `json:"config_backup,omitempty"`
+	ConfigExisted          bool   `json:"config_existed"`
+	SubscriptionBackup     string `json:"subscription_backup,omitempty"`
+	SubscriptionExisted    bool   `json:"subscription_existed"`
+	StagedConfigDir        string `json:"staged_config_dir,omitempty"`
+	StagedSubscriptionPath string `json:"staged_subscription_path,omitempty"`
+}
+
+func (p *configPipeline) writeConfigTransaction(transaction configTransactionState) error {
+	data, err := json.Marshal(transaction)
+	if err != nil {
+		return fmt.Errorf("encoding config transaction: %w", err)
+	}
+	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
+		return fmt.Errorf("creating state directory: %w", err)
+	}
+	tmpPath := configApplyTransactionFile + ".tmp"
+	if err := p.fs.WriteFile(tmpPath, data, filePermUserRW); err != nil {
+		return fmt.Errorf("writing config transaction: %w", err)
+	}
+	if err := p.fs.Rename(tmpPath, configApplyTransactionFile); err != nil {
+		return errors.Join(fmt.Errorf("committing config transaction: %w", err), p.fs.Remove(tmpPath))
+	}
+	return nil
+}
+
+func (p *configPipeline) restoreTransactionFile(path, backup string, existed bool) error {
+	if !existed {
+		return p.fs.Remove(path)
+	}
+	data, err := p.fs.ReadFile(backup)
+	if err != nil {
+		return fmt.Errorf("reading backup %s: %w", backup, err)
+	}
+	return p.fs.WriteFile(path, data, filePermUserRW)
+}
+
+func (p *configPipeline) cleanupConfigTransaction(transaction configTransactionState, removeMarker bool) error {
+	// config backups are durable recovery artifacts kept for the existing
+	// rollback/manual-recovery contract; subscription backups are transaction-local.
+	paths := []string{
+		transaction.StagedConfigDir,
+		transaction.StagedSubscriptionPath,
+		transaction.SubscriptionBackup,
+	}
+	if removeMarker {
+		paths = append(paths, configApplyTransactionFile)
+	}
+	var cleanupErrs []error
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if err := p.fs.Remove(path); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup transaction artifact %s: %w", path, err))
+		}
+	}
+	return errors.Join(cleanupErrs...)
+}
+
+func (p *configPipeline) recoverConfigTransactionLocked() error {
+	data, err := p.fs.ReadFile(configApplyTransactionFile)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading config transaction: %w", err)
+	}
+	var transaction configTransactionState
+	if err := json.Unmarshal(data, &transaction); err != nil {
+		return fmt.Errorf("decoding config transaction: %w", err)
+	}
+	if transaction.State == configTransactionCommitted {
+		return p.cleanupConfigTransaction(transaction, true)
+	}
+	if transaction.State != configTransactionPrepared && transaction.State != configTransactionConfigCommitted {
+		return fmt.Errorf("unknown config transaction state %q", transaction.State)
+	}
+	var restoreErrs []error
+	if err := p.restoreTransactionFile(configYAML, transaction.ConfigBackup, transaction.ConfigExisted); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("restore config: %w", err))
+	}
+	if transaction.SubscriptionBackup != "" || transaction.SubscriptionExisted {
+		if err := p.restoreTransactionFile(subscriptionDataFile, transaction.SubscriptionBackup, transaction.SubscriptionExisted); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restore subscription data: %w", err))
+		}
+	}
+	if len(restoreErrs) > 0 {
+		return errors.Join(restoreErrs...)
+	}
+	return p.cleanupConfigTransaction(transaction, true)
+}
+
+func (p *configPipeline) recoverConfigTransaction() error {
+	if !p.fs.FileExists(configApplyTransactionFile) {
+		if _, err := p.fs.ReadFile(configApplyTransactionFile); os.IsNotExist(err) {
+			return nil
+		}
+	}
+	release, err := p.acquireConfigUpdate(context.Background())
+	if err != nil {
+		return err
+	}
+	defer release()
+	return p.recoverConfigTransactionLocked()
 }
 
 func renderConfig(template, subscription, routingRules string) (string, error) {
@@ -508,45 +626,84 @@ func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubs
 		if err != nil {
 			return nil, p.cleanupApplyStaging(staged, candidate, err)
 		}
+		if err := p.fs.Chmod(candidate.path, filePermUserRW); err != nil {
+			return nil, p.cleanupApplyStaging(staged, candidate, fmt.Errorf("preparing subscription data: %w", err))
+		}
 	}
 
+	transaction := configTransactionState{
+		State:                  configTransactionPrepared,
+		ConfigExisted:          configSnapshot.exists,
+		SubscriptionExisted:    subscriptionSnapshot.exists,
+		StagedConfigDir:        staged.dir,
+		StagedSubscriptionPath: "",
+	}
+	if candidate != nil {
+		transaction.StagedSubscriptionPath = candidate.path
+	}
 	if configSnapshot.exists {
-		backupPath := fmt.Sprintf("%s.bak.%d", configYAML, time.Now().UnixNano())
-		if err := p.fs.WriteFile(backupPath, configSnapshot.data, filePermUserRW); err != nil {
-			return nil, p.cleanupApplyStaging(staged, candidate, err)
+		transaction.ConfigBackup = fmt.Sprintf("%s.bak.%d", configYAML, time.Now().UnixNano())
+		if err := p.fs.WriteFile(transaction.ConfigBackup, configSnapshot.data, filePermUserRW); err != nil {
+			return nil, p.cleanupTransactionBeforeCommit(staged, candidate, transaction, err)
 		}
 	}
 	if candidate != nil && subscriptionSnapshot.exists {
-		backupPath := fmt.Sprintf("%s.bak.%d", subscriptionDataFile, time.Now().UnixNano())
-		if err := p.fs.WriteFile(backupPath, subscriptionSnapshot.data, filePermUserRW); err != nil {
-			return nil, p.cleanupApplyStaging(staged, candidate, err)
+		transaction.SubscriptionBackup = fmt.Sprintf("%s.bak.%d", subscriptionDataFile, time.Now().UnixNano())
+		if err := p.fs.WriteFile(transaction.SubscriptionBackup, subscriptionSnapshot.data, filePermUserRW); err != nil {
+			return nil, p.cleanupTransactionBeforeCommit(staged, candidate, transaction, err)
 		}
+	}
+	if err := p.writeConfigTransaction(transaction); err != nil {
+		return nil, p.cleanupTransactionBeforeCommit(staged, candidate, transaction, err)
+	}
+
+	rollback := func(primary error) error {
+		var restoreErrs []error
+		if err := p.restoreTransactionFile(configYAML, transaction.ConfigBackup, transaction.ConfigExisted); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restore config: %w", err))
+		}
+		if candidate != nil {
+			if err := p.restoreTransactionFile(subscriptionDataFile, transaction.SubscriptionBackup, transaction.SubscriptionExisted); err != nil {
+				restoreErrs = append(restoreErrs, fmt.Errorf("restore subscription data: %w", err))
+			}
+		}
+		if len(restoreErrs) == 0 {
+			return errors.Join(primary, p.cleanupConfigTransaction(transaction, true))
+		}
+		return errors.Join(primary, errors.Join(restoreErrs...), p.cleanupStagedConfig(staged, p.cleanupStagedSubscription(candidate, nil)))
 	}
 
 	if err := p.fs.Rename(staged.path, configYAML); err != nil {
-		failure := fmt.Errorf("committing generated config: %w", err)
-		failure = errors.Join(failure, p.restoreFile(configYAML, configSnapshot))
-		return nil, p.cleanupApplyStaging(staged, candidate, failure)
+		return nil, rollback(fmt.Errorf("committing generated config: %w", err))
+	}
+	transaction.State = configTransactionConfigCommitted
+	if err := p.writeConfigTransaction(transaction); err != nil {
+		return nil, rollback(fmt.Errorf("recording config commit: %w", err))
 	}
 	if candidate != nil {
 		if err := p.fs.Rename(candidate.path, subscriptionDataFile); err != nil {
-			failure := fmt.Errorf("committing subscription data: %w", err)
-			failure = errors.Join(failure, p.restoreFile(configYAML, configSnapshot))
-			failure = errors.Join(failure, p.restoreFile(subscriptionDataFile, subscriptionSnapshot))
-			return nil, p.cleanupApplyStaging(staged, candidate, failure)
+			return nil, rollback(fmt.Errorf("committing subscription data: %w", err))
 		}
 	}
+	transaction.State = configTransactionCommitted
+	if err := p.writeConfigTransaction(transaction); err != nil {
+		return nil, rollback(fmt.Errorf("recording subscription commit: %w", err))
+	}
+	return p.cleanupConfigTransaction(transaction, true), nil
+}
 
+func (p *configPipeline) cleanupTransactionBeforeCommit(staged stagedConfig, candidate *stagedSubscription, transaction configTransactionState, primary error) error {
+	failure := p.cleanupApplyStaging(staged, candidate, primary)
 	var cleanupErrs []error
-	if err := p.fs.Remove(staged.dir); err != nil {
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup staged config: %w", err))
-	}
-	if candidate != nil {
-		if err := p.fs.Remove(candidate.path); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup subscription staging: %w", err))
+	for _, path := range []string{transaction.SubscriptionBackup} {
+		if path == "" {
+			continue
+		}
+		if err := p.fs.Remove(path); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup transaction artifact %s: %w", path, err))
 		}
 	}
-	return errors.Join(cleanupErrs...), nil
+	return errors.Join(failure, errors.Join(cleanupErrs...))
 }
 
 func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
@@ -575,6 +732,9 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		}
 	}()
 
+	if err := p.recoverConfigTransactionLocked(); err != nil {
+		return err
+	}
 	candidate, err = p.refreshSubscription(ctx)
 	if err != nil {
 		return err

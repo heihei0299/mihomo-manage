@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -262,6 +263,146 @@ func TestRemoteValidationFailureRetainsCleanupDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(status.ErrorSummary, "subscription staging cleanup failed") {
 		t.Fatalf("status = %+v, want cleanup diagnostic", status)
+	}
+}
+
+type recordingChmodFileSystem struct {
+	*fakeFileSystem
+	chmod map[string]uint32
+}
+
+func (fs *recordingChmodFileSystem) Chmod(path string, perm uint32) error {
+	if fs.chmod == nil {
+		fs.chmod = make(map[string]uint32)
+	}
+	fs.chmod[path] = perm
+	return fs.fakeFileSystem.Chmod(path, perm)
+}
+
+func TestRemoteSubscriptionStagingUsesConfigPermissions(t *testing.T) {
+	base := remoteApplyTestFileSystem()
+	fs := &recordingChmodFileSystem{fakeFileSystem: base}
+	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
+	linkStorage(base, &dl.fakeReleaseSource)
+	m := NewConfigManager(fs, dl, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	if got := fs.chmod[subscriptionDataFile+".tmp"]; got != filePermUserRW {
+		t.Fatalf("subscription staging mode = %o, want %o", got, filePermUserRW)
+	}
+}
+
+type failingBackupCleanupFileSystem struct {
+	*fakeFileSystem
+	err error
+}
+
+func (fs *failingBackupCleanupFileSystem) Remove(path string) error {
+	if strings.Contains(path, ".bak.") {
+		return fs.err
+	}
+	return fs.fakeFileSystem.Remove(path)
+}
+
+func TestRemoteBackupCleanupFailureRecordsAppliedWarning(t *testing.T) {
+	base := remoteApplyTestFileSystem()
+	fs := &failingBackupCleanupFileSystem{fakeFileSystem: base, err: errors.New("backup cleanup failed")}
+	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
+	linkStorage(base, &dl.fakeReleaseSource)
+	m := NewConfigManager(fs, dl, &passValidator{}, nil)
+
+	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "backup cleanup failed") {
+		t.Fatalf("UpdateConfig error = %v, want backup cleanup warning", err)
+	}
+	requireConfigApplyState(t, m, ConfigApplied)
+	status, _ := m.LastConfigApply(context.Background())
+	if !strings.Contains(status.ErrorSummary, "backup cleanup failed") {
+		t.Fatalf("status = %+v, want backup cleanup diagnostic", status)
+	}
+}
+
+type failingRestoreFileSystem struct {
+	*failingSubscriptionCommitFileSystem
+	restoreErr error
+}
+
+func (fs *failingRestoreFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	if path == configYAML {
+		return fs.restoreErr
+	}
+	return fs.fakeFileSystem.WriteFile(path, data, perm)
+}
+
+func TestRemoteRestoreFailureRetainsPrimaryAndRecoveryErrors(t *testing.T) {
+	base := remoteApplyTestFileSystem()
+	commit := &failingSubscriptionCommitFileSystem{fakeFileSystem: base, err: errors.New("subscription commit failed")}
+	fs := &failingRestoreFileSystem{failingSubscriptionCommitFileSystem: commit, restoreErr: errors.New("config restore failed")}
+	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
+	linkStorage(base, &dl.fakeReleaseSource)
+	m := NewConfigManager(fs, dl, &passValidator{}, nil)
+
+	err := m.UpdateConfig(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "subscription commit failed") || !strings.Contains(err.Error(), "config restore failed") {
+		t.Fatalf("UpdateConfig error = %v, want primary and restore errors", err)
+	}
+	status, statusErr := m.LastConfigApply(context.Background())
+	if statusErr != nil {
+		t.Fatalf("LastConfigApply failed: %v", statusErr)
+	}
+	if !strings.Contains(status.ErrorSummary, "config restore failed") {
+		t.Fatalf("status = %+v, want restore diagnostic", status)
+	}
+}
+
+func TestConfigManagerRecoversInterruptedRemoteCommit(t *testing.T) {
+	configBackup := configYAML + ".bak.recovery"
+	subscriptionBackup := subscriptionDataFile + ".bak.recovery"
+	stagedDir := configDir + "/.mihomo-config-staging-recovery"
+	stagedSubscription := subscriptionDataFile + ".tmp.recovery"
+	transaction := configTransactionState{
+		State:                  configTransactionConfigCommitted,
+		ConfigBackup:           configBackup,
+		ConfigExisted:          true,
+		SubscriptionBackup:     subscriptionBackup,
+		SubscriptionExisted:    true,
+		StagedConfigDir:        stagedDir,
+		StagedSubscriptionPath: stagedSubscription,
+	}
+	transactionData, err := json.Marshal(transaction)
+	if err != nil {
+		t.Fatalf("marshal transaction: %v", err)
+	}
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{
+			configApplyTransactionFile: true,
+			configYAML:                 true,
+			subscriptionDataFile:       true,
+			configBackup:               true,
+			subscriptionBackup:         true,
+			stagedDir:                  true,
+			stagedSubscription:         true,
+		},
+		written: map[string][]byte{
+			configApplyTransactionFile: transactionData,
+			configYAML:                 []byte("new config\n"),
+			subscriptionDataFile:       []byte("new subscription\n"),
+			configBackup:               []byte("old config\n"),
+			subscriptionBackup:         []byte("old subscription\n"),
+			stagedSubscription:         []byte("staged subscription\n"),
+		},
+	}
+
+	NewConfigManager(fs, &fakeReleaseSource{}, nil, nil)
+	if got := string(fs.written[configYAML]); got != "old config\n" {
+		t.Fatalf("recovered config = %q, want old config", got)
+	}
+	if got := string(fs.written[subscriptionDataFile]); got != "old subscription\n" {
+		t.Fatalf("recovered subscription = %q, want old subscription", got)
+	}
+	if _, exists := fs.written[configApplyTransactionFile]; exists {
+		t.Fatal("recovery transaction marker should be removed")
 	}
 }
 
