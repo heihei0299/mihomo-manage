@@ -109,10 +109,9 @@ type ServiceManager interface {
 	AutoStartEnabled(ctx context.Context, name string) (bool, error)
 }
 
-func NewConfigValidator(runners ...CommandRunner) ConfigValidator {
-	var runner CommandRunner = OSSystem{}
-	if len(runners) > 0 && runners[0] != nil {
-		runner = runners[0]
+func NewConfigValidator(runner CommandRunner) ConfigValidator {
+	if runner == nil {
+		panic("manager: command runner is required")
 	}
 	return &configValidator{cmd: runner}
 }

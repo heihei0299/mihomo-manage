@@ -24,7 +24,7 @@ func assertFileExists(t *testing.T, fs *fakeFileSystem, path string, msg string)
 
 func newLifecycleTestManager(fs *fakeFileSystem, source *fakeReleaseSource, svc *mockServiceManager) LifecycleManager {
 	linkStorage(fs, source)
-	return NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	return NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 }
 
 func TestLifecycleInstallThenStatus(t *testing.T) {
@@ -33,7 +33,7 @@ func TestLifecycleInstallThenStatus(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	life := NewLifecycleManager(fs, cmd, source, svc)
+	life := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 	ctrl := NewServiceControl(fs, cmd, svc, passConfigValidation)
 
 	life.Install(context.Background(), "v1.18.0", true, noopProgress)

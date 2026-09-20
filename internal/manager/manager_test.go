@@ -10,20 +10,25 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeFileSystem struct {
-	fileExists map[string]bool
-	written    map[string][]byte
-	removed    []string
-	renamed    map[string]string
+	fileExists    map[string]bool
+	fileExistsErr error
+	written       map[string][]byte
+	removed       []string
+	renamed       map[string]string
+	accessed      bool
 }
 
-func (m *fakeFileSystem) FileExists(path string) bool {
-	return m.fileExists[path]
+func (m *fakeFileSystem) FileExists(path string) (bool, error) {
+	m.accessed = true
+	return m.fileExists[path], m.fileExistsErr
 }
 
 func (m *fakeFileSystem) ReadFile(path string) ([]byte, error) {
+	m.accessed = true
 	if m.written == nil {
 		return nil, os.ErrNotExist
 	}
@@ -35,6 +40,7 @@ func (m *fakeFileSystem) ReadFile(path string) ([]byte, error) {
 }
 
 func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error {
+	m.accessed = true
 	if m.written == nil {
 		m.written = make(map[string][]byte)
 	}
@@ -46,7 +52,8 @@ func (m *fakeFileSystem) WriteFile(path string, data []byte, perm uint32) error 
 	return nil
 }
 
-func (m *fakeFileSystem) Remove(path string) error {
+func (m *fakeFileSystem) RemoveAll(path string) error {
+	m.accessed = true
 	m.removed = append(m.removed, path)
 	for existing := range m.written {
 		if existing == path || strings.HasPrefix(existing, path+"/") {
@@ -62,6 +69,7 @@ func (m *fakeFileSystem) Remove(path string) error {
 }
 
 func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
+	m.accessed = true
 	if m.renamed == nil {
 		m.renamed = make(map[string]string)
 	}
@@ -81,10 +89,12 @@ func (m *fakeFileSystem) Rename(oldPath, newPath string) error {
 }
 
 func (m *fakeFileSystem) MkdirAll(path string, perm uint32) error {
+	m.accessed = true
 	return nil
 }
 
 func (m *fakeFileSystem) Chmod(path string, perm uint32) error {
+	m.accessed = true
 	return nil
 }
 
@@ -314,7 +324,7 @@ func newTestManager() *testManager {
 		source: source,
 		svc:    svc,
 		ctrl:   NewServiceControl(fs, cmd, svc, passConfigValidation),
-		life:   NewLifecycleManager(fs, cmd, source, svc),
+		life:   NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{}),
 		cfg:    NewConfigManager(fs, source, &configValidator{}, func(ctx context.Context) error { return svc.Reload(ctx, serviceName) }),
 		sched:  NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager"),
 	}
@@ -325,6 +335,44 @@ type testError struct{ msg string }
 func (e testError) Error() string { return e.msg }
 
 func passConfigValidation(context.Context) error { return nil }
+func noopReload(context.Context) error           { return nil }
+
+type noopScheduleManager struct{}
+
+func (noopScheduleManager) SetSchedule(context.Context, time.Duration) error { return nil }
+func (noopScheduleManager) StopSchedule(context.Context) error               { return nil }
+func (noopScheduleManager) ScheduleStatus(context.Context) (time.Duration, bool, error) {
+	return 0, false, nil
+}
+
+func TestCriticalManagerDependenciesAreRequired(t *testing.T) {
+	fs := &fakeFileSystem{}
+	cmd := &fakeCmdRunner{}
+	source := &fakeReleaseSource{}
+	svc := &mockServiceManager{}
+	var noValidator ConfigValidator
+	var noReload func(context.Context) error
+
+	tests := []struct {
+		name      string
+		construct func()
+	}{
+		{"lifecycle schedule", func() { NewLifecycleManager(fs, cmd, source, svc, nil) }},
+		{"config validator", func() { NewConfigManager(fs, source, noValidator, noopReload) }},
+		{"config reload", func() { NewConfigManager(fs, source, &passValidator{}, noReload) }},
+		{"validator runner", func() { NewConfigValidator(nil) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected constructor to panic")
+				}
+			}()
+			tt.construct()
+		})
+	}
+}
 
 type orderedServiceManager struct {
 	*mockServiceManager
@@ -593,7 +641,7 @@ func TestParseVersionError(t *testing.T) {
 func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 	fs := &fakeFileSystem{}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
+	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
 
 	err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub")
 	if err != nil {
@@ -621,7 +669,7 @@ func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
+	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
 
 	m.UpdateConfig(context.Background())
 
@@ -637,7 +685,7 @@ func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
+	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
 
 	result, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -657,7 +705,7 @@ func TestUpdateConfigEmptyURL(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
+	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "URL is empty") {
@@ -677,7 +725,7 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &passValidator{}, nil)
+	m := NewConfigManager(fs, source, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -705,7 +753,7 @@ rules:
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, nil)
+	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -760,7 +808,7 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &passValidator{}, nil)
+	m := NewConfigManager(fs, source, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -775,6 +823,21 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 	}
 	if !hasBackup {
 		t.Error("expected a backup file config.yaml.bak.<timestamp> to be created")
+	}
+}
+
+func TestManagerOperationsReturnFileExistErrors(t *testing.T) {
+	wantErr := errors.New("stat failed")
+	fs := &fakeFileSystem{fileExistsErr: wantErr}
+
+	service := NewServiceControl(fs, &fakeCmdRunner{}, &mockServiceManager{}, passConfigValidation)
+	if _, err := service.Status(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("Status error = %v, want %v", err, wantErr)
+	}
+
+	lifecycle := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
+	if err := lifecycle.Uninstall(context.Background(), false, noopProgress); !errors.Is(err, wantErr) {
+		t.Fatalf("Uninstall error = %v, want %v", err, wantErr)
 	}
 }
 

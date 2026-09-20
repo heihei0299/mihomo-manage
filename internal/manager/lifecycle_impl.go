@@ -27,10 +27,9 @@ type lifecycleManager struct {
 	schedule ScheduleManager
 }
 
-func NewLifecycleManager(fs FileSystem, cmd CommandRunner, source ReleaseSource, svcMgr ServiceManager, schedules ...ScheduleManager) LifecycleManager {
-	var schedule ScheduleManager
-	if len(schedules) > 0 {
-		schedule = schedules[0]
+func NewLifecycleManager(fs FileSystem, cmd CommandRunner, source ReleaseSource, svcMgr ServiceManager, schedule ScheduleManager) LifecycleManager {
+	if schedule == nil {
+		panic("manager: schedule manager is required")
 	}
 	return &lifecycleManager{fs: fs, cmd: cmd, source: source, svcMgr: svcMgr, schedule: schedule}
 }
@@ -52,7 +51,7 @@ func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) (
 func cleanupArtifacts(fs FileSystem, paths ...string) error {
 	var cleanupErrs []error
 	for _, path := range paths {
-		if err := fs.Remove(path); err != nil {
+		if err := fs.RemoveAll(path); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s: %w", path, err))
 		}
 	}
@@ -102,7 +101,7 @@ func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version st
 	if err := ctx.Err(); err != nil {
 		return "", withCleanupError(err, m.fs, gzPath, tempPath)
 	}
-	if err := m.fs.Remove(gzPath); err != nil {
+	if err := m.fs.RemoveAll(gzPath); err != nil {
 		return "", withCleanupError(fmt.Errorf("cleanup downloaded artifact: %w", err), m.fs, gzPath, tempPath)
 	}
 	onProgress(ProgressEvent{Phase: fetchPhase, Message: "Download complete"})
@@ -171,13 +170,13 @@ func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, er
 	if rollbackErr := m.svcMgr.Unregister(rollbackCtx, serviceName); rollbackErr != nil {
 		rollbackErrs = append(rollbackErrs, fmt.Errorf("unregister service: %w", rollbackErr))
 	}
-	if rollbackErr := m.fs.Remove(binaryPath); rollbackErr != nil {
+	if rollbackErr := m.fs.RemoveAll(binaryPath); rollbackErr != nil {
 		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove binary: %w", rollbackErr))
 	}
-	if rollbackErr := m.fs.Remove(configDir); rollbackErr != nil {
+	if rollbackErr := m.fs.RemoveAll(configDir); rollbackErr != nil {
 		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove config: %w", rollbackErr))
 	}
-	if rollbackErr := m.fs.Remove(serviceUnitPath()); rollbackErr != nil {
+	if rollbackErr := m.fs.RemoveAll(serviceUnitPath()); rollbackErr != nil {
 		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove service unit: %w", rollbackErr))
 	}
 	failure := fmt.Errorf("install failed at %s: %w", phase, err)
@@ -218,7 +217,7 @@ func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath strin
 	if tempPath == localPath {
 		return installErr
 	}
-	if cleanupErr := m.fs.Remove(tempPath); cleanupErr != nil {
+	if cleanupErr := m.fs.RemoveAll(tempPath); cleanupErr != nil {
 		if installErr != nil {
 			return errors.Join(installErr, fmt.Errorf("cleanup local binary: %w", cleanupErr))
 		}
@@ -241,7 +240,11 @@ func (m *lifecycleManager) resolveLocalBinary(ctx context.Context, localPath str
 		}
 		return tempPath, nil
 	}
-	if !m.fs.FileExists(localPath) {
+	exists, err := m.fs.FileExists(localPath)
+	if err != nil {
+		return "", fmt.Errorf("checking local binary: %w", err)
+	}
+	if !exists {
 		return "", fmt.Errorf("file not found: %s", localPath)
 	}
 	return localPath, nil
@@ -262,7 +265,7 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Deploying binary"})
 	if err := m.fs.Rename(binarySrc, binaryPath); err != nil {
 		rollbackErr := m.rollbackInstall(ctx, "deploy rename", err)
-		if cleanupErr := m.fs.Remove(binarySrc); cleanupErr != nil {
+		if cleanupErr := m.fs.RemoveAll(binarySrc); cleanupErr != nil {
 			return errors.Join(rollbackErr, fmt.Errorf("cleanup deploy source: %w", cleanupErr))
 		}
 		return rollbackErr
@@ -329,13 +332,15 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 }
 
 func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onProgress ProgressCallback) error {
-	if !m.fs.FileExists(binaryPath) {
+	installed, err := m.fs.FileExists(binaryPath)
+	if err != nil {
+		return fmt.Errorf("checking mihomo installation: %w", err)
+	}
+	if !installed {
 		return ErrMihomoNotInstalled
 	}
-	if m.schedule != nil {
-		if err := m.schedule.StopSchedule(ctx); err != nil {
-			return fmt.Errorf("stop subscription schedule: %w", err)
-		}
+	if err := m.schedule.StopSchedule(ctx); err != nil {
+		return fmt.Errorf("stop subscription schedule: %w", err)
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseUninstallStop, Message: "Stopping mihomo"})
@@ -368,7 +373,7 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 
 	var cleanupErrs []error
 	for _, path := range []string{installRoot, managerRoot} {
-		if err := m.fs.Remove(path); err != nil {
+		if err := m.fs.RemoveAll(path); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s: %w", path, err))
 		}
 	}
@@ -389,7 +394,11 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 //	failure after replacement   -> restore old binary and prior running state
 //	rollback failure            -> return both primary and rollback errors
 func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error {
-	if !m.fs.FileExists(binaryPath) {
+	installed, err := m.fs.FileExists(binaryPath)
+	if err != nil {
+		return fmt.Errorf("checking mihomo installation: %w", err)
+	}
+	if !installed {
 		return ErrMihomoNotInstalled
 	}
 
@@ -540,7 +549,7 @@ func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPa
 	}
 
 	binaryRestored := true
-	if err := m.fs.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := m.fs.RemoveAll(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		binaryRestored = false
 		restoreErrs = append(restoreErrs, fmt.Errorf("remove new binary: %w", err))
 	}
@@ -549,7 +558,7 @@ func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPa
 		restoreErrs = append(restoreErrs, fmt.Errorf("restore old binary: %w", err))
 	}
 	if tempPath != "" {
-		if err := m.fs.Remove(tempPath); err != nil {
+		if err := m.fs.RemoveAll(tempPath); err != nil {
 			restoreErrs = append(restoreErrs, fmt.Errorf("remove temporary binary: %w", err))
 		}
 	}

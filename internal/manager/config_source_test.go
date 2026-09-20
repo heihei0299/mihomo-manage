@@ -49,7 +49,7 @@ func TestUpdateConfigReadURLError(t *testing.T) {
 		path: subscriptionURLFile,
 		err:  testError{"permission denied"},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &configValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &configValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Error("expected error when ReadFile fails on subscriptionURLFile")
@@ -66,7 +66,7 @@ func TestPreviewConfigSubscriptionReadError(t *testing.T) {
 		path: subscriptionDataFile,
 		err:  testError{"permission denied"},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &configValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &configValidator{}, noopReload)
 
 	if _, err := m.PreviewConfig(context.Background()); err == nil {
 		t.Error("expected error when ReadFile fails on subscriptionDataFile with non-ErrNotExist error")
@@ -94,26 +94,52 @@ func TestOldTemplatePlaceholderWarning(t *testing.T) {
 	}
 }
 
-func TestPipelineMigratesLegacyTemplate(t *testing.T) {
-	var warned string
+func TestConfigManagerConstructionHasNoSideEffects(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{legacyTemplatePath: true},
 		written:    map[string][]byte{legacyTemplatePath: []byte("port: 8888\n")},
 	}
-	newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{Warn: func(msg string) { warned = msg }})
+	lock := &fakeConfigUpdateLock{}
+	warned := false
 
-	if !fs.FileExists(OverrideFilePath) {
+	NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload,
+		WithConfigUpdateLock(lock),
+		WithConfigWarning(func(string) { warned = true }),
+	)
+
+	if fs.accessed || lock.acquired || warned {
+		t.Fatalf("constructor performed side effects: filesystem=%v lock=%v warning=%v", fs.accessed, lock.acquired, warned)
+	}
+}
+
+func TestConfigManagerPreparationReturnsFileSystemErrors(t *testing.T) {
+	wantErr := errors.New("stat failed")
+	m := NewConfigManager(&fakeFileSystem{fileExistsErr: wantErr}, &fakeReleaseSource{}, &passValidator{}, noopReload)
+
+	if _, err := m.PreviewConfig(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("PreviewConfig error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPipelineMigratesLegacyTemplate(t *testing.T) {
+	fs := &fakeFileSystem{
+		fileExists: map[string]bool{legacyTemplatePath: true},
+		written:    map[string][]byte{legacyTemplatePath: []byte("port: 8888\n")},
+	}
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	if _, err := m.PreviewConfig(context.Background()); err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
+
+	if exists, _ := fs.FileExists(OverrideFilePath); !exists {
 		t.Errorf("legacy template should be migrated to %s", OverrideFilePath)
 	}
-	if fs.FileExists(legacyTemplatePath) {
+	if exists, _ := fs.FileExists(legacyTemplatePath); exists {
 		t.Errorf("legacy template should no longer exist after migration")
 	}
 	data, err := fs.ReadFile(OverrideFilePath)
 	if err != nil || string(data) != "port: 8888\n" {
 		t.Errorf("migrated override should carry legacy content, got %q err %v", data, err)
-	}
-	if !strings.Contains(warned, "migrat") {
-		t.Errorf("expected migration warning, got: %q", warned)
 	}
 }
 
@@ -122,7 +148,10 @@ func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
 		fileExists: map[string]bool{legacyTemplatePath: true, OverrideFilePath: true},
 		written:    map[string][]byte{OverrideFilePath: []byte("port: 9999\n")},
 	}
-	newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{})
+	p := newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{})
+	if _, err := p.PreviewConfig(context.Background()); err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
 
 	if len(fs.renamed) != 0 {
 		t.Errorf("no rename should happen when override already exists, got: %v", fs.renamed)
@@ -131,7 +160,10 @@ func TestPipelineMigrationSkipsWhenOverrideExists(t *testing.T) {
 
 func TestPipelineMigrationNoopWhenNothingExists(t *testing.T) {
 	fs := &fakeFileSystem{}
-	newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{})
+	p := newConfigPipeline(fs, &fakeReleaseSource{}, configPipelineOptions{})
+	if _, err := p.PreviewConfig(context.Background()); err != nil {
+		t.Fatalf("PreviewConfig failed: %v", err)
+	}
 	if len(fs.renamed) != 0 {
 		t.Errorf("no rename should happen when neither file exists, got: %v", fs.renamed)
 	}
@@ -142,7 +174,7 @@ func TestSetRemoteSubscriptionSelectsRemoteSourceAndClearsLocalState(t *testing.
 		fileExists: map[string]bool{subscriptionDataFile: true},
 		written:    map[string][]byte{subscriptionDataFile: []byte("local: true\n")},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub.yaml"); err != nil {
 		t.Fatalf("SetSubscriptionSource failed: %v", err)
@@ -181,7 +213,7 @@ func TestSetSubscriptionSourceRollsBackWhenMarkerWriteFails(t *testing.T) {
 		path: subscriptionSourceFile,
 		err:  errors.New("marker write failed"),
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub.yaml"); err == nil {
 		t.Fatal("SetSubscriptionSource should report marker write failure")
@@ -202,7 +234,7 @@ func TestSetLocalSubscriptionSelectsLocalSourceAndClearsRemoteState(t *testing.T
 		fileExists: map[string]bool{subscriptionURLFile: true},
 		written:    map[string][]byte{subscriptionURLFile: []byte("https://example.com/sub.yaml")},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	const localData = "proxies:\n  - name: local\n"
 	if err := m.SetSubscriptionSource(context.Background(), localData); err != nil {
@@ -232,7 +264,7 @@ func TestPreviewMigratesSingleLegacyRemoteSource(t *testing.T) {
 		fileExists: map[string]bool{subscriptionURLFile: true},
 		written:    map[string][]byte{subscriptionURLFile: []byte("https://example.com/sub.yaml")},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if _, err := m.PreviewConfig(context.Background()); err != nil {
 		t.Fatalf("PreviewConfig failed: %v", err)
@@ -250,7 +282,7 @@ func TestPreviewRejectsConflictingLegacySources(t *testing.T) {
 			subscriptionDataFile: []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	_, err := m.PreviewConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
@@ -272,7 +304,7 @@ func TestLocalSourceDoesNotUseStaleRemoteURL(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &passValidator{}, nil)
+	m := NewConfigManager(fs, source, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -286,7 +318,7 @@ func TestInvalidSubscriptionSourceIsRejected(t *testing.T) {
 	fs := &fakeFileSystem{
 		written: map[string][]byte{subscriptionSourceFile: []byte("unknown\n")},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	_, err := m.PreviewConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "invalid subscription source") {
@@ -295,7 +327,7 @@ func TestInvalidSubscriptionSourceIsRejected(t *testing.T) {
 }
 
 func TestSetSubscriptionSourceRejectsEmptySource(t *testing.T) {
-	m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.SetSubscriptionSource(context.Background(), "  \n"); err == nil {
 		t.Fatal("SetSubscriptionSource should reject an empty source")
@@ -307,7 +339,7 @@ func TestUpdateConfigRejectsUnconfiguredSource(t *testing.T) {
 		fileExists: map[string]bool{OverrideFilePath: true},
 		written:    map[string][]byte{OverrideFilePath: []byte("mode: rule\n")},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "subscription source is not configured") {
 		t.Fatalf("UpdateConfig error = %v, want unconfigured source error", err)
@@ -329,7 +361,7 @@ func TestRemoteSourceRejectsEmptyURLInsteadOfUsingCachedData(t *testing.T) {
 			OverrideFilePath:       []byte("log-level: info\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "URL is empty") {
 		t.Fatalf("UpdateConfig error = %v, want empty URL error", err)

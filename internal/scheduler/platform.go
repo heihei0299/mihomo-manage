@@ -10,7 +10,7 @@ const filePermUserRW = 0644
 type FileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm uint32) error
-	Remove(path string) error
+	RemoveAll(path string) error
 }
 
 type CommandRunner interface {

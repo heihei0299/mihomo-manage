@@ -86,7 +86,7 @@ func (s *darwinPlatform) Stop(ctx context.Context) error {
 			return err
 		}
 	}
-	return s.fs.Remove(launchdSchedulePlist)
+	return s.fs.RemoveAll(launchdSchedulePlist)
 }
 
 func (s *darwinPlatform) isLoaded(ctx context.Context) (bool, error) {

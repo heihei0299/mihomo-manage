@@ -8,6 +8,32 @@ import (
 	"testing"
 )
 
+func TestOSSystemFileExistsReturnsFalseForMissingPath(t *testing.T) {
+	exists, err := (OSSystem{}).FileExists(t.TempDir() + "/missing")
+	if err != nil {
+		t.Fatalf("FileExists returned an error for a missing path: %v", err)
+	}
+	if exists {
+		t.Fatal("FileExists reported a missing path as existing")
+	}
+}
+
+func TestOSSystemFileExistsReturnsStatError(t *testing.T) {
+	exists, err := (OSSystem{}).FileExists("\x00")
+	if err == nil {
+		t.Fatal("FileExists should return non-NotExist stat errors")
+	}
+	if exists {
+		t.Fatal("FileExists should not report an invalid path as existing")
+	}
+}
+
+func TestOSSystemRemoveAllReturnsIOError(t *testing.T) {
+	if err := (OSSystem{}).RemoveAll("\x00"); err == nil {
+		t.Fatal("RemoveAll should return filesystem errors")
+	}
+}
+
 func TestOSSystemRunCommandHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

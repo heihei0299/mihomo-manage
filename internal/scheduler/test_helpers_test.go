@@ -30,7 +30,7 @@ func (f *fakeFileSystem) WriteFile(path string, data []byte, _ uint32) error {
 	return nil
 }
 
-func (f *fakeFileSystem) Remove(path string) error {
+func (f *fakeFileSystem) RemoveAll(path string) error {
 	f.removed = append(f.removed, path)
 	for existing := range f.written {
 		if existing == path || strings.HasPrefix(existing, path+"/") {

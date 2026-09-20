@@ -33,10 +33,10 @@ func init() {
 }
 
 type FileSystem interface {
-	FileExists(path string) bool
+	FileExists(path string) (bool, error)
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm uint32) error
-	Remove(path string) error
+	RemoveAll(path string) error
 	Rename(oldPath, newPath string) error
 	MkdirAll(path string, perm uint32) error
 	Chmod(path string, perm uint32) error
@@ -60,9 +60,15 @@ type ReleaseSource interface {
 // capabilities such as process inspection, archive handling, or system info.
 type OSSystem struct{}
 
-func (OSSystem) FileExists(path string) bool {
+func (OSSystem) FileExists(path string) (bool, error) {
 	_, err := os.Stat(path)
-	return err == nil
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (OSSystem) ReadFile(path string) ([]byte, error) {
@@ -73,7 +79,7 @@ func (OSSystem) WriteFile(path string, data []byte, perm uint32) error {
 	return os.WriteFile(path, data, os.FileMode(perm))
 }
 
-func (OSSystem) Remove(path string) error {
+func (OSSystem) RemoveAll(path string) error {
 	return os.RemoveAll(path)
 }
 

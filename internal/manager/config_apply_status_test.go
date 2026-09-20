@@ -39,7 +39,7 @@ func TestUpdateConfigCleansDownloadTempAfterFailure(t *testing.T) {
 			tempPath:               []byte("stale download"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{downloadErr: errors.New("download failed")}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report download failure")
@@ -63,7 +63,7 @@ func TestUpdateConfigDownloadFailureRecordsApplyStatus(t *testing.T) {
 			subscriptionURLFile:    []byte("https://example.com/sub.yaml"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{downloadErr: errors.New("download failed")}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{downloadErr: errors.New("download failed")}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report download failure")
@@ -76,11 +76,11 @@ type failingStagingCleanupFileSystem struct {
 	err error
 }
 
-func (fs *failingStagingCleanupFileSystem) Remove(path string) error {
+func (fs *failingStagingCleanupFileSystem) RemoveAll(path string) error {
 	if strings.Contains(path, ".mihomo-config-staging-") {
 		return fs.err
 	}
-	return fs.fakeFileSystem.Remove(path)
+	return fs.fakeFileSystem.RemoveAll(path)
 }
 
 func TestUpdateConfigStagingCleanupFailureRecordsApplyStatus(t *testing.T) {
@@ -119,7 +119,7 @@ func TestUpdateConfigRecordsAppliedStatus(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -143,7 +143,7 @@ func TestUpdateConfigValidationFailureRecordsStatusAndPreservesConfig(t *testing
 			configYAML:             []byte("old\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &failValidator{err: errors.New("invalid staged config")}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &failValidator{err: errors.New("invalid staged config")}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should fail validation")
@@ -191,7 +191,7 @@ func TestUpdateConfigReloadFailureRecordsPendingStatus(t *testing.T) {
 
 func TestLastConfigApplyReportsCorruptStateAsUnknown(t *testing.T) {
 	fs := &fakeFileSystem{written: map[string][]byte{configApplyStatusFile: []byte("not json")}}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	status, err := m.LastConfigApply(context.Background())
 	if err != nil {

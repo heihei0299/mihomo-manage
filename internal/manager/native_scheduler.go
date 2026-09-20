@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -60,7 +61,11 @@ func NewNativeScheduleManager(fs FileSystem, cmd CommandRunner) ScheduleManager 
 }
 
 func (m *nativeScheduleManager) SetSchedule(ctx context.Context, interval time.Duration) error {
-	if !m.fs.FileExists(binaryPath) {
+	installed, err := m.fs.FileExists(binaryPath)
+	if err != nil {
+		return fmt.Errorf("checking mihomo installation: %w", err)
+	}
+	if !installed {
 		return ErrMihomoNotInstalled
 	}
 	return m.platform.Set(ctx, interval, m.commandPath)

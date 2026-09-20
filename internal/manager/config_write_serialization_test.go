@@ -9,7 +9,7 @@ import (
 func TestSetSubscriptionSourceUsesConfigUpdateLock(t *testing.T) {
 	lock := &fakeConfigUpdateLock{}
 	fs := &fakeFileSystem{}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if err := m.SetSubscriptionSource(context.Background(), "local subscription"); err != nil {
 		t.Fatalf("SetSubscriptionSource failed: %v", err)
@@ -22,7 +22,7 @@ func TestSetSubscriptionSourceUsesConfigUpdateLock(t *testing.T) {
 func TestSetSubscriptionSourceBusyLeavesStateUntouched(t *testing.T) {
 	lock := &fakeConfigUpdateLock{err: ErrConfigUpdateBusy}
 	fs := &fakeFileSystem{written: map[string][]byte{subscriptionDataFile: []byte("old")}}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if err := m.SetSubscriptionSource(context.Background(), "new subscription"); !errors.Is(err, ErrConfigUpdateBusy) {
 		t.Fatalf("SetSubscriptionSource error = %v, want busy", err)
@@ -48,7 +48,7 @@ func TestAdoptConfigUsesConfigUpdateLock(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if _, err := m.AdoptConfig(context.Background(), false); err != nil {
 		t.Fatalf("AdoptConfig failed: %v", err)
@@ -70,7 +70,7 @@ func (l *waitingConfigUpdateLock) Acquire(ctx context.Context) (func(), error) {
 
 func TestSetSubscriptionSourceHonorsCancellationWhileWaiting(t *testing.T) {
 	lock := &waitingConfigUpdateLock{started: make(chan struct{})}
-	m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- m.SetSubscriptionSource(ctx, "local") }()
@@ -95,7 +95,7 @@ func TestConfigWriteOperationsPropagateLockCancellation(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(&fakeConfigUpdateLock{err: context.Canceled}))
+			m := NewConfigManager(&fakeFileSystem{}, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(&fakeConfigUpdateLock{err: context.Canceled}))
 			if err := test.run(m); !errors.Is(err, context.Canceled) {
 				t.Fatalf("operation error = %v, want cancellation", err)
 			}
@@ -112,7 +112,7 @@ func TestPreviewConfigUsesConfigUpdateLockForLegacyMigration(t *testing.T) {
 			subscriptionDataFile: []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if _, err := m.PreviewConfig(context.Background()); err != nil {
 		t.Fatalf("PreviewConfig failed: %v", err)
@@ -147,7 +147,7 @@ func TestAdoptConfigStagingFailurePreservesOverride(t *testing.T) {
 		},
 		err: errors.New("override staging failed"),
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if _, err := m.AdoptConfig(context.Background(), false); err == nil {
 		t.Fatal("AdoptConfig should report override staging failure")
@@ -168,7 +168,7 @@ func TestAdoptConfigBusyLeavesOverrideUntouched(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, nil, nil, WithConfigUpdateLock(lock))
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if _, err := m.AdoptConfig(context.Background(), false); !errors.Is(err, ErrConfigUpdateBusy) {
 		t.Fatalf("AdoptConfig error = %v, want busy", err)

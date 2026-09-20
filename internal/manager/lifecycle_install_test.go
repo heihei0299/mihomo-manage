@@ -32,7 +32,7 @@ func TestLifecycleInstallRejectsChecksumMismatch(t *testing.T) {
 	source := &fakeReleaseSource{expectedChecksum: strings.Repeat("0", 64)}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err == nil || !strings.Contains(err.Error(), "checksum") {
@@ -47,7 +47,7 @@ func TestLifecycleInstallFailsClosedWhenChecksumUnavailable(t *testing.T) {
 	fs := &fakeFileSystem{}
 	source := &fakeReleaseSource{checksumErr: errors.New("checksum metadata unavailable")}
 	linkStorage(fs, source)
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, &mockServiceManager{})
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, &mockServiceManager{}, noopScheduleManager{})
 
 	if err := m.Install(context.Background(), "v1.18.0", true, noopProgress); err == nil || !strings.Contains(err.Error(), "checksum unavailable") {
 		t.Fatalf("Install error = %v, want checksum-unavailable error", err)
@@ -61,7 +61,7 @@ func TestLifecycleInstallCleansArtifactsAfterDecompressFailure(t *testing.T) {
 	fs := &fakeFileSystem{}
 	source := &fakeReleaseSource{downloadData: []byte("not gzip")}
 	linkStorage(fs, source)
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, &mockServiceManager{})
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, &mockServiceManager{}, noopScheduleManager{})
 
 	if err := m.Install(context.Background(), "v1.18.0", true, noopProgress); err == nil || !strings.Contains(err.Error(), "decompress failed") {
 		t.Fatalf("Install error = %v, want decompress error", err)
@@ -81,7 +81,7 @@ func TestLifecycleLocalInstallSkipsRemoteChecksum(t *testing.T) {
 	}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, &mockServiceManager{})
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, &mockServiceManager{}, noopScheduleManager{})
 
 	if err := m.InstallFromLocal(context.Background(), localPath, false, noopProgress); err != nil {
 		t.Fatalf("InstallFromLocal failed: %v", err)
@@ -99,7 +99,7 @@ func TestLifecycleLocalInstallHonorsCanceledContext(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{})
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
 
 	if err := m.InstallFromLocal(ctx, localPath, false, noopProgress); err == nil {
 		t.Fatal("InstallFromLocal should stop before deployment when context is canceled")
@@ -115,7 +115,7 @@ func TestLifecycleInstallWritesDefaultOverride(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err != nil {
@@ -140,7 +140,7 @@ func TestInstallDownloadFails(t *testing.T) {
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{downloadErr: testError{"network error"}}
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	var events []ProgressEvent
 	err := m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {

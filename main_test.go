@@ -29,6 +29,18 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(out)
 }
 
+func TestHelpAndVersionExitBeforeRuntimeSetup(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	for _, arg := range []string{"--help", "--version"} {
+		t.Run(arg, func(t *testing.T) {
+			os.Args = []string{"mihomo-manager", arg}
+			main()
+		})
+	}
+}
+
 func TestConfigOverrideEditOpensOverrideFile(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "editor-log")
 	script := filepath.Join(t.TempDir(), "fake-editor.sh")

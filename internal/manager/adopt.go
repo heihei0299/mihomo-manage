@@ -32,6 +32,9 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 		return report, err
 	}
 	defer release()
+	if err := p.prepareLocked(); err != nil {
+		return report, err
+	}
 
 	cur, err := p.fs.ReadFile(configYAML)
 	if err != nil {
@@ -113,10 +116,10 @@ func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]
 	}
 	tmpPath := OverrideFilePath + ".tmp"
 	if err := p.fs.WriteFile(tmpPath, out, filePermUserRW); err != nil {
-		return errors.Join(fmt.Errorf("staging override file: %w", err), p.fs.Remove(tmpPath))
+		return errors.Join(fmt.Errorf("staging override file: %w", err), p.fs.RemoveAll(tmpPath))
 	}
 	if err := p.fs.Rename(tmpPath, OverrideFilePath); err != nil {
-		return errors.Join(fmt.Errorf("committing override file: %w", err), p.fs.Remove(tmpPath))
+		return errors.Join(fmt.Errorf("committing override file: %w", err), p.fs.RemoveAll(tmpPath))
 	}
 	return nil
 }

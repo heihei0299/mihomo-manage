@@ -30,6 +30,10 @@ func WithConfigUpdateLock(lock ConfigUpdateLock) configManagerOption {
 	return func(opts *configPipelineOptions) { opts.Lock = lock }
 }
 
+func WithConfigWarning(warn func(string)) configManagerOption {
+	return func(opts *configPipelineOptions) { opts.Warn = warn }
+}
+
 type noopConfigUpdateLock struct{}
 
 func (noopConfigUpdateLock) Acquire(context.Context) (func(), error) {
@@ -41,11 +45,7 @@ type configValidator struct {
 }
 
 func (v *configValidator) Validate(ctx context.Context, configPath string) error {
-	cmd := v.cmd
-	if cmd == nil {
-		cmd = OSSystem{}
-	}
-	out, err := cmd.RunCommand(ctx, binaryPath, "-t", "-d", filepath.Dir(configPath))
+	out, err := v.cmd.RunCommand(ctx, binaryPath, "-t", "-d", filepath.Dir(configPath))
 	if err == nil {
 		return nil
 	}
@@ -91,17 +91,13 @@ func newConfigPipeline(fs FileSystem, source ReleaseSource, opts configPipelineO
 	if opts.Warn != nil {
 		p.warn = opts.Warn
 	} else {
-		p.warn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
+		p.warn = func(string) {}
 	}
 	if opts.Lock != nil {
 		p.lock = opts.Lock
 	} else {
 		p.lock = noopConfigUpdateLock{}
 	}
-	if err := p.recoverConfigTransaction(); err != nil {
-		p.warn(fmt.Sprintf("failed to recover config transaction: %v", err))
-	}
-	p.migrateLegacyTemplate()
 	return p
 }
 
@@ -117,27 +113,46 @@ func (p *configPipeline) acquireConfigUpdate(ctx context.Context) (func(), error
 	return release, nil
 }
 
-// migrateLegacyTemplate renames the old config-template.yaml to the override
-// file on first use, so existing setups carry over without manual steps. It
-// runs once: after a successful rename the legacy path no longer exists.
-func (p *configPipeline) migrateLegacyTemplate() {
-	if !p.fs.FileExists(legacyTemplatePath) || p.fs.FileExists(OverrideFilePath) {
-		return
-	}
-	release, err := p.acquireConfigUpdate(context.Background())
+func (p *configPipeline) prepare(ctx context.Context) error {
+	release, err := p.acquireConfigUpdate(ctx)
 	if err != nil {
-		p.warn(fmt.Sprintf("failed to acquire config update lock for %s: %v", legacyTemplatePath, err))
-		return
+		return err
 	}
 	defer release()
-	if !p.fs.FileExists(legacyTemplatePath) || p.fs.FileExists(OverrideFilePath) {
-		return
+	return p.prepareLocked()
+}
+
+func (p *configPipeline) prepareLocked() error {
+	if err := p.recoverConfigTransactionLocked(); err != nil {
+		return fmt.Errorf("recovering config transaction: %w", err)
+	}
+	if err := p.migrateLegacyTemplateLocked(); err != nil {
+		return fmt.Errorf("migrating legacy config template: %w", err)
+	}
+	return nil
+}
+
+// migrateLegacyTemplateLocked renames the old config-template.yaml to the
+// override file on first use. The caller must hold the config update lock.
+func (p *configPipeline) migrateLegacyTemplateLocked() error {
+	shouldMigrate, err := p.shouldMigrateLegacyTemplate()
+	if err != nil || !shouldMigrate {
+		return err
 	}
 	if err := p.fs.Rename(legacyTemplatePath, OverrideFilePath); err != nil {
-		p.warn(fmt.Sprintf("failed to migrate %s: %v", legacyTemplatePath, err))
-		return
+		return fmt.Errorf("renaming %s: %w", legacyTemplatePath, err)
 	}
 	p.warn("migrated config-template.yaml to override.yaml. The old file name is no longer recognized.")
+	return nil
+}
+
+func (p *configPipeline) shouldMigrateLegacyTemplate() (bool, error) {
+	legacyExists, err := p.fs.FileExists(legacyTemplatePath)
+	if err != nil || !legacyExists {
+		return false, err
+	}
+	overrideExists, err := p.fs.FileExists(OverrideFilePath)
+	return !overrideExists, err
 }
 
 const (
@@ -170,14 +185,14 @@ func (p *configPipeline) writeConfigTransaction(transaction configTransactionSta
 		return fmt.Errorf("writing config transaction: %w", err)
 	}
 	if err := p.fs.Rename(tmpPath, configApplyTransactionFile); err != nil {
-		return errors.Join(fmt.Errorf("committing config transaction: %w", err), p.fs.Remove(tmpPath))
+		return errors.Join(fmt.Errorf("committing config transaction: %w", err), p.fs.RemoveAll(tmpPath))
 	}
 	return nil
 }
 
 func (p *configPipeline) restoreTransactionFile(path, backup string, existed bool) error {
 	if !existed {
-		return p.fs.Remove(path)
+		return p.fs.RemoveAll(path)
 	}
 	data, err := p.fs.ReadFile(backup)
 	if err != nil {
@@ -202,7 +217,7 @@ func (p *configPipeline) cleanupConfigTransaction(transaction configTransactionS
 		if path == "" {
 			continue
 		}
-		if err := p.fs.Remove(path); err != nil {
+		if err := p.fs.RemoveAll(path); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup transaction artifact %s: %w", path, err))
 		}
 	}
@@ -242,20 +257,6 @@ func (p *configPipeline) recoverConfigTransactionLocked() error {
 	return p.cleanupConfigTransaction(transaction, true)
 }
 
-func (p *configPipeline) recoverConfigTransaction() error {
-	if !p.fs.FileExists(configApplyTransactionFile) {
-		if _, err := p.fs.ReadFile(configApplyTransactionFile); os.IsNotExist(err) {
-			return nil
-		}
-	}
-	release, err := p.acquireConfigUpdate(context.Background())
-	if err != nil {
-		return err
-	}
-	defer release()
-	return p.recoverConfigTransactionLocked()
-}
-
 func renderConfig(template, subscription, routingRules string) (string, error) {
 	result := strings.ReplaceAll(template, "{{subscription}}", subscription)
 	result = strings.ReplaceAll(result, "{{routing_rules}}", routingRules)
@@ -282,7 +283,7 @@ func (p *configPipeline) restoreFile(path string, snapshot fileSnapshot) error {
 	if snapshot.exists {
 		return p.fs.WriteFile(path, snapshot.data, filePermUserRW)
 	}
-	return p.fs.Remove(path)
+	return p.fs.RemoveAll(path)
 }
 
 func (p *configPipeline) restoreSubscriptionState(snapshots map[string]fileSnapshot) error {
@@ -305,6 +306,9 @@ func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source strin
 		return err
 	}
 	defer release()
+	if err := p.prepareLocked(); err != nil {
+		return err
+	}
 
 	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
@@ -335,7 +339,7 @@ func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source strin
 		if err := p.fs.WriteFile(subscriptionURLFile, []byte(trimmed), filePermUserRW); err != nil {
 			return rollback(err)
 		}
-		if err := p.fs.Remove(subscriptionDataFile); err != nil {
+		if err := p.fs.RemoveAll(subscriptionDataFile); err != nil {
 			return rollback(fmt.Errorf("removing local subscription data: %w", err))
 		}
 		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermUserRW); err != nil {
@@ -347,7 +351,7 @@ func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source strin
 	if err := p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW); err != nil {
 		return rollback(err)
 	}
-	if err := p.fs.Remove(subscriptionURLFile); err != nil {
+	if err := p.fs.RemoveAll(subscriptionURLFile); err != nil {
 		return rollback(fmt.Errorf("removing remote subscription URL: %w", err))
 	}
 	if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermUserRW); err != nil {
@@ -361,12 +365,19 @@ const (
 	localSubscriptionSource  = "local"
 )
 
-func (p *configPipeline) filePresent(path string) bool {
-	if p.fs.FileExists(path) {
-		return true
+func (p *configPipeline) filePresent(path string) (bool, error) {
+	exists, err := p.fs.FileExists(path)
+	if err != nil || exists {
+		return exists, err
 	}
-	_, err := p.fs.ReadFile(path)
-	return err == nil
+	_, err = p.fs.ReadFile(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (p *configPipeline) requireSourceValue(path, missingMessage, emptyMessage string) error {
@@ -386,14 +397,22 @@ func (p *configPipeline) subscriptionSource() (string, error) {
 		source := strings.TrimSpace(string(marker))
 		switch source {
 		case remoteSubscriptionSource:
-			if !p.filePresent(subscriptionURLFile) {
+			present, err := p.filePresent(subscriptionURLFile)
+			if err != nil {
+				return "", fmt.Errorf("checking remote subscription URL: %w", err)
+			}
+			if !present {
 				return "", fmt.Errorf("remote subscription source is configured but its URL is missing")
 			}
 			if err := p.requireSourceValue(subscriptionURLFile, "reading remote subscription URL", "remote subscription URL is empty"); err != nil {
 				return "", err
 			}
 		case localSubscriptionSource:
-			if !p.filePresent(subscriptionDataFile) {
+			present, err := p.filePresent(subscriptionDataFile)
+			if err != nil {
+				return "", fmt.Errorf("checking local subscription data: %w", err)
+			}
+			if !present {
 				return "", fmt.Errorf("local subscription source is configured but its data is missing")
 			}
 			if err := p.requireSourceValue(subscriptionDataFile, "reading local subscription data", "local subscription data is empty"); err != nil {
@@ -408,8 +427,14 @@ func (p *configPipeline) subscriptionSource() (string, error) {
 		return "", fmt.Errorf("reading subscription source: %w", err)
 	}
 
-	hasRemote := p.filePresent(subscriptionURLFile)
-	hasLocal := p.filePresent(subscriptionDataFile)
+	hasRemote, err := p.filePresent(subscriptionURLFile)
+	if err != nil {
+		return "", fmt.Errorf("checking legacy remote subscription URL: %w", err)
+	}
+	hasLocal, err := p.filePresent(subscriptionDataFile)
+	if err != nil {
+		return "", fmt.Errorf("checking legacy local subscription data: %w", err)
+	}
 	switch {
 	case hasRemote && hasLocal:
 		return "", fmt.Errorf("conflicting legacy subscription sources; choose remote or local explicitly")
@@ -440,6 +465,9 @@ func (p *configPipeline) PreviewConfig(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer release()
+	if err := p.prepareLocked(); err != nil {
+		return "", err
+	}
 	return p.previewConfig(ctx, nil)
 }
 
@@ -498,7 +526,7 @@ func (p *configPipeline) writeConfigApplyStatus(status ConfigApplyStatus) error 
 		return fmt.Errorf("writing config apply status: %w", err)
 	}
 	if err := p.fs.Rename(tmpPath, configApplyStatusFile); err != nil {
-		p.fs.Remove(tmpPath)
+		p.fs.RemoveAll(tmpPath)
 		return fmt.Errorf("committing config apply status: %w", err)
 	}
 	return nil
@@ -552,7 +580,7 @@ func (p *configPipeline) refreshSubscription(ctx context.Context) (*stagedSubscr
 
 	tmpPath := subscriptionDataFile + ".tmp"
 	cleanupDownload := func(primary error) error {
-		return errors.Join(primary, p.fs.Remove(tmpPath))
+		return errors.Join(primary, p.fs.RemoveAll(tmpPath))
 	}
 	if err := p.source.Download(ctx, url, tmpPath); err != nil {
 		return nil, cleanupDownload(fmt.Errorf("fetching subscription: %w", err))
@@ -571,7 +599,7 @@ func (p *configPipeline) cleanupStagedSubscription(candidate *stagedSubscription
 	if candidate == nil {
 		return primary
 	}
-	if cleanupErr := p.fs.Remove(candidate.path); cleanupErr != nil {
+	if cleanupErr := p.fs.RemoveAll(candidate.path); cleanupErr != nil {
 		return errors.Join(primary, fmt.Errorf("cleanup subscription staging: %w", cleanupErr))
 	}
 	return primary
@@ -610,7 +638,7 @@ func (p *configPipeline) stageConfig(ctx context.Context, preview string) (stage
 }
 
 func (p *configPipeline) cleanupStagedConfig(staged stagedConfig, primary error) error {
-	if cleanupErr := p.fs.Remove(staged.dir); cleanupErr != nil {
+	if cleanupErr := p.fs.RemoveAll(staged.dir); cleanupErr != nil {
 		return errors.Join(primary, fmt.Errorf("cleanup staged config: %w", cleanupErr))
 	}
 	return primary
@@ -701,7 +729,7 @@ func (p *configPipeline) cleanupTransactionBeforeCommit(staged stagedConfig, can
 		if path == "" {
 			continue
 		}
-		if err := p.fs.Remove(path); err != nil {
+		if err := p.fs.RemoveAll(path); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup transaction artifact %s: %w", path, err))
 		}
 	}
@@ -734,7 +762,7 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		}
 	}()
 
-	if err := p.recoverConfigTransactionLocked(); err != nil {
+	if err := p.prepareLocked(); err != nil {
 		return err
 	}
 	candidate, err = p.refreshSubscription(ctx)
@@ -754,20 +782,18 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		return p.cleanupStagedSubscription(candidate, err)
 	}
 
-	if p.validate != nil {
-		if err := p.validate.Validate(ctx, staged.path); err != nil {
-			failure := p.cleanupApplyStaging(staged, candidate, err)
-			state := ConfigValidationFailed
-			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				state = ConfigApplyFailed
-			}
-			statusErr := p.recordConfigApply(state, preview, failure, candidateData())
-			statusRecorded = true
-			if statusErr != nil {
-				failure = errors.Join(failure, statusErr)
-			}
-			return failure
+	if err := p.validate.Validate(ctx, staged.path); err != nil {
+		failure := p.cleanupApplyStaging(staged, candidate, err)
+		state := ConfigValidationFailed
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			state = ConfigApplyFailed
 		}
+		statusErr := p.recordConfigApply(state, preview, failure, candidateData())
+		statusRecorded = true
+		if statusErr != nil {
+			failure = errors.Join(failure, statusErr)
+		}
+		return failure
 	}
 	if err := ctx.Err(); err != nil {
 		return p.cleanupApplyStaging(staged, candidate, err)
@@ -778,19 +804,17 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		return applyErr
 	}
 
-	if p.onReload != nil {
-		if err := p.onReload(ctx); err != nil {
-			failure := err
-			if postCommitCleanupErr != nil {
-				failure = errors.Join(failure, fmt.Errorf("cleanup staged config: %w", postCommitCleanupErr))
-			}
-			statusErr := p.recordConfigApply(ConfigPendingReload, preview, failure, candidateData())
-			statusRecorded = true
-			if statusErr != nil {
-				failure = errors.Join(failure, statusErr)
-			}
-			return failure
+	if err := p.onReload(ctx); err != nil {
+		failure := err
+		if postCommitCleanupErr != nil {
+			failure = errors.Join(failure, fmt.Errorf("cleanup staged config: %w", postCommitCleanupErr))
 		}
+		statusErr := p.recordConfigApply(ConfigPendingReload, preview, failure, candidateData())
+		statusRecorded = true
+		if statusErr != nil {
+			failure = errors.Join(failure, statusErr)
+		}
+		return failure
 	}
 
 	if postCommitCleanupErr != nil {
@@ -826,11 +850,10 @@ func (p *configPipeline) LastConfigApply(ctx context.Context) (ConfigApplyStatus
 	}
 }
 
-// Validate runs the configured ConfigValidator against the generated config.
-// A nil validator means validation is a no-op (validation not configured).
+// ValidateConfig runs the configured ConfigValidator against the generated config.
 func (p *configPipeline) ValidateConfig(ctx context.Context) error {
-	if p.validate == nil {
-		return nil
+	if err := p.prepare(ctx); err != nil {
+		return err
 	}
 	return p.validate.Validate(ctx, configYAML)
 }

@@ -75,7 +75,7 @@ func TestUpdateConfigStagingDirectoryFailureRecordsApplyStatus(t *testing.T) {
 		fakeFileSystem: localApplyTestFileSystem(),
 		err:            errors.New("staging directory unavailable"),
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report staging directory failure")
@@ -88,7 +88,7 @@ func TestUpdateConfigStagedWriteFailureRecordsApplyStatus(t *testing.T) {
 		fakeFileSystem: localApplyTestFileSystem(),
 		err:            errors.New("staged config is not writable"),
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report staged write failure")
@@ -104,7 +104,7 @@ func TestUpdateConfigBackupFailureRecordsApplyStatus(t *testing.T) {
 		fakeFileSystem: base,
 		err:            errors.New("backup is not writable"),
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report backup failure")
@@ -117,7 +117,7 @@ func TestUpdateConfigRenameFailureRecordsApplyStatus(t *testing.T) {
 		fakeFileSystem: localApplyTestFileSystem(),
 		err:            errors.New("rename failed"),
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report rename failure")
@@ -141,7 +141,7 @@ func TestUpdateConfigValidatesStagedConfigBeforeAtomicCommit(t *testing.T) {
 		},
 	}
 	validator := &recordingValidator{}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, validator, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, validator, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)

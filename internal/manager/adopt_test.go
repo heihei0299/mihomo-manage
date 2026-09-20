@@ -9,7 +9,7 @@ import (
 
 func TestAdoptConfigNoExistingConfig(t *testing.T) {
 	fs := &fakeFileSystem{}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	_, err := m.AdoptConfig(context.Background(), false)
 	if err == nil {
@@ -30,7 +30,7 @@ func TestAdoptConfigNoChanges(t *testing.T) {
 			configYAML:           []byte("port: 8888\nmode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	report, err := m.AdoptConfig(context.Background(), false)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestAdoptConfigWritesScalarDiff(t *testing.T) {
 			configYAML: []byte("port: 9999\nmode: rule\nsocks-port: 7891\ndns:\n  enable: true\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	report, err := m.AdoptConfig(context.Background(), false)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestAdoptConfigArraysReportedNotWritten(t *testing.T) {
 			configYAML:           []byte("proxies:\n  - name: node1\n  - name: node2\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	report, err := m.AdoptConfig(context.Background(), false)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestAdoptConfigArraysReportedNotWritten(t *testing.T) {
 	if len(report.Fields) != 0 {
 		t.Errorf("array diff should not be adopted as field, got %v", report.Fields)
 	}
-	if fs.FileExists(OverrideFilePath) {
+	if exists, _ := fs.FileExists(OverrideFilePath); exists {
 		t.Errorf("override file should not be created for array-only diff")
 	}
 }
@@ -122,7 +122,7 @@ func TestAdoptConfigIdempotent(t *testing.T) {
 			configYAML:           []byte("port: 9999\nmode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if _, err := m.AdoptConfig(context.Background(), false); err != nil {
 		t.Fatalf("first adopt failed: %v", err)
@@ -148,7 +148,7 @@ func TestAdoptConfigLargeDiffNeedsForce(t *testing.T) {
 			configYAML: []byte("port: 1111\nmode: global\nlog-level: debug\nallow-lan: true\nexternal-controller: 127.0.0.1:9999\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	report, err := m.AdoptConfig(context.Background(), false)
 	if !errors.Is(err, ErrAdoptNeedsConfirmation) {
@@ -157,7 +157,7 @@ func TestAdoptConfigLargeDiffNeedsForce(t *testing.T) {
 	if !report.LargeDiff || len(report.Fields) != 5 {
 		t.Errorf("expected 5 fields and LargeDiff, got %v", report)
 	}
-	if fs.FileExists(OverrideFilePath) {
+	if exists, _ := fs.FileExists(OverrideFilePath); exists {
 		t.Error("adopt should not write without force on large diff")
 	}
 

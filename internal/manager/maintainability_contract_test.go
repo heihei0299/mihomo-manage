@@ -13,7 +13,7 @@ func TestBranchableErrorContracts(t *testing.T) {
 			fileExists: map[string]bool{OverrideFilePath: true},
 			written:    map[string][]byte{OverrideFilePath: []byte("mode: rule\n")},
 		}
-		m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, nil)
+		m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 		err := m.UpdateConfig(context.Background())
 		if !errors.Is(err, ErrSubscriptionSourceNotConfigured) {
@@ -39,8 +39,7 @@ func TestBranchableErrorContracts(t *testing.T) {
 			&fakeFileSystem{},
 			&fakeCmdRunner{},
 			&fakeReleaseSource{},
-			&mockServiceManager{},
-		)
+			&mockServiceManager{}, noopScheduleManager{})
 
 		err := m.Upgrade(context.Background(), "v1.0.0", noopProgress)
 		if !errors.Is(err, ErrMihomoNotInstalled) {

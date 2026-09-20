@@ -40,13 +40,13 @@ func (fs *upgradeTestFileSystem) MkdirAll(path string, perm uint32) error {
 	return fs.fakeFileSystem.MkdirAll(path, perm)
 }
 
-func (fs *upgradeTestFileSystem) Remove(path string) error {
+func (fs *upgradeTestFileSystem) RemoveAll(path string) error {
 	if fs.missingBinaryOnRemove && path == binaryPath {
 		delete(fs.written, path)
 		delete(fs.fileExists, path)
 		return os.ErrNotExist
 	}
-	return fs.fakeFileSystem.Remove(path)
+	return fs.fakeFileSystem.RemoveAll(path)
 }
 
 type upgradeServiceManager struct {
@@ -70,7 +70,7 @@ func TestLifecycleUpgradeRejectsChecksumBeforeStopping(t *testing.T) {
 	source := &fakeReleaseSource{expectedChecksum: strings.Repeat("0", 64)}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	if err := m.Upgrade(context.Background(), "v1.18.0", noopProgress); err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("Upgrade error = %v, want checksum error", err)
@@ -88,7 +88,7 @@ func TestInstallLatestLookupFailureKeepsFallback(t *testing.T) {
 	source := &fakeReleaseSource{latestErr: errors.New("release lookup failed")}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	if err := m.Install(context.Background(), "latest", false, noopProgress); err != nil {
 		t.Fatalf("Install error = %v, want existing latest fallback", err)
@@ -107,7 +107,7 @@ func TestUpgradeDownloadFails(t *testing.T) {
 	source := &fakeReleaseSource{downloadErr: testError{"network error"}}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err == nil {
@@ -129,7 +129,7 @@ func TestUpgradeLatestIsResolvedOnlyOnce(t *testing.T) {
 	source := &fakeReleaseSource{latestVersion: "latest"}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	if err := m.Upgrade(context.Background(), "latest", noopProgress); err != nil {
 		t.Fatalf("Upgrade error = %v", err)
@@ -147,7 +147,7 @@ func TestUpgradeLatestLookupFailsBeforeStopping(t *testing.T) {
 	source := &fakeReleaseSource{latestErr: testError{"release lookup failed"}}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "latest", noopProgress)
 	if err == nil || !strings.Contains(err.Error(), "latest") {
@@ -169,7 +169,7 @@ func TestUpgradeReportsCheckAndFetchPhases(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: false}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 	var phases []InstallationPhase
 
 	if err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {
@@ -383,7 +383,7 @@ func TestUpgradeStopErrorRecoversIfStopMayHaveSucceeded(t *testing.T) {
 		mockServiceManager: &mockServiceManager{running: true, stopErr: primary},
 		stopErrStops:       true,
 	}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) {
@@ -414,7 +414,7 @@ func TestUpgradeStopErrorPreservesRecoveryFailure(t *testing.T) {
 		},
 		stopErrStops: true,
 	}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) || !errors.Is(err, recovery) {
@@ -434,7 +434,7 @@ func TestUpgradeBackupFailureResumesRunningInstance(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) {
@@ -462,7 +462,7 @@ func TestUpgradeReplacementFailureRestoresRunningInstance(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) {
@@ -489,7 +489,7 @@ func TestUpgradeReplacementFailurePreservesStoppedInstance(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) {
@@ -512,7 +512,7 @@ func TestUpgradeStartFailureRestoresRunningInstance(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true, startErrors: []error{primary, nil}}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) {
@@ -568,7 +568,7 @@ func TestUpgradeRollbackFailurePreservesPrimaryAndRecoveryErrors(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{running: true, startErrors: []error{primary}}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", noopProgress)
 	if !errors.Is(err, primary) || !errors.Is(err, recovery) {
@@ -589,7 +589,7 @@ func TestUpgradeCancellationBeforeStopLeavesInstanceUntouched(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(ctx, "v1.19.0", noopProgress)
 	if !errors.Is(err, context.Canceled) {
@@ -615,7 +615,7 @@ func TestUpgradeCancellationAfterReplacementRollsBack(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc)
+	m := NewLifecycleManager(fs, &fakeCmdRunner{}, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(ctx, "v1.19.0", noopProgress)
 	if !errors.Is(err, context.Canceled) {
@@ -669,7 +669,7 @@ func TestUpgradeNotInstalled(t *testing.T) {
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err == nil {
@@ -688,7 +688,7 @@ func TestListVersions(t *testing.T) {
 		},
 	}
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc)
+	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	versions, err := m.ListVersions(context.Background())
 	if err != nil {
@@ -703,7 +703,7 @@ func TestListVersions(t *testing.T) {
 }
 
 func TestListVersionsRejectsEmptyResult(t *testing.T) {
-	m := NewLifecycleManager(&fakeFileSystem{}, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{})
+	m := NewLifecycleManager(&fakeFileSystem{}, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
 
 	_, err := m.ListVersions(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "no versions") {

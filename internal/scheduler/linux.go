@@ -54,10 +54,10 @@ func (s *linuxPlatform) Stop(ctx context.Context) error {
 			return fmt.Errorf("disabling systemd schedule: %w", err)
 		}
 	}
-	if err := s.fs.Remove(systemdScheduleService); err != nil {
+	if err := s.fs.RemoveAll(systemdScheduleService); err != nil {
 		return fmt.Errorf("removing systemd schedule service: %w", err)
 	}
-	if err := s.fs.Remove(systemdScheduleTimer); err != nil {
+	if err := s.fs.RemoveAll(systemdScheduleTimer); err != nil {
 		return fmt.Errorf("removing systemd schedule timer: %w", err)
 	}
 	if _, err := s.cmd.RunCommand(ctx, "systemctl", "daemon-reload"); err != nil {
