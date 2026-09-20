@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -27,6 +28,19 @@ func captureStderr(t *testing.T, fn func()) string {
 	w.Close()
 	out, _ := io.ReadAll(r)
 	return string(out)
+}
+
+func TestTUIConfigWarningsDoNotWriteToStderr(t *testing.T) {
+	var stderr bytes.Buffer
+	configWarningSink(true, &stderr)("migration warning")
+	if stderr.Len() != 0 {
+		t.Fatalf("TUI warning sink wrote to stderr: %q", stderr.String())
+	}
+
+	configWarningSink(false, &stderr)("migration warning")
+	if !strings.Contains(stderr.String(), "warning: migration warning") {
+		t.Fatalf("CLI warning sink output = %q, want warning", stderr.String())
+	}
 }
 
 func TestHelpAndVersionExitBeforeRuntimeSetup(t *testing.T) {

@@ -12,10 +12,10 @@ Split `System` into three separate interfaces, each behind its own seam:
 
 ```go
 type FileSystem interface {
-    FileExists(path string) bool
+    FileExists(path string) (bool, error)
     ReadFile(path string) ([]byte, error)
     WriteFile(path string, data []byte, perm uint32) error
-    Remove(path string) error
+    RemoveAll(path string) error
     Rename(oldPath, newPath string) error
     MkdirAll(path string, perm uint32) error
     Chmod(path string, perm uint32) error
@@ -36,6 +36,8 @@ type ReleaseSource interface {
 
 ### Rationale
 
+- `FileExists` returns `false, nil` only for `os.ErrNotExist`; other stat errors remain observable
+- `RemoveAll` makes the recursive deletion semantics explicit at every call site
 - Each seam hides a genuine OS/network interaction behind a small interface
 - Tests mock only what they need (e.g., config tests mock `FileSystem`, lifecycle tests mock `FileSystem` + `CommandRunner`)
 - The deletion test passes for each seam independently
@@ -47,3 +49,4 @@ type ReleaseSource interface {
 - `mockSystem` splits into `fakeFileSystem`, `fakeCmdRunner`, `fakeReleaseSource`
 - Test surface narrows per test: each mock implements 2-7 methods instead of 12
 - Existing tests need refactoring to pass the right mock combinations
+- The filesystem contract is intentionally stricter than the former boolean/delete pair: callers must handle stat errors and explicitly acknowledge recursive cleanup

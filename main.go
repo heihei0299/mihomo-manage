@@ -84,9 +84,7 @@ func main() {
 	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svcMgr, sched)
 	cfg := manager.NewConfigManager(oss, oss, manager.NewConfigValidator(oss), func(ctx context.Context) error {
 		return svcMgr.Reload(ctx, manager.ServiceName)
-	}, manager.WithConfigUpdateLock(manager.NewFileConfigUpdateLock()), manager.WithConfigWarning(func(msg string) {
-		fmt.Fprintln(os.Stderr, "warning:", msg)
-	}))
+	}, manager.WithConfigUpdateLock(manager.NewFileConfigUpdateLock()), manager.WithConfigWarning(configWarningSink(len(args) == 0, os.Stderr)))
 	ctrl := manager.NewServiceControl(oss, oss, svcMgr, cfg.ValidateConfig)
 
 	stdout := io.Writer(os.Stdout)
@@ -208,6 +206,16 @@ func main() {
 
 	stop()
 	os.Exit(exitCode)
+}
+
+func configWarningSink(tui bool, stderr io.Writer) func(string) {
+	if tui {
+		// Bubble Tea owns the terminal while the TUI is running; do not bypass it.
+		return func(string) {}
+	}
+	return func(msg string) {
+		fmt.Fprintln(stderr, "warning:", msg)
+	}
 }
 
 func deprecatedError(msg string) int {
