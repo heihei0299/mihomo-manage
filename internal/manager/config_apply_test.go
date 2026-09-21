@@ -44,7 +44,7 @@ rules:
 	dl := &fakeDownloader{content: "proxies:\n  - name: node1\n    type: ss\n    server: example.com\n    port: 443"}
 	linkStorage(fs, &dl.fakeReleaseSource)
 
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -89,7 +89,7 @@ func TestLocalSubscriptionDataAppearsInConfig(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &passValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -120,7 +120,7 @@ func TestSubscriptionWithTopLevelKeysViaUpdate(t *testing.T) {
 	dl := &fakeDownloader{content: "port: 7890\nmode: rule\nproxies:\n  - name: node1\n    type: ss\n    server: example.com"}
 	linkStorage(fs, &dl.fakeReleaseSource)
 
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	// First update — this should download and write subscription data
 	err := m.UpdateConfig(context.Background())
@@ -166,7 +166,7 @@ func TestUpdateConfigWithValidatorPassesSubscriptionData(t *testing.T) {
 	dl := &fakeDownloader{content: "proxies:\n  - name: fetched-node\n    type: ss\n    server: example.com"}
 	linkStorage(fs, &dl.fakeReleaseSource)
 
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -188,7 +188,7 @@ func TestPipelineMergeOverridesBaseScalar(t *testing.T) {
 			subscriptionDataFile: []byte("port: 7890\nmode: rule\nsocks-port: 7891\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -225,7 +225,7 @@ rules:
   - DOMAIN-SUFFIX,example.com,Proxy`),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -257,7 +257,7 @@ func TestPipelineMergeOverridesNonAppendArrays(t *testing.T) {
 			subscriptionDataFile: []byte("listen:\n  - 0.0.0.0:9090\n  - 127.0.0.1:9091\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -280,7 +280,7 @@ func TestPipelinePureSubscriptionWithoutOverride(t *testing.T) {
 		fileExists: map[string]bool{subscriptionDataFile: true},
 		written:    map[string][]byte{subscriptionDataFile: []byte("port: 7890\nmode: rule\n")},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -313,7 +313,7 @@ func TestDefaultOverrideDoesNotAssumeAutoProxy(t *testing.T) {
     port: 443`),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {

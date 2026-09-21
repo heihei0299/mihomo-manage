@@ -325,7 +325,7 @@ func newTestManager() *testManager {
 		svc:    svc,
 		ctrl:   NewServiceControl(fs, cmd, svc, passConfigValidation),
 		life:   NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{}),
-		cfg:    NewConfigManager(fs, source, &configValidator{}, func(ctx context.Context) error { return svc.Reload(ctx, serviceName) }),
+		cfg:    newTestConfigManager(fs, source, &configValidator{}, func(ctx context.Context) error { return svc.Reload(ctx, serviceName) }),
 		sched:  NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager"),
 	}
 }
@@ -358,8 +358,9 @@ func TestCriticalManagerDependenciesAreRequired(t *testing.T) {
 		construct func()
 	}{
 		{"lifecycle schedule", func() { NewLifecycleManager(fs, cmd, source, svc, nil) }},
-		{"config validator", func() { NewConfigManager(fs, source, noValidator, noopReload) }},
-		{"config reload", func() { NewConfigManager(fs, source, &passValidator{}, noReload) }},
+		{"config validator", func() { newTestConfigManager(fs, source, noValidator, noopReload) }},
+		{"config reload", func() { newTestConfigManager(fs, source, &passValidator{}, noReload) }},
+		{"config update lock", func() { NewConfigManager(fs, source, &passValidator{}, noopReload) }},
 		{"validator runner", func() { NewConfigValidator(nil) }},
 	}
 	for _, tt := range tests {
@@ -641,7 +642,7 @@ func TestParseVersionError(t *testing.T) {
 func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 	fs := &fakeFileSystem{}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &configValidator{}, noopReload)
 
 	err := m.SetSubscriptionSource(context.Background(), "https://example.com/sub")
 	if err != nil {
@@ -669,7 +670,7 @@ func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
-	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &configValidator{}, noopReload)
 
 	m.UpdateConfig(context.Background())
 
@@ -685,7 +686,7 @@ func TestPreviewConfigMissingSubscriptionFile(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &configValidator{}, noopReload)
 
 	result, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -705,7 +706,7 @@ func TestUpdateConfigEmptyURL(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &configValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "URL is empty") {
@@ -725,7 +726,7 @@ func TestUpdateConfigNoExistingConfig(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {
@@ -753,7 +754,7 @@ rules:
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &configValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &configValidator{}, noopReload)
 
 	preview, err := m.PreviewConfig(context.Background())
 	if err != nil {
@@ -783,7 +784,7 @@ func TestUpdateConfigReloadsInstance(t *testing.T) {
 	}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{}
-	m := NewConfigManager(fs, source, &passValidator{}, func(ctx context.Context) error {
+	m := newTestConfigManager(fs, source, &passValidator{}, func(ctx context.Context) error {
 		return svc.Reload(context.Background(), serviceName)
 	})
 
@@ -808,7 +809,7 @@ func TestUpdateConfigCreatesBackup(t *testing.T) {
 		},
 	}
 	source := &fakeReleaseSource{}
-	m := NewConfigManager(fs, source, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, source, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err != nil {

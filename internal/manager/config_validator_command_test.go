@@ -76,7 +76,7 @@ func TestConfigApplyStatusIncludesValidationCommandDiagnostic(t *testing.T) {
 		out: "parse error at line 4",
 		err: errors.New("exit status 1"),
 	}
-	m := NewConfigManager(localApplyTestFileSystem(), &fakeReleaseSource{}, NewConfigValidator(runner), noopReload)
+	m := newTestConfigManager(localApplyTestFileSystem(), &fakeReleaseSource{}, NewConfigValidator(runner), noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report validation failure")

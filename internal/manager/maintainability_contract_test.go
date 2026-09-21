@@ -13,7 +13,7 @@ func TestBranchableErrorContracts(t *testing.T) {
 			fileExists: map[string]bool{OverrideFilePath: true},
 			written:    map[string][]byte{OverrideFilePath: []byte("mode: rule\n")},
 		}
-		m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+		m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 		err := m.UpdateConfig(context.Background())
 		if !errors.Is(err, ErrSubscriptionSourceNotConfigured) {

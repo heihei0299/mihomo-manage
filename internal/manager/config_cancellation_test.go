@@ -53,7 +53,7 @@ func TestUpdateConfigDownloadHonorsCancellation(t *testing.T) {
 		},
 	}
 	dl := &blockingSubscriptionDownloader{started: make(chan struct{})}
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- m.UpdateConfig(ctx) }()
@@ -75,7 +75,7 @@ func TestUpdateConfigValidationHonorsCancellation(t *testing.T) {
 		},
 	}
 	validator := &blockingConfigValidator{started: make(chan struct{})}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, validator, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, validator, noopReload)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- m.UpdateConfig(ctx) }()
@@ -97,7 +97,7 @@ func TestUpdateConfigPassesContextToLock(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 	type contextKey struct{}
 	key := contextKey{}
 	ctx := context.WithValue(context.Background(), key, "marker")
@@ -120,7 +120,7 @@ func TestUpdateConfigReturnsBusyWhenLockUnavailable(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if err := m.UpdateConfig(context.Background()); !errors.Is(err, ErrConfigUpdateBusy) {
 		t.Fatalf("UpdateConfig error = %v, want busy error", err)
@@ -143,7 +143,7 @@ func TestUpdateConfigReleasesLockAfterSuccess(t *testing.T) {
 			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload, WithConfigUpdateLock(lock))
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)

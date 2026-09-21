@@ -46,7 +46,7 @@ func TestRemoteCandidateIsUsedForValidation(t *testing.T) {
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(fs, &dl.fakeReleaseSource)
 	validator := &readingConfigValidator{fs: fs}
-	m := NewConfigManager(fs, dl, validator, noopReload)
+	m := newTestConfigManager(fs, dl, validator, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -60,7 +60,7 @@ func TestRemoteGenerationFailurePreservesSubscriptionCacheAndConfig(t *testing.T
 	fs := remoteApplyTestFileSystem()
 	dl := &fakeDownloader{content: "proxies: ["}
 	linkStorage(fs, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report candidate generation failure")
@@ -77,7 +77,7 @@ func TestLocalUpdateDoesNotDownloadOrReplaceSubscriptionCache(t *testing.T) {
 	fs := localApplyTestFileSystem()
 	dl := &fakeDownloader{content: "proxies:\n  - name: remote\n"}
 	linkStorage(fs, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -94,7 +94,7 @@ func TestRemoteValidationFailurePreservesSubscriptionCacheAndConfig(t *testing.T
 	fs := remoteApplyTestFileSystem()
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(fs, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &failValidator{err: errors.New("invalid candidate")}, noopReload)
+	m := newTestConfigManager(fs, dl, &failValidator{err: errors.New("invalid candidate")}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report candidate validation failure")
@@ -114,7 +114,7 @@ func TestRemoteApplyCommitsMatchingConfigAndSubscription(t *testing.T) {
 	fs := remoteApplyTestFileSystem()
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(fs, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -154,7 +154,7 @@ func TestRemoteSubscriptionCommitFailureRestoresConfigAndCache(t *testing.T) {
 	fs := &failingSubscriptionCommitFileSystem{fakeFileSystem: base, err: errors.New("subscription commit failed")}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report subscription commit failure")
@@ -172,7 +172,7 @@ func TestRemoteCommitFailurePreservesSubscriptionCacheAndConfig(t *testing.T) {
 	fs := &failingRenameFileSystem{fakeFileSystem: base, err: errors.New("config commit failed")}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report config commit failure")
@@ -202,7 +202,7 @@ func TestRemoteSubscriptionBackupFailurePreservesConfigAndCache(t *testing.T) {
 	fs := &failingSubscriptionBackupFileSystem{fakeFileSystem: base, err: errors.New("subscription backup failed")}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil {
 		t.Fatal("UpdateConfig should report subscription backup failure")
@@ -219,7 +219,7 @@ func TestRemoteReloadFailureKeepsCommittedConfigAndSubscription(t *testing.T) {
 	fs := remoteApplyTestFileSystem()
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(fs, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, func(context.Context) error {
+	m := newTestConfigManager(fs, dl, &passValidator{}, func(context.Context) error {
 		return errors.New("reload failed")
 	})
 
@@ -252,7 +252,7 @@ func TestRemoteValidationFailureRetainsCleanupDiagnostic(t *testing.T) {
 	fs := &failingSubscriptionCleanupFileSystem{fakeFileSystem: base, err: errors.New("subscription staging cleanup failed")}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &failValidator{err: errors.New("invalid candidate")}, noopReload)
+	m := newTestConfigManager(fs, dl, &failValidator{err: errors.New("invalid candidate")}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "subscription staging cleanup failed") {
 		t.Fatalf("UpdateConfig error = %v, want cleanup diagnostic", err)
@@ -284,7 +284,7 @@ func TestRemoteSubscriptionStagingUsesConfigPermissions(t *testing.T) {
 	fs := &recordingChmodFileSystem{fakeFileSystem: base}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
@@ -311,7 +311,7 @@ func TestRemoteBackupCleanupFailureRecordsAppliedWarning(t *testing.T) {
 	fs := &failingBackupCleanupFileSystem{fakeFileSystem: base, err: errors.New("backup cleanup failed")}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	if err := m.UpdateConfig(context.Background()); err == nil || !strings.Contains(err.Error(), "backup cleanup failed") {
 		t.Fatalf("UpdateConfig error = %v, want backup cleanup warning", err)
@@ -341,7 +341,7 @@ func TestRemoteRestoreFailureRetainsPrimaryAndRecoveryErrors(t *testing.T) {
 	fs := &failingRestoreFileSystem{failingSubscriptionCommitFileSystem: commit, restoreErr: errors.New("config restore failed")}
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(base, &dl.fakeReleaseSource)
-	m := NewConfigManager(fs, dl, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, dl, &passValidator{}, noopReload)
 
 	err := m.UpdateConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "subscription commit failed") || !strings.Contains(err.Error(), "config restore failed") {
@@ -395,7 +395,7 @@ func TestConfigManagerRecoversInterruptedRemoteCommit(t *testing.T) {
 		},
 	}
 
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 	if _, err := m.PreviewConfig(context.Background()); err != nil {
 		t.Fatalf("PreviewConfig failed: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestConfigManagerRecoversInterruptedFirstRemoteCommit(t *testing.T) {
 		},
 	}
 
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 	if _, err := m.PreviewConfig(context.Background()); err != nil {
 		t.Fatalf("PreviewConfig failed: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestRemoteValidationCancellationPreservesSubscriptionCache(t *testing.T) {
 	dl := &fakeDownloader{content: "proxies:\n  - name: new\n"}
 	linkStorage(fs, &dl.fakeReleaseSource)
 	validator := &blockingConfigValidator{started: make(chan struct{})}
-	m := NewConfigManager(fs, dl, validator, noopReload)
+	m := newTestConfigManager(fs, dl, validator, noopReload)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- m.UpdateConfig(ctx) }()

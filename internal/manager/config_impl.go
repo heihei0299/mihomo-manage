@@ -16,5 +16,8 @@ func NewConfigManager(fs FileSystem, source ReleaseSource, validate ConfigValida
 	for _, option := range options {
 		option(&pipelineOptions)
 	}
+	if pipelineOptions.Lock == nil {
+		panic("manager: config update lock is required")
+	}
 	return newConfigPipeline(fs, source, pipelineOptions)
 }

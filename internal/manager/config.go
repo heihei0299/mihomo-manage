@@ -34,12 +34,6 @@ func WithConfigWarning(warn func(string)) configManagerOption {
 	return func(opts *configPipelineOptions) { opts.Warn = warn }
 }
 
-type noopConfigUpdateLock struct{}
-
-func (noopConfigUpdateLock) Acquire(context.Context) (func(), error) {
-	return func() {}, nil
-}
-
 type configValidator struct {
 	cmd CommandRunner
 }
@@ -93,11 +87,10 @@ func newConfigPipeline(fs FileSystem, source ReleaseSource, opts configPipelineO
 	} else {
 		p.warn = func(string) {}
 	}
-	if opts.Lock != nil {
-		p.lock = opts.Lock
-	} else {
-		p.lock = noopConfigUpdateLock{}
+	if opts.Lock == nil {
+		panic("manager: config update lock is required")
 	}
+	p.lock = opts.Lock
 	return p
 }
 

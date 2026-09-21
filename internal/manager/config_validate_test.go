@@ -29,7 +29,7 @@ func (v *recordingValidator) Validate(ctx context.Context, configPath string) er
 func TestConfigManagerValidateConfigPropagatesFailure(t *testing.T) {
 	fs := &fakeFileSystem{}
 	want := errors.New("config validation failed")
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &failValidator{err: want}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &failValidator{err: want}, noopReload)
 
 	err := m.ValidateConfig(context.Background())
 	if !errors.Is(err, want) {
@@ -43,7 +43,7 @@ func TestConfigManagerValidateConfigSuccessNoSideEffects(t *testing.T) {
 	}
 	val := &recordingValidator{}
 	reloaded := false
-	m := NewConfigManager(fs, &fakeReleaseSource{}, val, func(ctx context.Context) error {
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, val, func(ctx context.Context) error {
 		reloaded = true
 		return nil
 	})
@@ -64,7 +64,7 @@ func TestConfigManagerValidateConfigSuccessNoSideEffects(t *testing.T) {
 
 func TestConfigManagerValidateConfigExplicitNoopValidatorPasses(t *testing.T) {
 	fs := &fakeFileSystem{}
-	m := NewConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
 
 	if err := m.ValidateConfig(context.Background()); err != nil {
 		t.Fatalf("no-op validator should pass validation, got %v", err)
