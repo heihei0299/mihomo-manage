@@ -10,12 +10,12 @@ import (
 )
 
 const (
-	binaryPath          = "/opt/mihomo/bin/mihomo"
-	configDir           = "/opt/mihomo/etc"
+	binaryPath           = "/opt/mihomo/bin/mihomo"
+	configDir            = "/opt/mihomo/etc"
 	overrideFilePath     = "/opt/mihomo/etc/override.yaml"
-	configYAML          = "/opt/mihomo/etc/config.yaml"
-	backupsDir          = "/opt/mihomo-manager/backups"
-	subscriptionURLFile = "/opt/mihomo-manager/state/subscription-url.txt"
+	configYAML           = "/opt/mihomo/etc/config.yaml"
+	backupsDir           = "/opt/mihomo-manager/backups"
+	subscriptionURLFile  = "/opt/mihomo-manager/state/subscription-url.txt"
 	subscriptionDataFile = "/opt/mihomo-manager/state/subscription-data.txt"
 )
 
