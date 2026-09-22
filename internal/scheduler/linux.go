@@ -28,7 +28,7 @@ func (s *linuxPlatform) Set(ctx context.Context, interval time.Duration, command
 		return fmt.Errorf("minimum interval is 1h, got %v", interval)
 	}
 	service := fmt.Sprintf("[Unit]\nDescription=mihomo subscription update\n\n[Service]\nType=oneshot\nExecStart=%s subscription update --quiet\n", commandPath)
-	timer := fmt.Sprintf("[Unit]\nDescription=Scheduled mihomo subscription update\n\n[Timer]\nOnUnitActiveSec=%ds\nPersistent=false\nUnit=%s\n\n[Install]\nWantedBy=timers.target\n", int64(interval.Seconds()), strings.TrimSuffix(systemdScheduleName, ".timer")+".service")
+	timer := fmt.Sprintf("[Unit]\nDescription=Scheduled mihomo subscription update\n\n[Timer]\nOnActiveSec=1s\nOnUnitActiveSec=%ds\nPersistent=false\nUnit=%s\n\n[Install]\nWantedBy=timers.target\n", int64(interval.Seconds()), strings.TrimSuffix(systemdScheduleName, ".timer")+".service")
 	if err := s.fs.WriteFile(systemdScheduleService, []byte(service), filePermUserRW); err != nil {
 		return fmt.Errorf("writing systemd schedule service: %w", err)
 	}

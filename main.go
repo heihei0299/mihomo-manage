@@ -450,9 +450,9 @@ func needsElevation(args []string) bool {
 	case "status", "versions", "v", "logs":
 		return false
 	case "config":
-		if len(args) > 1 && args[1] == "preview" {
-			return false
-		}
+		// Preview currently performs recovery and legacy migration while holding
+		// the root-owned config lock, so it must use the same elevation path as
+		// other config mutations.
 		return true
 	default:
 		return true

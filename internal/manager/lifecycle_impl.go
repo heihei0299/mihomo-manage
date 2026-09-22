@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -46,6 +47,23 @@ func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) (
 		return "", errors.New("resolve latest version: release has no tag")
 	}
 	return tag, nil
+}
+
+func (m *lifecycleManager) ensureInstallTargetAvailable() error {
+	paths := []string{binaryPath, configDir}
+	if servicePath, err := serviceUnitPathFor(runtime.GOOS); err == nil {
+		paths = append(paths, servicePath)
+	}
+	for _, target := range paths {
+		exists, err := m.fs.FileExists(target)
+		if err != nil {
+			return fmt.Errorf("checking existing installation %s: %w", target, err)
+		}
+		if exists {
+			return ErrMihomoAlreadyInstalled
+		}
+	}
+	return nil
 }
 
 func cleanupArtifacts(fs FileSystem, paths ...string) error {
@@ -190,6 +208,9 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 	if _, err := serviceUnitPathFor(runtime.GOOS); err != nil {
 		return err
 	}
+	if err := m.ensureInstallTargetAvailable(); err != nil {
+		return err
+	}
 	if version == "latest" {
 		if resolved, err := m.resolveVersion(ctx, version); err == nil {
 			version = resolved
@@ -202,11 +223,17 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 	if err := ctx.Err(); err != nil {
 		return withCleanupError(err, m.fs, tempPath)
 	}
-	return m.installBinary(ctx, tempPath, autoStart, onProgress)
+	if err := m.installBinary(ctx, tempPath, autoStart, onProgress); err != nil {
+		return withCleanupError(err, m.fs, tempPath)
+	}
+	return nil
 }
 
 func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress ProgressCallback) error {
 	if _, err := serviceUnitPathFor(runtime.GOOS); err != nil {
+		return err
+	}
+	if err := m.ensureInstallTargetAvailable(); err != nil {
 		return err
 	}
 	tempPath, err := m.resolveLocalBinary(ctx, localPath)
@@ -232,6 +259,9 @@ func (m *lifecycleManager) resolveLocalBinary(ctx context.Context, localPath str
 	}
 	if strings.HasSuffix(localPath, ".gz") {
 		tempPath := binaryPath + ".tmp.local"
+		if err := m.fs.MkdirAll(filepath.Dir(tempPath), filePermUserRWX); err != nil {
+			return "", fmt.Errorf("creating local binary directory: %w", err)
+		}
 		if err := m.decompressGzip(localPath, tempPath); err != nil {
 			return "", withCleanupError(err, m.fs, tempPath)
 		}
@@ -247,7 +277,21 @@ func (m *lifecycleManager) resolveLocalBinary(ctx context.Context, localPath str
 	if !exists {
 		return "", fmt.Errorf("file not found: %s", localPath)
 	}
-	return localPath, nil
+	data, err := m.fs.ReadFile(localPath)
+	if err != nil {
+		return "", fmt.Errorf("reading local binary: %w", err)
+	}
+	tempPath := binaryPath + ".tmp.local"
+	if err := m.fs.MkdirAll(filepath.Dir(tempPath), filePermUserRWX); err != nil {
+		return "", fmt.Errorf("creating local binary directory: %w", err)
+	}
+	if err := m.fs.WriteFile(tempPath, data, filePermUserRWX); err != nil {
+		return "", withCleanupError(fmt.Errorf("staging local binary: %w", err), m.fs, tempPath)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", withCleanupError(err, m.fs, tempPath)
+	}
+	return tempPath, nil
 }
 
 func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, autoStart bool, onProgress ProgressCallback) error {
@@ -262,13 +306,15 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 	if err != nil {
 		return err
 	}
+	if err := m.ensureInstallTargetAvailable(); err != nil {
+		return err
+	}
+	if err := m.fs.MkdirAll(filepath.Dir(binaryPath), filePermUserRWX); err != nil {
+		return fmt.Errorf("creating binary directory: %w", err)
+	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Deploying binary"})
 	if err := m.fs.Rename(binarySrc, binaryPath); err != nil {
-		rollbackErr := m.rollbackInstall(ctx, "deploy rename", err)
-		if cleanupErr := m.fs.RemoveAll(binarySrc); cleanupErr != nil {
-			return errors.Join(rollbackErr, fmt.Errorf("cleanup deploy source: %w", cleanupErr))
-		}
-		return rollbackErr
+		return fmt.Errorf("deploy rename: %w", err)
 	}
 	onProgress(ProgressEvent{Phase: PhaseDeploy, Message: "Binary deployed"})
 	if err := ctx.Err(); err != nil {
@@ -359,6 +405,9 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 	if err := m.svcMgr.Unregister(ctx, serviceName); err != nil {
 		return fmt.Errorf("unregister failed: %w", err)
 	}
+	if err := m.removeServiceUnit(ctx); err != nil {
+		return fmt.Errorf("remove service unit: %w", err)
+	}
 	onProgress(ProgressEvent{Phase: PhaseUninstallDeregister, Message: "Service removed"})
 
 	onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Cleaning up files"})
@@ -381,6 +430,29 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 		return err
 	}
 	onProgress(ProgressEvent{Phase: PhaseUninstallCleanup, Message: "Files removed"})
+	return nil
+}
+
+func (m *lifecycleManager) removeServiceUnit(ctx context.Context) error {
+	servicePath, err := serviceUnitPathFor(runtime.GOOS)
+	if err != nil {
+		return nil
+	}
+	exists, err := m.fs.FileExists(servicePath)
+	if err != nil {
+		return fmt.Errorf("checking service unit: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	if err := m.fs.RemoveAll(servicePath); err != nil {
+		return err
+	}
+	if runtime.GOOS == "linux" && m.cmd != nil {
+		if _, err := m.cmd.RunCommand(ctx, "systemctl", "daemon-reload"); err != nil {
+			return fmt.Errorf("systemctl daemon-reload: %w", err)
+		}
+	}
 	return nil
 }
 

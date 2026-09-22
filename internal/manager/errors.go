@@ -16,6 +16,10 @@ var (
 	// ErrMihomoNotInstalled means an operation requires an installed mihomo binary.
 	ErrMihomoNotInstalled = errors.New("mihomo is not installed")
 
+	// ErrMihomoAlreadyInstalled means installation would replace an existing
+	// managed installation or its configuration.
+	ErrMihomoAlreadyInstalled = errors.New("mihomo is already installed")
+
 	// ErrMihomoAlreadyRunning means a start operation found the instance running.
 	ErrMihomoAlreadyRunning = errors.New("mihomo is already running")
 
