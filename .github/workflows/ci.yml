@@ -9,18 +9,36 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
+
+      - name: check formatting
+        shell: bash
+        run: |
+          formatted="$(gofmt -l .)"
+          if [[ -n "$formatted" ]]; then
+            printf 'gofmt required for:\n%s\n' "$formatted"
+            exit 1
+          fi
+
+      - name: download modules
+        run: go mod download
 
       - name: test
-        run: go test ./...
+        run: go test -count=1 ./...
 
       - name: vet
         run: go vet ./...
