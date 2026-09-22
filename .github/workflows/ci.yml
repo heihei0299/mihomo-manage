@@ -31,6 +31,7 @@ jobs:
           formatted="$(gofmt -l .)"
           if [[ -n "$formatted" ]]; then
             printf 'gofmt required for:\n%s\n' "$formatted"
+            gofmt -d $formatted
             exit 1
           fi
 
