@@ -133,9 +133,10 @@ TUI 的 Config → Subscription 页面支持按 `e` 使用 `$EDITOR` 输入 URL 
 - 同名标量/映射：覆写文件**覆盖**订阅值
 - 订阅缺失的字段：覆写文件**补充**
 - 数组字段（`proxies`、`proxy-groups`、`rules`、`proxy-providers`、`rule-providers`）：默认**追加**到订阅数组末尾；标 `!replace` 时**整体替换**
+- 顶层字段写成 `field: !delete null` 时，从生成配置中**删除**；删除标记不会传给核心
 
 合并结果写入 `/opt/mihomo/etc/config.yaml`——**纯生成物**，手动修改会在下次刷新时丢失。
-想保留手动修改，运行 `config adopt` 将差异迁移进覆写文件（候选差异 ≥5 字段需 `--force` 确认）。
+想保留手动修改，运行 `config adopt` 将差异迁移进覆写文件（候选差异 ≥5 字段需 `--force` 确认）。顶层标量/映射的删除会保存为 `!delete`；嵌套键删除会将所在顶层映射保存为 `!replace`，防止深度合并恢复已删除的键。数组差异（包括删除整个数组字段）只报告，不自动采纳。
 
 `subscription update` 会先生成并校验临时配置，再原子替换最终配置；reload 失败或进程在确认重载前中断时，保留生成物并报告 `pending-reload`。事务记录保留到重载结果持久化；预览或校验时恢复记录不会自动重载服务。`status` 和 TUI 状态页显示最近一次配置应用结果（`applied`、`pending-reload`、`validation-failed` 或 `apply-failed`）。
 

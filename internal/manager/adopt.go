@@ -16,7 +16,7 @@ import (
 // and the rendered config (subscription + override file).
 type AdoptReport struct {
 	NoChanges bool
-	Fields    []string // scalar/map fields to be adopted into the override file
+	Fields    []string // scalar/map fields to be adopted, including deletions
 	ArrayDiff []string // array fields that differ (reported, never adopted)
 	LargeDiff bool     // len(Fields) >= 5
 }
@@ -58,6 +58,7 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 		return report, fmt.Errorf("parsing rendered config: %w", err)
 	}
 
+	replaceFields := map[string]bool{}
 	for k, v := range curMap {
 		rv, ok := rendMap[k]
 		if ok && reflect.DeepEqual(v, rv) {
@@ -67,7 +68,24 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 			report.ArrayDiff = append(report.ArrayDiff, k)
 			continue
 		}
+		if _, isList := rv.([]any); isList {
+			report.ArrayDiff = append(report.ArrayDiff, k)
+			continue
+		}
 		report.Fields = append(report.Fields, k)
+		if hasMapDeletion(v, rv) {
+			replaceFields[k] = true
+		}
+	}
+	for k, rv := range rendMap {
+		if _, exists := curMap[k]; exists {
+			continue
+		}
+		if _, isList := rv.([]any); isList {
+			report.ArrayDiff = append(report.ArrayDiff, k)
+		} else {
+			report.Fields = append(report.Fields, k)
+		}
 	}
 	sort.Strings(report.Fields)
 	sort.Strings(report.ArrayDiff)
@@ -86,15 +104,32 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 		return report, ErrAdoptNeedsConfirmation
 	}
 
-	if err := p.writeOverrideFields(report.Fields, curMap); err != nil {
+	if err := p.writeOverrideFields(report.Fields, curMap, replaceFields); err != nil {
 		return report, err
 	}
 	return report, nil
 }
 
+// A partial map cannot express deletions through deep merge. Adopt the whole
+// top-level map with !replace if any nested mapping key was removed.
+func hasMapDeletion(current, rendered any) bool {
+	curMap, curOK := current.(map[string]any)
+	rendMap, rendOK := rendered.(map[string]any)
+	if !curOK || !rendOK {
+		return false
+	}
+	for k, rv := range rendMap {
+		cv, exists := curMap[k]
+		if !exists || hasMapDeletion(cv, rv) {
+			return true
+		}
+	}
+	return false
+}
+
 // writeOverrideFields merges the given fields (values from curMap) into the
 // override file, preserving any content already present.
-func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]any) error {
+func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]any, replaceFields map[string]bool) error {
 	override := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	if data, err := p.fs.ReadFile(OverrideFilePath); err == nil {
 		if len(data) > 0 {
@@ -118,13 +153,18 @@ func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]
 		if err := value.Encode(curMap[k]); err != nil {
 			return fmt.Errorf("encoding adopted field %s: %w", k, err)
 		}
+		if _, exists := curMap[k]; !exists {
+			value.Tag = "!delete"
+		} else if replaceFields[k] {
+			value.Tag = "!replace"
+		}
 		found := false
 		for i := 0; i+1 < len(mapping.Content); i += 2 {
 			if mapping.Content[i].Value != k {
 				continue
 			}
 			previous := mapping.Content[i+1]
-			if strings.HasPrefix(previous.Tag, "!") && !strings.HasPrefix(previous.Tag, "!!") {
+			if strings.HasPrefix(value.Tag, "!!") && strings.HasPrefix(previous.Tag, "!") && !strings.HasPrefix(previous.Tag, "!!") && previous.Tag != "!delete" {
 				value.Tag = previous.Tag
 			}
 			value.HeadComment, value.LineComment, value.FootComment = previous.HeadComment, previous.LineComment, previous.FootComment

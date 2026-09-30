@@ -17,16 +17,19 @@ func mergeConfig(baseYAML, overlayYAML string) (string, error) {
 		return baseYAML, nil
 	}
 
-	// Empty base: strip !replace tags from the overlay so they never leak
+	// Empty base: apply overlay directives so their tags never leak
 	// into the output. Legacy placeholder templates may not parse — keep
 	// the raw text then (the deprecation warning path handles migration).
 	if strings.TrimSpace(baseYAML) == "" {
 		var cleaned any
-		replaceFields, err := parseOverlay(overlayYAML, &cleaned)
+		replaceFields, deleteFields, err := parseOverlay(overlayYAML, &cleaned)
 		if err != nil {
-			return overlayYAML, nil
+			if strings.Contains(overlayYAML, "{{subscription}}") || strings.Contains(overlayYAML, "{{routing_rules}}") {
+				return overlayYAML, nil
+			}
+			return "", fmt.Errorf("parsing overlay YAML: %w", err)
 		}
-		if len(replaceFields) == 0 {
+		if len(replaceFields) == 0 && len(deleteFields) == 0 {
 			return overlayYAML, nil
 		}
 		out, err := yaml.Marshal(cleaned)
@@ -40,7 +43,7 @@ func mergeConfig(baseYAML, overlayYAML string) (string, error) {
 		return "", fmt.Errorf("parsing base YAML: %w", err)
 	}
 
-	replaceFields, err := parseOverlay(overlayYAML, &overlay)
+	replaceFields, deleteFields, err := parseOverlay(overlayYAML, &overlay)
 	if err != nil {
 		return "", fmt.Errorf("parsing overlay YAML: %w", err)
 	}
@@ -49,10 +52,20 @@ func mergeConfig(baseYAML, overlayYAML string) (string, error) {
 	overlayMap, overlayOK := overlay.(map[string]any)
 
 	if !baseOK || !overlayOK {
+		if len(replaceFields) > 0 || len(deleteFields) > 0 {
+			out, err := yaml.Marshal(overlay)
+			if err != nil {
+				return "", fmt.Errorf("marshaling overlay YAML: %w", err)
+			}
+			return string(out), nil
+		}
 		return overlayYAML, nil
 	}
 
 	merged := deepMergeMap(baseMap, overlayMap, replaceFields)
+	for k := range deleteFields {
+		delete(merged, k)
+	}
 
 	out, err := yaml.Marshal(merged)
 	if err != nil {
@@ -63,14 +76,15 @@ func mergeConfig(baseYAML, overlayYAML string) (string, error) {
 }
 
 // parseOverlay parses the overlay YAML through a node tree, collecting
-// top-level fields tagged with !replace (the tag is stripped so the
-// value decodes as its natural type).
-func parseOverlay(overlayYAML string, out *any) (map[string]bool, error) {
+// top-level !replace and !delete directives. Deletions are removed from the
+// decoded overlay; directive tags never reach the generated core config.
+func parseOverlay(overlayYAML string, out *any) (replaceFields, deleteFields map[string]bool, err error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(overlayYAML), &root); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	replaceFields := map[string]bool{}
+	replaceFields = map[string]bool{}
+	deleteFields = map[string]bool{}
 	if len(root.Content) > 0 && root.Content[0].Kind == yaml.MappingNode {
 		m := root.Content[0]
 		for i := 0; i+1 < len(m.Content); i += 2 {
@@ -78,10 +92,24 @@ func parseOverlay(overlayYAML string, out *any) (map[string]bool, error) {
 			if val.Tag == "!replace" {
 				replaceFields[m.Content[i].Value] = true
 				val.Tag = "" // strip the tag so Decode infers the natural type
+			} else if val.Tag == "!delete" {
+				if val.Kind != yaml.ScalarNode || (val.Value != "null" && val.Value != "~" && val.Value != "") {
+					return nil, nil, fmt.Errorf("!delete field %s must have a null value", m.Content[i].Value)
+				}
+				deleteFields[m.Content[i].Value] = true
+				val.Tag = "!!null"
 			}
 		}
 	}
-	return replaceFields, root.Decode(out)
+	if err := root.Decode(out); err != nil {
+		return nil, nil, err
+	}
+	if mapping, ok := (*out).(map[string]any); ok {
+		for k := range deleteFields {
+			delete(mapping, k)
+		}
+	}
+	return replaceFields, deleteFields, nil
 }
 
 var appendFields = map[string]bool{
