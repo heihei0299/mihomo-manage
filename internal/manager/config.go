@@ -20,9 +20,7 @@ type ConfigValidator interface {
 	Validate(ctx context.Context, configPath string) error
 }
 
-type ConfigUpdateLock interface {
-	Acquire(ctx context.Context) (release func(), err error)
-}
+type ConfigUpdateLock = OperationLock
 
 type configManagerOption func(*configPipelineOptions)
 

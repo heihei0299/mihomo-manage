@@ -96,6 +96,11 @@ type Status struct {
 	AutoStartEnabled bool
 }
 
+// OperationLock serializes side effects on one managed instance across processes.
+type OperationLock interface {
+	Acquire(ctx context.Context) (release func(), err error)
+}
+
 type ServiceManager interface {
 	IsRunning(ctx context.Context, name string) (bool, error)
 	Register(ctx context.Context, name, serviceFilePath string) error

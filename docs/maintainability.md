@@ -15,13 +15,14 @@ the first compile-time boundary.
 
 | Area | Primary files | Owns |
 | --- | --- | --- |
-| Config | `config*.go`, `merge.go`, `adopt.go`, `lock.go` | subscription state, rendering, validation, transactional apply, adopt |
+| Config | `config*.go`, `merge.go`, `adopt.go` | subscription state, rendering, validation, transactional apply, adopt |
 | Lifecycle | `lifecycle*.go` | install, upgrade, uninstall, rollback |
 | Service | `service*.go`, `servicemanager.go` | service process control and platform service registration |
 | Schedule orchestration | `native_scheduler.go`, `schedule_manager.go` | installed prerequisite, legacy schedule migration, platform selection, caller-facing errors |
 | Native scheduler | `internal/scheduler/*` | systemd/launchd generation, native runtime state interpretation, platform scheduling |
 | OS seams | `system.go` | filesystem, command execution, release/network boundary implementations |
 | Shared contract | `manager.go`, role interface files, `errors.go` | shared domain contracts, public role contracts, caller-branchable errors |
+| Instance serialization | `lock.go` | cross-process lock shared by config and lifecycle; stable inode outside uninstall roots |
 | Shared paths | `paths.go` | genuinely cross-domain filesystem paths and shared filesystem permissions |
 | Bootstrap defaults | `defaults.go` | generated install/bootstrap override and config content |
 
@@ -209,10 +210,12 @@ package for a config-only, scheduler-only, or lifecycle-only change.
 
 Preferred first-read boundaries:
 
-- **Config:** `config*.go`, `merge.go`, `adopt.go`, `lock.go`, and the matching `config_*_test.go` files. Expand to service, lifecycle, or scheduler only for an explicit call dependency.
+- **Config:** `config*.go`, `merge.go`, `adopt.go`, and the matching `config_*_test.go` files. Expand to service, lifecycle, or scheduler only for an explicit call dependency.
 - **Schedule orchestration:** `native_scheduler.go`, `schedule_manager.go`, and manager schedule tests.
 - **Native scheduler:** `internal/scheduler/*` only. Expand to manager only when reviewing the package boundary or constructor wiring.
 - **Lifecycle:** `lifecycle*.go`, service role contracts, and the matching lifecycle tests. Expand only when the lifecycle path calls another area.
 
 This rule is intended to improve both human navigation and AI context/cache
 efficiency.
+
+Instance writes acquire the same `/run/mihomo-manager/instance.lock` across Config and Lifecycle. Lifecycle holds it through deployment, service transitions, and rollback; uninstall never removes this inode. Domain-specific busy errors remain caller-facing. This shared side-effect boundary introduces no reverse dependency between Config and Lifecycle.

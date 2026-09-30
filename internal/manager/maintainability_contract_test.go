@@ -35,7 +35,7 @@ func TestBranchableErrorContracts(t *testing.T) {
 	})
 
 	t.Run("upgrade requires installed mihomo", func(t *testing.T) {
-		m := NewLifecycleManager(
+		m := newTestLifecycleManager(
 			&fakeFileSystem{},
 			&fakeCmdRunner{},
 			&fakeReleaseSource{},

@@ -26,13 +26,17 @@ type lifecycleManager struct {
 	source   ReleaseSource
 	svcMgr   ServiceManager
 	schedule ScheduleManager
+	lock     OperationLock
 }
 
-func NewLifecycleManager(fs FileSystem, cmd CommandRunner, source ReleaseSource, svcMgr ServiceManager, schedule ScheduleManager) LifecycleManager {
+func NewLifecycleManager(fs FileSystem, cmd CommandRunner, source ReleaseSource, svcMgr ServiceManager, schedule ScheduleManager, lock OperationLock) LifecycleManager {
 	if schedule == nil {
 		panic("manager: schedule manager is required")
 	}
-	return &lifecycleManager{fs: fs, cmd: cmd, source: source, svcMgr: svcMgr, schedule: schedule}
+	if lock == nil {
+		panic("manager: lifecycle operation lock is required")
+	}
+	return &lifecycleManager{fs: fs, cmd: cmd, source: source, svcMgr: svcMgr, schedule: schedule, lock: lock}
 }
 
 func (m *lifecycleManager) resolveVersion(ctx context.Context, version string) (string, error) {
@@ -205,6 +209,14 @@ func (m *lifecycleManager) rollbackInstall(ctx context.Context, phase string, er
 }
 
 func (m *lifecycleManager) Install(ctx context.Context, version string, autoStart bool, onProgress ProgressCallback) error {
+	release, lockErr := m.lock.Acquire(ctx)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, err := serviceUnitPathFor(runtime.GOOS); err != nil {
 		return err
 	}
@@ -230,6 +242,14 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 }
 
 func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath string, autoStart bool, onProgress ProgressCallback) error {
+	release, lockErr := m.lock.Acquire(ctx)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, err := serviceUnitPathFor(runtime.GOOS); err != nil {
 		return err
 	}
@@ -378,6 +398,14 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 }
 
 func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onProgress ProgressCallback) error {
+	release, lockErr := m.lock.Acquire(ctx)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	installed, err := m.fs.FileExists(binaryPath)
 	if err != nil {
 		return fmt.Errorf("checking mihomo installation: %w", err)
@@ -466,6 +494,14 @@ func (m *lifecycleManager) removeServiceUnit(ctx context.Context) error {
 //	failure after replacement   -> restore old binary and prior running state
 //	rollback failure            -> return both primary and rollback errors
 func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error {
+	release, lockErr := m.lock.Acquire(ctx)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	installed, err := m.fs.FileExists(binaryPath)
 	if err != nil {
 		return fmt.Errorf("checking mihomo installation: %w", err)

@@ -12,15 +12,23 @@ import (
 
 const configUpdateLockWait = 2 * time.Second
 
-type fileConfigUpdateLock struct {
+type fileOperationLock struct {
 	path string
+	busy error
 }
 
 func NewFileConfigUpdateLock() ConfigUpdateLock {
-	return &fileConfigUpdateLock{path: subscriptionUpdateLockFile}
+	return &fileOperationLock{path: subscriptionUpdateLockFile, busy: ErrConfigUpdateBusy}
 }
 
-func (l *fileConfigUpdateLock) Acquire(ctx context.Context) (func(), error) {
+func NewFileInstanceOperationLock() OperationLock {
+	return &fileOperationLock{path: instanceOperationLockFile, busy: ErrInstanceBusy}
+}
+
+func (l *fileOperationLock) Acquire(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(l.path), 0755); err != nil {
 		return nil, fmt.Errorf("creating update lock directory: %w", err)
 	}
@@ -53,6 +61,9 @@ func (l *fileConfigUpdateLock) Acquire(ctx context.Context) (func(), error) {
 			return nil, ctx.Err()
 		case <-deadline.C:
 			_ = file.Close()
+			if l.busy != nil {
+				return nil, l.busy
+			}
 			return nil, ErrConfigUpdateBusy
 		case <-ticker.C:
 			if err := tryLock(); err == nil {

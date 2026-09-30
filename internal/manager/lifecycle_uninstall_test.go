@@ -12,7 +12,7 @@ func TestUninstallStopsNativeSchedule(t *testing.T) {
 	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	platform := &fakePlatformScheduler{active: true, interval: time.Hour}
 	schedule := NewScheduleManagerWithPlatform(fs, platform, "/opt/mihomo-manager/bin/mihomo-manager")
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, schedule)
+	m := newTestLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, schedule)
 
 	if err := m.Uninstall(context.Background(), false, noopProgress); err != nil {
 		t.Fatalf("Uninstall failed: %v", err)
@@ -27,7 +27,7 @@ func TestUninstallNotInstalled(t *testing.T) {
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Uninstall(context.Background(), false, func(e ProgressEvent) {})
 	if err == nil {
@@ -40,7 +40,7 @@ func TestUninstallCleanup(t *testing.T) {
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Uninstall(context.Background(), false, func(e ProgressEvent) {})
 	if err != nil {
@@ -59,7 +59,7 @@ func TestUninstallRemovesOnlyManagedRoots(t *testing.T) {
 			"/opt/mihomo.bak.123":                    []byte("kept uninstall backup"),
 		},
 	}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
 
 	if err := m.Uninstall(context.Background(), false, noopProgress); err != nil {
 		t.Fatalf("Uninstall failed: %v", err)
@@ -103,7 +103,7 @@ func TestUninstallCleanupErrorPreservesManagedRootOrder(t *testing.T) {
 		failPath:       managerRoot,
 		err:            wantErr,
 	}
-	m := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
 
 	err := m.Uninstall(context.Background(), false, noopProgress)
 	if !errors.Is(err, wantErr) {
@@ -125,7 +125,7 @@ func TestUninstallKeepBackup(t *testing.T) {
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{running: true}
-	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Uninstall(context.Background(), true, func(e ProgressEvent) {})
 	if err != nil {

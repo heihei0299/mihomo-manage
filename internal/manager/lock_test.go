@@ -10,8 +10,8 @@ import (
 
 func TestFileConfigUpdateLockHonorsCancellationWhileWaiting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config-update.lock")
-	first := &fileConfigUpdateLock{path: path}
-	second := &fileConfigUpdateLock{path: path}
+	first := &fileOperationLock{path: path}
+	second := &fileOperationLock{path: path}
 
 	release, err := first.Acquire(context.Background())
 	if err != nil {
@@ -28,8 +28,8 @@ func TestFileConfigUpdateLockHonorsCancellationWhileWaiting(t *testing.T) {
 
 func TestFileConfigUpdateLockReleasesAndHonorsCancellation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config-update.lock")
-	first := &fileConfigUpdateLock{path: path}
-	second := &fileConfigUpdateLock{path: path}
+	first := &fileOperationLock{path: path}
+	second := &fileOperationLock{path: path}
 
 	release, err := first.Acquire(context.Background())
 	if err != nil {

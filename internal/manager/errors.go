@@ -7,6 +7,9 @@ import (
 )
 
 var (
+	// ErrInstanceBusy means another writer owns the managed instance.
+	ErrInstanceBusy = errors.New("mihomo instance operation already in progress")
+
 	// ErrConfigUpdateBusy means another config apply already owns the update lock.
 	ErrConfigUpdateBusy = errors.New("configuration update already in progress")
 

@@ -33,7 +33,7 @@ func managerSourceDir(t *testing.T) string {
 
 func managerFileOwner(name string) string {
 	switch {
-	case strings.HasPrefix(name, "config"), name == "merge.go", name == "adopt.go", name == "lock.go":
+	case strings.HasPrefix(name, "config"), name == "merge.go", name == "adopt.go":
 		return "config"
 	case strings.HasPrefix(name, "lifecycle"):
 		return "lifecycle"
@@ -43,7 +43,7 @@ func managerFileOwner(name string) string {
 		return "schedule"
 	case name == "system.go":
 		return "os-seam"
-	case name == "manager.go", name == "errors.go", name == "paths.go", name == "defaults.go":
+	case name == "manager.go", name == "errors.go", name == "paths.go", name == "defaults.go", name == "lock.go":
 		return "shared"
 	default:
 		return ""

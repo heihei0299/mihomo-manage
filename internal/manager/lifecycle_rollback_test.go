@@ -34,7 +34,7 @@ func TestLifecycleInstallRollbackOnDeployFail(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Install(context.Background(), "v1.18.0", true, noopProgress)
 	if err == nil {
@@ -109,7 +109,7 @@ func TestInstallDeployFailsRollsBack(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs.fakeFileSystem, source)
 	svc := &mockServiceManager{}
-	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	var events []ProgressEvent
 	err := m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {
@@ -127,7 +127,7 @@ func TestUpgradeStartFailsRollsBack(t *testing.T) {
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true, startErr: testError{"start failed"}}
-	m := NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
+	m := newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{})
 
 	err := m.Upgrade(context.Background(), "v1.19.0", func(e ProgressEvent) {})
 	if err == nil {

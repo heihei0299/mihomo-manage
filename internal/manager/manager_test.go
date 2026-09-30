@@ -324,7 +324,7 @@ func newTestManager() *testManager {
 		source: source,
 		svc:    svc,
 		ctrl:   NewServiceControl(fs, cmd, svc, passConfigValidation),
-		life:   NewLifecycleManager(fs, cmd, source, svc, noopScheduleManager{}),
+		life:   newTestLifecycleManager(fs, cmd, source, svc, noopScheduleManager{}),
 		cfg:    newTestConfigManager(fs, source, &configValidator{}, func(ctx context.Context) error { return svc.Reload(ctx, serviceName) }),
 		sched:  NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager"),
 	}
@@ -357,7 +357,7 @@ func TestCriticalManagerDependenciesAreRequired(t *testing.T) {
 		name      string
 		construct func()
 	}{
-		{"lifecycle schedule", func() { NewLifecycleManager(fs, cmd, source, svc, nil) }},
+		{"lifecycle schedule", func() { newTestLifecycleManager(fs, cmd, source, svc, nil) }},
 		{"config validator", func() { newTestConfigManager(fs, source, noValidator, noopReload) }},
 		{"config reload", func() { newTestConfigManager(fs, source, &passValidator{}, noReload) }},
 		{"config update lock", func() { NewConfigManager(fs, source, &passValidator{}, noopReload) }},
@@ -836,7 +836,7 @@ func TestManagerOperationsReturnFileExistErrors(t *testing.T) {
 		t.Fatalf("Status error = %v, want %v", err, wantErr)
 	}
 
-	lifecycle := NewLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
+	lifecycle := newTestLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
 	if err := lifecycle.Uninstall(context.Background(), false, noopProgress); !errors.Is(err, wantErr) {
 		t.Fatalf("Uninstall error = %v, want %v", err, wantErr)
 	}

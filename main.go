@@ -81,7 +81,7 @@ func main() {
 	oss := &manager.OSSystem{}
 	svcMgr := manager.NewOSServiceManager(oss, oss)
 	sched := manager.NewNativeScheduleManager(oss, oss)
-	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svcMgr, sched)
+	lifecycle := manager.NewLifecycleManager(oss, oss, oss, svcMgr, sched, manager.NewFileInstanceOperationLock())
 	cfg := manager.NewConfigManager(oss, oss, manager.NewConfigValidator(oss), func(ctx context.Context) error {
 		return svcMgr.Reload(ctx, manager.ServiceName)
 	}, manager.WithConfigUpdateLock(manager.NewFileConfigUpdateLock()), manager.WithConfigWarning(configWarningSink(len(args) == 0, os.Stderr)))
