@@ -11,7 +11,7 @@ import (
 //
 //	validation-failed -> staged config was rejected; current config is unchanged
 //	apply-failed      -> apply failed before a successful commit/reload
-//	pending-reload    -> config was committed, but runtime reload failed
+//	pending-reload    -> config was committed, but runtime reload is unconfirmed
 //	applied           -> config was committed and reload succeeded
 //
 // An applied status may still carry ErrorSummary when only post-commit cleanup

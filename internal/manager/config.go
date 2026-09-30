@@ -156,14 +156,15 @@ const (
 )
 
 type configTransactionState struct {
-	State                  string `json:"state"`
-	ConfigBackup           string `json:"config_backup,omitempty"`
-	ConfigExisted          bool   `json:"config_existed"`
-	SubscriptionBackup     string `json:"subscription_backup,omitempty"`
-	SubscriptionStaged     bool   `json:"subscription_staged"`
-	SubscriptionExisted    bool   `json:"subscription_existed"`
-	StagedConfigDir        string `json:"staged_config_dir,omitempty"`
-	StagedSubscriptionPath string `json:"staged_subscription_path,omitempty"`
+	State                  string             `json:"state"`
+	ConfigBackup           string             `json:"config_backup,omitempty"`
+	ConfigExisted          bool               `json:"config_existed"`
+	SubscriptionBackup     string             `json:"subscription_backup,omitempty"`
+	SubscriptionStaged     bool               `json:"subscription_staged"`
+	SubscriptionExisted    bool               `json:"subscription_existed"`
+	StagedConfigDir        string             `json:"staged_config_dir,omitempty"`
+	StagedSubscriptionPath string             `json:"staged_subscription_path,omitempty"`
+	PendingApply           *ConfigApplyStatus `json:"pending_apply,omitempty"`
 }
 
 func (p *configPipeline) writeConfigTransaction(transaction configTransactionState) error {
@@ -231,6 +232,19 @@ func (p *configPipeline) recoverConfigTransactionLocked() error {
 		return fmt.Errorf("decoding config transaction: %w", err)
 	}
 	if transaction.State == configTransactionCommitted {
+		pending, err := p.pendingTransactionApply(transaction)
+		if err != nil {
+			return err
+		}
+		status, err := p.readConfigApplyStatus()
+		if err != nil {
+			return err
+		}
+		if !sameConfigApplyAttempt(status, pending) {
+			if err := p.writeConfigApplyStatus(pending); err != nil {
+				return err
+			}
+		}
 		return p.cleanupConfigTransaction(transaction, true)
 	}
 	if transaction.State != configTransactionPrepared && transaction.State != configTransactionConfigCommitted {
@@ -527,6 +541,10 @@ func (p *configPipeline) writeConfigApplyStatus(status ConfigApplyStatus) error 
 }
 
 func (p *configPipeline) recordConfigApply(state ConfigApplyState, preview string, applyErr error, subscriptionData []byte) error {
+	return p.writeConfigApplyStatus(newConfigApplyStatus(state, preview, applyErr, subscriptionData))
+}
+
+func newConfigApplyStatus(state ConfigApplyState, preview string, applyErr error, subscriptionData []byte) ConfigApplyStatus {
 	status := ConfigApplyStatus{
 		State:       state,
 		AttemptedAt: time.Now().UTC(),
@@ -538,7 +556,7 @@ func (p *configPipeline) recordConfigApply(state ConfigApplyState, preview strin
 	if applyErr != nil {
 		status.ErrorSummary = applyErr.Error()
 	}
-	return p.writeConfigApplyStatus(status)
+	return status
 }
 
 type stagedConfig struct {
@@ -638,7 +656,7 @@ func (p *configPipeline) cleanupStagedConfig(staged stagedConfig, primary error)
 	return primary
 }
 
-func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubscription) (postCommitCleanupErr, applyErr error) {
+func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubscription, pending ConfigApplyStatus) (postCommitCleanupErr, applyErr error) {
 	configSnapshot, err := p.snapshotFile(configYAML)
 	if err != nil {
 		return nil, p.cleanupApplyStaging(staged, candidate, err)
@@ -661,6 +679,7 @@ func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubs
 		SubscriptionExisted:    subscriptionSnapshot.exists,
 		StagedConfigDir:        staged.dir,
 		StagedSubscriptionPath: "",
+		PendingApply:           &pending,
 	}
 	if candidate != nil {
 		transaction.StagedSubscriptionPath = candidate.path
@@ -713,7 +732,8 @@ func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubs
 	if err := p.writeConfigTransaction(transaction); err != nil {
 		return nil, rollback(fmt.Errorf("recording subscription commit: %w", err))
 	}
-	return p.cleanupConfigTransaction(transaction, true), nil
+	// Keep the committed journal until the runtime outcome is durable.
+	return p.cleanupConfigTransaction(transaction, false), nil
 }
 
 func (p *configPipeline) cleanupTransactionBeforeCommit(staged stagedConfig, candidate *stagedSubscription, transaction configTransactionState, primary error) error {
@@ -793,38 +813,72 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		return p.cleanupApplyStaging(staged, candidate, err)
 	}
 
-	postCommitCleanupErr, applyErr := p.commitConfig(staged, candidate)
+	status := newConfigApplyStatus(ConfigPendingReload, preview, nil, candidateData())
+	status.ErrorSummary = "config committed; runtime reload has not been confirmed"
+	postCommitCleanupErr, applyErr := p.commitConfig(staged, candidate, status)
 	if applyErr != nil {
 		return applyErr
 	}
-
-	if err := p.onReload(ctx); err != nil {
-		failure := err
-		if postCommitCleanupErr != nil {
-			failure = errors.Join(failure, fmt.Errorf("cleanup staged config: %w", postCommitCleanupErr))
-		}
-		statusErr := p.recordConfigApply(ConfigPendingReload, preview, failure, candidateData())
-		statusRecorded = true
-		if statusErr != nil {
-			failure = errors.Join(failure, statusErr)
-		}
-		return failure
-	}
-
-	if postCommitCleanupErr != nil {
-		statusErr := p.recordConfigApply(ConfigApplied, preview, postCommitCleanupErr, candidateData())
-		statusRecorded = true
-		if statusErr != nil {
-			return errors.Join(postCommitCleanupErr, statusErr)
-		}
-		return postCommitCleanupErr
-	}
-	statusErr := p.recordConfigApply(ConfigApplied, preview, nil, candidateData())
+	// A committed journal can recover this status even if the write fails.
+	// Do not let the pre-commit failure handler mislabel committed config.
 	statusRecorded = true
-	return statusErr
+	if err := p.writeConfigApplyStatus(status); err != nil {
+		return errors.Join(postCommitCleanupErr, err)
+	}
+
+	reloadErr := p.onReload(ctx)
+	if reloadErr == nil {
+		status.State = ConfigApplied
+	}
+	failure := errors.Join(reloadErr, postCommitCleanupErr)
+	status.ErrorSummary = ""
+	if failure != nil {
+		status.ErrorSummary = failure.Error()
+	}
+	if err := p.writeConfigApplyStatus(status); err != nil {
+		return errors.Join(failure, err)
+	}
+	if err := p.fs.RemoveAll(configApplyTransactionFile); err != nil {
+		failure = errors.Join(failure, fmt.Errorf("cleanup config transaction: %w", err))
+		status.ErrorSummary = failure.Error()
+		return errors.Join(failure, p.writeConfigApplyStatus(status))
+	}
+	return failure
 }
 
 func (p *configPipeline) LastConfigApply(ctx context.Context) (ConfigApplyStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return ConfigApplyStatus{State: ConfigUnknown}, err
+	}
+	status, err := p.readConfigApplyStatus()
+	if err != nil {
+		return status, err
+	}
+	data, err := p.fs.ReadFile(configApplyTransactionFile)
+	if os.IsNotExist(err) {
+		return status, nil
+	}
+	if err != nil {
+		return ConfigApplyStatus{State: ConfigUnknown}, err
+	}
+	var transaction configTransactionState
+	if err := json.Unmarshal(data, &transaction); err != nil {
+		return ConfigApplyStatus{State: ConfigUnknown}, fmt.Errorf("decoding config transaction: %w", err)
+	}
+	if transaction.State != configTransactionCommitted {
+		return status, nil
+	}
+	pending, err := p.pendingTransactionApply(transaction)
+	if err != nil {
+		return ConfigApplyStatus{State: ConfigUnknown}, err
+	}
+	if sameConfigApplyAttempt(status, pending) {
+		return status, nil
+	}
+	return pending, nil
+}
+
+func (p *configPipeline) readConfigApplyStatus() (ConfigApplyStatus, error) {
 	data, err := p.fs.ReadFile(configApplyStatusFile)
 	if os.IsNotExist(err) {
 		return ConfigApplyStatus{State: ConfigUnknown}, nil
@@ -842,6 +896,31 @@ func (p *configPipeline) LastConfigApply(ctx context.Context) (ConfigApplyStatus
 	default:
 		return ConfigApplyStatus{State: ConfigUnknown, ErrorSummary: "unknown config apply state"}, nil
 	}
+}
+
+func sameConfigApplyAttempt(status, pending ConfigApplyStatus) bool {
+	return (status.State == ConfigApplied || status.State == ConfigPendingReload) &&
+		status.AttemptedAt.Equal(pending.AttemptedAt) &&
+		status.ConfigHash == pending.ConfigHash && status.SubscriptionHash == pending.SubscriptionHash
+}
+
+func (p *configPipeline) pendingTransactionApply(transaction configTransactionState) (ConfigApplyStatus, error) {
+	if transaction.PendingApply != nil {
+		pending := *transaction.PendingApply
+		if pending.State != ConfigPendingReload || pending.ConfigHash == "" || pending.AttemptedAt.IsZero() {
+			return ConfigApplyStatus{}, fmt.Errorf("invalid pending apply in config transaction")
+		}
+		return pending, nil
+	}
+	// Old committed journals did not identify their apply attempt. Report the
+	// current disk config conservatively instead of trusting an earlier status.
+	config, err := p.fs.ReadFile(configYAML)
+	if err != nil {
+		return ConfigApplyStatus{}, fmt.Errorf("reading committed config: %w", err)
+	}
+	status := newConfigApplyStatus(ConfigPendingReload, string(config), nil, nil)
+	status.ErrorSummary = "config committed; runtime reload has not been confirmed"
+	return status, nil
 }
 
 // ValidateConfig runs the configured ConfigValidator against the generated config.
