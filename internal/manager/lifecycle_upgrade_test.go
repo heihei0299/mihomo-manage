@@ -19,14 +19,17 @@ type upgradeTestFileSystem struct {
 }
 
 func (fs *upgradeTestFileSystem) Rename(oldPath, newPath string) error {
-	fs.renameCalls++
-	if fs.failOnRename == fs.renameCalls {
+	binaryMutation := oldPath == binaryPath || newPath == binaryPath
+	if binaryMutation {
+		fs.renameCalls++
+	}
+	if binaryMutation && fs.failOnRename == fs.renameCalls {
 		return fs.renameErr
 	}
 	if err := fs.fakeFileSystem.Rename(oldPath, newPath); err != nil {
 		return err
 	}
-	if fs.cancel != nil && fs.renameCalls == 2 {
+	if binaryMutation && fs.cancel != nil && fs.renameCalls == 2 {
 		fs.cancel()
 		fs.cancel = nil
 	}
@@ -165,7 +168,7 @@ func TestUpgradeLatestLookupFailsBeforeStopping(t *testing.T) {
 }
 
 func TestUpgradeReportsCheckAndFetchPhases(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}, written: map[string][]byte{binaryPath: []byte("old binary")}}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: false}
@@ -635,7 +638,7 @@ func TestUpgradeCancellationAfterReplacementRollsBack(t *testing.T) {
 }
 
 func TestUpgradeReportsReplacementPhases(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}, written: map[string][]byte{binaryPath: []byte("old binary")}}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)
 	svc := &mockServiceManager{running: true}

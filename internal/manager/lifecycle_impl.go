@@ -217,6 +217,9 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := m.recoverUpgradeTransaction(ctx); err != nil {
+		return fmt.Errorf("recovering interrupted upgrade: %w", err)
+	}
 	if _, err := serviceUnitPathFor(runtime.GOOS); err != nil {
 		return err
 	}
@@ -249,6 +252,9 @@ func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath strin
 	defer release()
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if err := m.recoverUpgradeTransaction(ctx); err != nil {
+		return fmt.Errorf("recovering interrupted upgrade: %w", err)
 	}
 	if _, err := serviceUnitPathFor(runtime.GOOS); err != nil {
 		return err
@@ -409,6 +415,9 @@ func (m *lifecycleManager) Uninstall(ctx context.Context, keepBackup bool, onPro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := m.recoverUpgradeTransaction(ctx); err != nil {
+		return fmt.Errorf("recovering interrupted upgrade: %w", err)
+	}
 	installed, err := m.fs.FileExists(binaryPath)
 	if err != nil {
 		return fmt.Errorf("checking mihomo installation: %w", err)
@@ -496,7 +505,8 @@ func (m *lifecycleManager) removeServiceUnit(ctx context.Context) error {
 //	failure after backup        -> restore the old binary
 //	failure after replacement   -> restore old binary and prior running state
 //	rollback failure            -> return both primary and rollback errors
-func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) error {
+//	interrupted process         -> next lifecycle writer restores journaled state
+func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgress ProgressCallback) (upgradeErr error) {
 	release, lockErr := m.lock.Acquire(ctx)
 	if lockErr != nil {
 		return lockErr
@@ -504,6 +514,9 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	defer release()
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if err := m.recoverUpgradeTransaction(ctx); err != nil {
+		return fmt.Errorf("recovering interrupted upgrade: %w", err)
 	}
 	installed, err := m.fs.FileExists(binaryPath)
 	if err != nil {
@@ -538,6 +551,19 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 		failure := withCleanupError(fmt.Errorf("check service state: %w", statusErr), m.fs, tempPath)
 		return reportFailure(PhaseUpgradeStop, "Service state check failed", failure)
 	}
+	original, err := m.fs.ReadFile(binaryPath)
+	if err != nil {
+		return withCleanupError(fmt.Errorf("reading original binary: %w", err), m.fs, tempPath)
+	}
+	transaction := upgradeTransaction{State: "in-progress", OldHash: lifecycleBinaryHash(original), WasRunning: wasRunning, TempPath: tempPath}
+	if err := m.writeUpgradeTransaction(transaction); err != nil {
+		return withCleanupError(fmt.Errorf("recording upgrade transaction: %w", err), m.fs, tempPath)
+	}
+	defer func() {
+		if upgradeErr != nil {
+			upgradeErr = errors.Join(upgradeErr, m.recoverUpgradeTransaction(ctx))
+		}
+	}()
 	resumeService := func() error {
 		if !wasRunning {
 			return nil
@@ -607,6 +633,9 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 			failure := withRollbackError(errors.New("service did not remain stopped after upgrade"), m.restoreBinary(ctx, backupPath, "", wasRunning, true))
 			return reportFailure(PhaseUpgradeStart, "Stopped-state confirmation failed; rolled back", failure)
 		}
+		if err := m.completeUpgradeTransaction(transaction); err != nil {
+			return err
+		}
 		onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Keeping mihomo stopped"})
 		return nil
 	}
@@ -628,6 +657,9 @@ func (m *lifecycleManager) Upgrade(ctx context.Context, version string, onProgre
 	if !running {
 		failure := withRollbackError(errors.New("service did not become running after start"), m.restoreBinary(ctx, backupPath, "", wasRunning, true))
 		return reportFailure(PhaseUpgradeStart, "Running-state confirmation failed; rolled back", failure)
+	}
+	if err := m.completeUpgradeTransaction(transaction); err != nil {
+		return err
 	}
 	onProgress(ProgressEvent{Phase: PhaseUpgradeStart, Message: "Running " + resolvedVersion})
 
@@ -654,8 +686,7 @@ func (m *lifecycleManager) restoreBinary(ctx context.Context, backupPath, tempPa
 	serviceStopped := true
 	if restart || stopBeforeRestore {
 		if err := m.svcMgr.Stop(rollbackCtx, serviceName); err != nil {
-			serviceStopped = false
-			restoreErrs = append(restoreErrs, fmt.Errorf("stop service before restore: %w", err))
+			return fmt.Errorf("stop service before restore: %w", err)
 		}
 	}
 
