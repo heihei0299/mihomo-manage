@@ -181,3 +181,35 @@ func containsStr(list []string, target string) bool {
 	}
 	return false
 }
+
+func TestAdoptPreservesUnrelatedReplaceSemantics(t *testing.T) {
+	fs := &fakeFileSystem{written: map[string][]byte{
+		subscriptionDataFile:   []byte("port: 7890\nrules:\n  - MATCH,REJECT\n"),
+		subscriptionSourceFile: []byte("local\n"),
+		OverrideFilePath:       []byte("# local policy\nrules: !replace\n  - MATCH,DIRECT\n"),
+		configYAML:             []byte("port: 9999\nrules:\n  - MATCH,DIRECT\n"),
+	}}
+	m := newTestConfigManager(fs, &fakeReleaseSource{}, &passValidator{}, noopReload)
+	report, err := m.AdoptConfig(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Fields) != 1 || report.Fields[0] != "port" || len(report.ArrayDiff) != 0 {
+		t.Fatalf("report=%+v", report)
+	}
+	override := string(fs.written[OverrideFilePath])
+	if !strings.Contains(override, "!replace") || !strings.Contains(override, "# local policy") {
+		t.Fatalf("lost overlay metadata: %s", override)
+	}
+	preview, err := m.PreviewConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(preview, "MATCH,REJECT") || !strings.Contains(preview, "port: 9999") || !strings.Contains(preview, "MATCH,DIRECT") {
+		t.Fatalf("preview=%s", preview)
+	}
+	again, err := m.AdoptConfig(context.Background(), false)
+	if err != nil || !again.NoChanges {
+		t.Fatalf("again=%+v err=%v", again, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -94,20 +95,50 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 // writeOverrideFields merges the given fields (values from curMap) into the
 // override file, preserving any content already present.
 func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]any) error {
-	override := map[string]any{}
+	override := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	if data, err := p.fs.ReadFile(OverrideFilePath); err == nil {
-		if err := yaml.Unmarshal(data, &override); err != nil {
-			return fmt.Errorf("parsing override file: %w", err)
+		if len(data) > 0 {
+			var parsed yaml.Node
+			if err := yaml.Unmarshal(data, &parsed); err != nil {
+				return fmt.Errorf("parsing override file: %w", err)
+			}
+			if len(parsed.Content) > 0 {
+				override = parsed
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-
+	if len(override.Content) != 1 || override.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("override file must be a YAML mapping")
+	}
+	mapping := override.Content[0]
 	for _, k := range fields {
-		override[k] = curMap[k]
+		var value yaml.Node
+		if err := value.Encode(curMap[k]); err != nil {
+			return fmt.Errorf("encoding adopted field %s: %w", k, err)
+		}
+		found := false
+		for i := 0; i+1 < len(mapping.Content); i += 2 {
+			if mapping.Content[i].Value != k {
+				continue
+			}
+			previous := mapping.Content[i+1]
+			if strings.HasPrefix(previous.Tag, "!") && !strings.HasPrefix(previous.Tag, "!!") {
+				value.Tag = previous.Tag
+			}
+			value.HeadComment, value.LineComment, value.FootComment = previous.HeadComment, previous.LineComment, previous.FootComment
+			value.Anchor = previous.Anchor
+			*previous = value
+			found = true
+			break
+		}
+		if !found {
+			mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k}, &value)
+		}
 	}
 
-	out, err := yaml.Marshal(override)
+	out, err := yaml.Marshal(&override)
 	if err != nil {
 		return fmt.Errorf("marshaling override file: %w", err)
 	}
