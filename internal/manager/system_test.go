@@ -2,8 +2,11 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -92,5 +95,30 @@ func TestExpectedChecksumRequiresCustomMetadata(t *testing.T) {
 	_, err := (OSSystem{}).ExpectedChecksum(context.Background(), "MetaCubeX", "mihomo", "v1.18.0", "mihomo-linux-amd64-v1.18.0.gz")
 	if err == nil || !strings.Contains(err.Error(), "MIHOMO_RELEASE_CHECKSUM_URL") {
 		t.Fatalf("ExpectedChecksum error = %v, want custom metadata requirement", err)
+	}
+}
+
+func TestOSSystemDownloadKeepsArtifactsPrivate(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprint(existing), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "artifact")
+			if existing {
+				if err := os.WriteFile(path, []byte("legacy"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("synthetic download")) }))
+			defer server.Close()
+			if err := (OSSystem{}).Download(context.Background(), server.URL, path); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0600 {
+				t.Fatalf("mode=%o", info.Mode().Perm())
+			}
+		})
 	}
 }

@@ -1,8 +1,10 @@
 package manager
 
 const (
-	filePermUserRW  = 0644
-	filePermUserRWX = 0755
+	filePermUserRW    = 0644
+	filePermUserRWX   = 0755
+	filePermPrivateRW = 0600
+	dirPermPrivate    = 0700
 
 	installRoot = "/opt/mihomo"
 	managerRoot = "/opt/mihomo-manager"

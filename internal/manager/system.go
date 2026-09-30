@@ -76,7 +76,23 @@ func (OSSystem) ReadFile(path string) ([]byte, error) {
 }
 
 func (OSSystem) WriteFile(path string, data []byte, perm uint32) error {
-	return os.WriteFile(path, data, os.FileMode(perm))
+	// Apply permissions before truncating an existing file: WriteFile's mode
+	// argument alone only protects newly created files.
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, os.FileMode(perm))
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if err := out.Chmod(os.FileMode(perm)); err != nil {
+		return err
+	}
+	if err := out.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := out.Write(data); err != nil {
+		return err
+	}
+	return out.Close()
 }
 
 func (OSSystem) RemoveAll(path string) error {
@@ -135,11 +151,17 @@ func (OSSystem) Download(ctx context.Context, rawURL, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return fmt.Errorf("creating directory for %s: %w", dest, err)
 	}
-	out, err := os.Create(dest)
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", dest, err)
 	}
 	defer out.Close()
+	if err := out.Chmod(0600); err != nil {
+		return fmt.Errorf("protecting %s: %w", dest, err)
+	}
+	if err := out.Truncate(0); err != nil {
+		return fmt.Errorf("preparing %s: %w", dest, err)
+	}
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
 		os.Remove(dest)

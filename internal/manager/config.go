@@ -114,6 +114,9 @@ func (p *configPipeline) prepare(ctx context.Context) error {
 }
 
 func (p *configPipeline) prepareLocked() error {
+	if err := p.protectConfigStorage(); err != nil {
+		return err
+	}
 	if err := p.recoverConfigTransactionLocked(); err != nil {
 		return fmt.Errorf("recovering config transaction: %w", err)
 	}
@@ -168,11 +171,11 @@ func (p *configPipeline) writeConfigTransaction(transaction configTransactionSta
 	if err != nil {
 		return fmt.Errorf("encoding config transaction: %w", err)
 	}
-	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
+	if err := p.fs.MkdirAll(stateDir, dirPermPrivate); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
 	tmpPath := configApplyTransactionFile + ".tmp"
-	if err := p.fs.WriteFile(tmpPath, data, filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(tmpPath, data, filePermPrivateRW); err != nil {
 		return fmt.Errorf("writing config transaction: %w", err)
 	}
 	if err := p.fs.Rename(tmpPath, configApplyTransactionFile); err != nil {
@@ -189,7 +192,7 @@ func (p *configPipeline) restoreTransactionFile(path, backup string, existed boo
 	if err != nil {
 		return fmt.Errorf("reading backup %s: %w", backup, err)
 	}
-	return p.fs.WriteFile(path, data, filePermUserRW)
+	return p.fs.WriteFile(path, data, filePermPrivateRW)
 }
 
 func (p *configPipeline) cleanupConfigTransaction(transaction configTransactionState, removeMarker bool) error {
@@ -272,7 +275,7 @@ func (p *configPipeline) snapshotFile(path string) (fileSnapshot, error) {
 
 func (p *configPipeline) restoreFile(path string, snapshot fileSnapshot) error {
 	if snapshot.exists {
-		return p.fs.WriteFile(path, snapshot.data, filePermUserRW)
+		return p.fs.WriteFile(path, snapshot.data, filePermPrivateRW)
 	}
 	return p.fs.RemoveAll(path)
 }
@@ -301,7 +304,7 @@ func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source strin
 		return err
 	}
 
-	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
+	if err := p.fs.MkdirAll(stateDir, dirPermPrivate); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
 
@@ -327,25 +330,25 @@ func (p *configPipeline) SetSubscriptionSource(ctx context.Context, source strin
 	}
 
 	if looksLikeURL(trimmed) {
-		if err := p.fs.WriteFile(subscriptionURLFile, []byte(trimmed), filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(subscriptionURLFile, []byte(trimmed), filePermPrivateRW); err != nil {
 			return rollback(err)
 		}
 		if err := p.fs.RemoveAll(subscriptionDataFile); err != nil {
 			return rollback(fmt.Errorf("removing local subscription data: %w", err))
 		}
-		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermPrivateRW); err != nil {
 			return rollback(fmt.Errorf("recording subscription source: %w", err))
 		}
 		return nil
 	}
 
-	if err := p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(subscriptionDataFile, []byte(source), filePermPrivateRW); err != nil {
 		return rollback(err)
 	}
 	if err := p.fs.RemoveAll(subscriptionURLFile); err != nil {
 		return rollback(fmt.Errorf("removing remote subscription URL: %w", err))
 	}
-	if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermPrivateRW); err != nil {
 		return rollback(fmt.Errorf("recording subscription source: %w", err))
 	}
 	return nil
@@ -433,7 +436,7 @@ func (p *configPipeline) subscriptionSource() (string, error) {
 		if err := p.requireSourceValue(subscriptionURLFile, "reading legacy remote subscription URL", "legacy remote subscription URL is empty"); err != nil {
 			return "", err
 		}
-		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(remoteSubscriptionSource+"\n"), filePermPrivateRW); err != nil {
 			return "", fmt.Errorf("migrating remote subscription source: %w", err)
 		}
 		return remoteSubscriptionSource, nil
@@ -441,7 +444,7 @@ func (p *configPipeline) subscriptionSource() (string, error) {
 		if err := p.requireSourceValue(subscriptionDataFile, "reading legacy local subscription data", "legacy local subscription data is empty"); err != nil {
 			return "", err
 		}
-		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(subscriptionSourceFile, []byte(localSubscriptionSource+"\n"), filePermPrivateRW); err != nil {
 			return "", fmt.Errorf("migrating local subscription source: %w", err)
 		}
 		return localSubscriptionSource, nil
@@ -509,11 +512,11 @@ func (p *configPipeline) writeConfigApplyStatus(status ConfigApplyStatus) error 
 	if err != nil {
 		return fmt.Errorf("encoding config apply status: %w", err)
 	}
-	if err := p.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
+	if err := p.fs.MkdirAll(stateDir, dirPermPrivate); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
 	tmpPath := configApplyStatusFile + ".tmp"
-	if err := p.fs.WriteFile(tmpPath, data, filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(tmpPath, data, filePermPrivateRW); err != nil {
 		return fmt.Errorf("writing config apply status: %w", err)
 	}
 	if err := p.fs.Rename(tmpPath, configApplyStatusFile); err != nil {
@@ -616,10 +619,10 @@ func (p *configPipeline) stageConfig(ctx context.Context, preview string) (stage
 		dir: filepath.Join(configDir, fmt.Sprintf(".mihomo-config-staging-%d", time.Now().UnixNano())),
 	}
 	staged.path = filepath.Join(staged.dir, "config.yaml")
-	if err := p.fs.MkdirAll(staged.dir, filePermUserRWX); err != nil {
+	if err := p.fs.MkdirAll(staged.dir, dirPermPrivate); err != nil {
 		return stagedConfig{}, fmt.Errorf("creating config staging directory: %w", err)
 	}
-	if err := p.fs.WriteFile(staged.path, []byte(preview), filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(staged.path, []byte(preview), filePermPrivateRW); err != nil {
 		return stagedConfig{}, p.cleanupStagedConfig(staged, fmt.Errorf("writing staged config: %w", err))
 	}
 	if err := ctx.Err(); err != nil {
@@ -646,7 +649,7 @@ func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubs
 		if err != nil {
 			return nil, p.cleanupApplyStaging(staged, candidate, err)
 		}
-		if err := p.fs.Chmod(candidate.path, filePermUserRW); err != nil {
+		if err := p.fs.Chmod(candidate.path, filePermPrivateRW); err != nil {
 			return nil, p.cleanupApplyStaging(staged, candidate, fmt.Errorf("preparing subscription data: %w", err))
 		}
 	}
@@ -664,13 +667,13 @@ func (p *configPipeline) commitConfig(staged stagedConfig, candidate *stagedSubs
 	}
 	if configSnapshot.exists {
 		transaction.ConfigBackup = fmt.Sprintf("%s.bak.%d", configYAML, time.Now().UnixNano())
-		if err := p.fs.WriteFile(transaction.ConfigBackup, configSnapshot.data, filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(transaction.ConfigBackup, configSnapshot.data, filePermPrivateRW); err != nil {
 			return nil, p.cleanupTransactionBeforeCommit(staged, candidate, transaction, err)
 		}
 	}
 	if candidate != nil && subscriptionSnapshot.exists {
 		transaction.SubscriptionBackup = fmt.Sprintf("%s.bak.%d", subscriptionDataFile, time.Now().UnixNano())
-		if err := p.fs.WriteFile(transaction.SubscriptionBackup, subscriptionSnapshot.data, filePermUserRW); err != nil {
+		if err := p.fs.WriteFile(transaction.SubscriptionBackup, subscriptionSnapshot.data, filePermPrivateRW); err != nil {
 			return nil, p.cleanupTransactionBeforeCommit(staged, candidate, transaction, err)
 		}
 	}

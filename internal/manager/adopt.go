@@ -142,11 +142,11 @@ func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]
 	if err != nil {
 		return fmt.Errorf("marshaling override file: %w", err)
 	}
-	if err := p.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
+	if err := p.fs.MkdirAll(configDir, dirPermPrivate); err != nil {
 		return err
 	}
 	tmpPath := OverrideFilePath + ".tmp"
-	if err := p.fs.WriteFile(tmpPath, out, filePermUserRW); err != nil {
+	if err := p.fs.WriteFile(tmpPath, out, filePermPrivateRW); err != nil {
 		return errors.Join(fmt.Errorf("staging override file: %w", err), p.fs.RemoveAll(tmpPath))
 	}
 	if err := p.fs.Rename(tmpPath, OverrideFilePath); err != nil {

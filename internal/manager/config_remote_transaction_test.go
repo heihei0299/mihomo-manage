@@ -289,8 +289,8 @@ func TestRemoteSubscriptionStagingUsesConfigPermissions(t *testing.T) {
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
-	if got := fs.chmod[subscriptionDataFile+".tmp"]; got != filePermUserRW {
-		t.Fatalf("subscription staging mode = %o, want %o", got, filePermUserRW)
+	if got := fs.chmod[subscriptionDataFile+".tmp"]; got != filePermPrivateRW {
+		t.Fatalf("subscription staging mode = %o, want %o", got, filePermPrivateRW)
 	}
 }
 

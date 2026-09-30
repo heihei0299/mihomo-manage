@@ -164,3 +164,5 @@ sudo -E env "PATH=$PATH" go test -tags=acceptance ./acceptance/ -count=1 -v
 ## 许可
 
 GNU GPLv3-or-later
+
+订阅、覆写、生成配置及状态文件按私有权限保存（文件 `0600`、配置/状态目录 `0700`）。已有文件会在配置操作时收紧权限；目录权限同时保护旧备份。`status` 读取私有应用状态时通过现有 sudo 流程提升权限。systemd 单元不包含订阅数据，仍使用 `0644`。

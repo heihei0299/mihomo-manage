@@ -342,16 +342,19 @@ func (m *lifecycleManager) installBinary(ctx context.Context, binarySrc string, 
 	}
 
 	onProgress(ProgressEvent{Phase: PhaseBootstrap, Message: "Creating directories"})
-	if err := m.fs.MkdirAll(configDir, filePermUserRWX); err != nil {
+	if err := m.fs.MkdirAll(configDir, dirPermPrivate); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap mkdir config", err)
 	}
-	if err := m.fs.MkdirAll(stateDir, filePermUserRWX); err != nil {
+	if err := m.fs.MkdirAll(stateDir, dirPermPrivate); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap mkdir state", err)
 	}
-	if err := m.fs.WriteFile(OverrideFilePath, defaultOverride, filePermUserRW); err != nil {
+	if err := m.fs.Chmod(stateDir, dirPermPrivate); err != nil {
+		return m.rollbackInstall(ctx, "secure state directory", err)
+	}
+	if err := m.fs.WriteFile(OverrideFilePath, defaultOverride, filePermPrivateRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap template", err)
 	}
-	if err := m.fs.WriteFile(configYAML, defaultConfig, filePermUserRW); err != nil {
+	if err := m.fs.WriteFile(configYAML, defaultConfig, filePermPrivateRW); err != nil {
 		return m.rollbackInstall(ctx, "bootstrap config", err)
 	}
 	if err := m.fs.WriteFile(svcPath, svcContent, filePermUserRW); err != nil {

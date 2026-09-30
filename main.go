@@ -447,7 +447,9 @@ func needsElevation(args []string) bool {
 		return true // TUI
 	}
 	switch args[0] {
-	case "status", "versions", "v", "logs":
+	case "status":
+		return true // Apply status may contain private subscription diagnostics.
+	case "versions", "v", "logs":
 		return false
 	case "config":
 		// Preview currently performs recovery and legacy migration while holding
