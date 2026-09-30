@@ -36,16 +36,24 @@ func NewScheduleManagerWithPlatform(fs FileSystem, platform PlatformScheduler, c
 }
 
 func installedManagerPath() string {
-	const releasePath = "/usr/local/bin/mihomo-manager"
-	const legacyPath = "/opt/mihomo-manager/bin/mihomo-manager"
 	executable, err := os.Executable()
 	if err == nil {
-		path := filepath.Clean(executable)
-		if path == releasePath || path == legacyPath {
-			return path
+		if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
+			executable = resolved
 		}
+		return managerPathForExecutable(executable)
 	}
-	return releasePath
+	return managerPathForExecutable("")
+}
+
+func managerPathForExecutable(executable string) string {
+	const releasePath = "/usr/local/bin/mihomo-manager"
+	switch path := filepath.Clean(executable); path {
+	case releasePath, "/usr/bin/mihomo-manager", "/opt/mihomo-manager/bin/mihomo-manager":
+		return path
+	default:
+		return releasePath
+	}
 }
 
 func NewNativeScheduleManager(fs FileSystem, cmd CommandRunner) ScheduleManager {
@@ -67,6 +75,13 @@ func (m *nativeScheduleManager) SetSchedule(ctx context.Context, interval time.D
 	}
 	if !installed {
 		return ErrMihomoNotInstalled
+	}
+	exists, err := m.fs.FileExists(m.commandPath)
+	if err != nil {
+		return fmt.Errorf("checking manager executable: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("manager executable not found at %s; install it before enabling scheduled updates", m.commandPath)
 	}
 	return m.platform.Set(ctx, interval, m.commandPath)
 }

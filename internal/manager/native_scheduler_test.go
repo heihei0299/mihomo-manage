@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func TestNativeScheduleManagerReportsLegacySchedule(t *testing.T) {
 }
 
 func TestScheduleSetAndStop(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true, "/opt/mihomo-manager/bin/mihomo-manager": true}}
 	m := NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager")
 
 	if err := m.SetSchedule(context.Background(), time.Hour); err != nil {
@@ -50,7 +51,7 @@ func TestScheduleSetAndStop(t *testing.T) {
 }
 
 func TestScheduleRejectsShortInterval(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true, "/opt/mihomo-manager/bin/mihomo-manager": true}}
 	m := NewScheduleManagerWithPlatform(fs, &fakePlatformScheduler{}, "/opt/mihomo-manager/bin/mihomo-manager")
 	if err := m.SetSchedule(context.Background(), time.Minute); err == nil {
 		t.Fatal("expected error for interval < 1h")
@@ -78,4 +79,29 @@ func (s *fakePlatformScheduler) Stop(context.Context) error {
 
 func (s *fakePlatformScheduler) Status(context.Context) (time.Duration, bool, error) {
 	return s.interval, s.active, nil
+}
+
+func TestScheduleUsesPackageAndReleaseInstallationPaths(t *testing.T) {
+	for _, path := range []string{"/usr/bin/mihomo-manager", "/usr/local/bin/mihomo-manager", "/opt/mihomo-manager/bin/mihomo-manager"} {
+		t.Run(path, func(t *testing.T) {
+			fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true, path: true}}
+			schedule := NewScheduleManagerWithPlatform(fs, NewLinuxPlatformScheduler(fs, &fakeCmdRunner{}), managerPathForExecutable(path))
+			if err := schedule.SetSchedule(context.Background(), time.Hour); err != nil {
+				t.Fatal(err)
+			}
+			unit := string(fs.written["/etc/systemd/system/mihomo-manager-subscription-update.service"])
+			if !strings.Contains(unit, "ExecStart="+path+" subscription update --quiet") {
+				t.Fatalf("unit=%s", unit)
+			}
+		})
+	}
+}
+
+func TestScheduleMissingManagerDoesNotEnableTask(t *testing.T) {
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
+	platform := &fakePlatformScheduler{}
+	schedule := NewScheduleManagerWithPlatform(fs, platform, "/usr/bin/mihomo-manager")
+	if err := schedule.SetSchedule(context.Background(), time.Hour); err == nil || platform.active {
+		t.Fatalf("err=%v active=%v", err, platform.active)
+	}
 }
