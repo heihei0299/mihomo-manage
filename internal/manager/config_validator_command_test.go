@@ -3,6 +3,9 @@ package manager
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -48,7 +51,7 @@ func TestConfigValidatorUsesCommandRunnerForStagedConfig(t *testing.T) {
 	if runner.name != binaryPath {
 		t.Fatalf("command = %q, want %q", runner.name, binaryPath)
 	}
-	wantArgs := []string{"-t", "-d", "/tmp/config-staging"}
+	wantArgs := []string{"-t", "-d", configDir, "-f", "/tmp/config-staging/config.yaml"}
 	if strings.Join(runner.args, "\x00") != strings.Join(wantArgs, "\x00") {
 		t.Fatalf("args = %v, want %v", runner.args, wantArgs)
 	}
@@ -104,5 +107,51 @@ func TestConfigValidatorReturnsCancellationUnwrapped(t *testing.T) {
 	}
 	if runner.ctx == nil || !errors.Is(runner.ctx.Err(), context.Canceled) {
 		t.Fatal("command runner did not receive the canceled context")
+	}
+}
+
+// Translate only the production executable/home at the OS boundary. The
+// validator still chooses its own arguments and the real core parses them.
+type realValidationRunner struct{ binary, home string }
+
+func (r realValidationRunner) RunCommand(ctx context.Context, name string, args ...string) (string, error) {
+	if name != binaryPath {
+		return "", errors.New("unexpected executable")
+	}
+	args = append([]string(nil), args...)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-d" && args[i+1] == configDir {
+			args[i+1] = r.home
+		}
+	}
+	out, err := exec.CommandContext(ctx, r.binary, args...).CombinedOutput()
+	return string(out), err
+}
+func (r realValidationRunner) RunCommandIgnoreExit(ctx context.Context, name string, args ...string) (string, error) {
+	return r.RunCommand(ctx, name, args...)
+}
+
+func TestConfigValidatorRealCoreUsesRuntimeHomeForStaging(t *testing.T) {
+	binary := os.Getenv("MIHOMO_TEST_BINARY")
+	if binary == "" {
+		t.Skip("set MIHOMO_TEST_BINARY to run real-core validation")
+	}
+	home := t.TempDir()
+	staged := filepath.Join(home, ".mihomo-config-staging-test")
+	if err := os.MkdirAll(staged, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rules := filepath.Join(home, "local.yaml")
+	if err := os.WriteFile(rules, []byte("payload:\n  - example.com\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := "mode: rule\nrule-providers:\n  local:\n    type: file\n    behavior: domain\n    path: " + rules + "\nrules:\n  - RULE-SET,local,DIRECT\n  - MATCH,DIRECT\n"
+	candidate := filepath.Join(staged, "config.yaml")
+	if err := os.WriteFile(candidate, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	validator := NewConfigValidator(realValidationRunner{binary: binary, home: home})
+	if err := validator.Validate(context.Background(), candidate); err != nil {
+		t.Fatal(err)
 	}
 }

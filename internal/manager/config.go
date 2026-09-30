@@ -37,7 +37,7 @@ type configValidator struct {
 }
 
 func (v *configValidator) Validate(ctx context.Context, configPath string) error {
-	out, err := v.cmd.RunCommand(ctx, binaryPath, "-t", "-d", filepath.Dir(configPath))
+	out, err := v.cmd.RunCommand(ctx, binaryPath, "-t", "-d", configDir, "-f", configPath)
 	if err == nil {
 		return nil
 	}
