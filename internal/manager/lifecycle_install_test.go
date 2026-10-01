@@ -66,7 +66,7 @@ func TestLifecycleInstallCleansArtifactsAfterDecompressFailure(t *testing.T) {
 	if err := m.Install(context.Background(), "v1.18.0", true, noopProgress); err == nil || !strings.Contains(err.Error(), "decompress failed") {
 		t.Fatalf("Install error = %v, want decompress error", err)
 	}
-	for _, path := range []string{binaryPath + ".tmp.v1.18.0", binaryPath + ".tmp.v1.18.0.gz"} {
+	for _, path := range []string{binaryPath + ".tmp.v1.18.0", binaryPath + ".tmp.v1.18.0.gz", binaryPath + ".tmp.v1.18.0.zip"} {
 		if _, exists := fs.written[path]; exists {
 			t.Fatalf("temporary artifact %q should be removed", path)
 		}
@@ -193,14 +193,7 @@ func TestInstallCreatesServiceFile(t *testing.T) {
 
 	m.Install(context.Background(), "v1.18.0", true, func(e ProgressEvent) {})
 
-	hasServiceFile := false
-	for path := range fs.written {
-		if strings.Contains(path, "mihomo.service") || strings.Contains(path, "systemd") {
-			hasServiceFile = true
-			break
-		}
-	}
-	if !hasServiceFile {
-		t.Error("BUG 1: Install did not write a systemd service file — systemctl enable will succeed silently but point at a non-existent unit")
+	if _, ok := fs.written[serviceUnitPath()]; !ok {
+		t.Error("Install did not write the platform service registration file")
 	}
 }

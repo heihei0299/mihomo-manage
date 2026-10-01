@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -13,7 +14,7 @@ import (
 	nativescheduler "github.com/heihei0299/mihomo-manage/internal/scheduler"
 )
 
-const scheduleFile = "/opt/mihomo-manager/state/schedule.txt"
+var scheduleFile = filepath.Join(stateDir, "schedule.txt")
 
 type PlatformScheduler = nativescheduler.Platform
 
@@ -21,8 +22,8 @@ func NewLinuxPlatformScheduler(fs FileSystem, cmd CommandRunner) PlatformSchedul
 	return nativescheduler.NewLinux(fs, cmd)
 }
 
-func NewDarwinPlatformScheduler(fs FileSystem, cmd CommandRunner) PlatformScheduler {
-	return nativescheduler.NewDarwin(fs, cmd)
+func NewWindowsPlatformScheduler(fs FileSystem, cmd CommandRunner) PlatformScheduler {
+	return nativescheduler.NewWindows(fs, cmd, filepath.Join(stateDir, "subscription-update-task.xml"))
 }
 
 type nativeScheduleManager struct {
@@ -47,8 +48,22 @@ func installedManagerPath() string {
 }
 
 func managerPathForExecutable(executable string) string {
+	return managerPathForExecutableForOS(executable, runtime.GOOS)
+}
+
+func managerPathForExecutableForOS(executable, goos string) string {
+	if goos == "windows" {
+		if executable != "" {
+			return filepath.Clean(executable)
+		}
+		root := os.Getenv("ProgramFiles")
+		if root == "" {
+			root = `C:\Program Files`
+		}
+		return filepath.Join(root, "mihomo-manager", "mihomo-manager.exe")
+	}
 	const releasePath = "/usr/local/bin/mihomo-manager"
-	switch path := filepath.Clean(executable); path {
+	switch path := path.Clean(executable); path {
 	case releasePath, "/usr/bin/mihomo-manager", "/opt/mihomo-manager/bin/mihomo-manager":
 		return path
 	default:
@@ -61,8 +76,8 @@ func NewNativeScheduleManager(fs FileSystem, cmd CommandRunner) ScheduleManager 
 	switch runtime.GOOS {
 	case "linux":
 		return NewScheduleManagerWithPlatform(fs, NewLinuxPlatformScheduler(fs, cmd), commandPath)
-	case "darwin":
-		return NewScheduleManagerWithPlatform(fs, NewDarwinPlatformScheduler(fs, cmd), commandPath)
+	case "windows":
+		return NewScheduleManagerWithPlatform(fs, NewWindowsPlatformScheduler(fs, cmd), commandPath)
 	default:
 		return NewScheduleManagerWithPlatform(fs, unsupportedPlatformScheduler{os: runtime.GOOS}, commandPath)
 	}

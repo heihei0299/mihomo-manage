@@ -36,7 +36,7 @@ func TestUninstallNotInstalled(t *testing.T) {
 }
 
 func TestUninstallCleanup(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{running: true}
@@ -55,8 +55,8 @@ func TestUninstallRemovesOnlyManagedRoots(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{binaryPath: true},
 		written: map[string][]byte{
-			"/opt/mihomo-manager/backups/mihomo.bak": []byte("old binary"),
-			"/opt/mihomo.bak.123":                    []byte("kept uninstall backup"),
+			backupDir + "/mihomo.bak": []byte("old binary"),
+			installRoot + ".bak.123":  []byte("kept uninstall backup"),
 		},
 	}
 	m := newTestLifecycleManager(fs, &fakeCmdRunner{}, &fakeReleaseSource{}, &mockServiceManager{}, noopScheduleManager{})
@@ -65,7 +65,7 @@ func TestUninstallRemovesOnlyManagedRoots(t *testing.T) {
 		t.Fatalf("Uninstall failed: %v", err)
 	}
 
-	want := []string{"/opt/mihomo", "/opt/mihomo-manager"}
+	want := []string{installRoot, managerRoot}
 	if len(fs.removed) != len(want) {
 		t.Fatalf("removed = %v, want exactly %v", fs.removed, want)
 	}
@@ -74,10 +74,10 @@ func TestUninstallRemovesOnlyManagedRoots(t *testing.T) {
 			t.Fatalf("removed = %v, want exactly %v", fs.removed, want)
 		}
 	}
-	if _, ok := fs.written["/opt/mihomo-manager/backups/mihomo.bak"]; ok {
+	if _, ok := fs.written[backupDir+"/mihomo.bak"]; ok {
 		t.Fatal("manager backup should be removed with manager root")
 	}
-	if _, ok := fs.written["/opt/mihomo.bak.123"]; !ok {
+	if _, ok := fs.written[installRoot+".bak.123"]; !ok {
 		t.Fatal("timestamped uninstall backup should be preserved")
 	}
 }
@@ -121,7 +121,7 @@ func TestUninstallCleanupErrorPreservesManagedRootOrder(t *testing.T) {
 }
 
 func TestUninstallKeepBackup(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	svc := &mockServiceManager{running: true}
@@ -134,11 +134,11 @@ func TestUninstallKeepBackup(t *testing.T) {
 	if len(fs.removed) != 0 {
 		t.Fatalf("keep-backup removed = %v, want no removals", fs.removed)
 	}
-	backupPath, ok := fs.renamed["/opt/mihomo"]
+	backupPath, ok := fs.renamed[installRoot]
 	if !ok {
 		t.Fatalf("rename = %v, want install root backup", fs.renamed)
 	}
-	if !strings.HasPrefix(backupPath, "/opt/mihomo.bak.") || strings.HasPrefix(backupPath, "/opt/mihomo/") {
+	if !strings.HasPrefix(backupPath, installRoot+".bak.") || strings.HasPrefix(backupPath, installRoot+"/") {
 		t.Fatalf("backup path = %q, want /opt/mihomo.bak.<unix> outside install root", backupPath)
 	}
 }

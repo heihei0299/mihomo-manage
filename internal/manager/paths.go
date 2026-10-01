@@ -1,26 +1,29 @@
 package manager
 
+import "path/filepath"
+
 const (
 	filePermUserRW    = 0644
 	filePermUserRWX   = 0755
 	filePermPrivateRW = 0600
 	dirPermPrivate    = 0700
+)
 
-	installRoot = "/opt/mihomo"
-	managerRoot = "/opt/mihomo-manager"
+var (
+	installRoot, managerRoot, instanceOperationLockFile = platformStoragePaths()
 
-	binaryPath             = installRoot + "/bin/mihomo"
-	configDir              = installRoot + "/etc"
-	OverrideFilePath       = installRoot + "/etc/override.yaml"
-	RoutingRulesPath       = installRoot + "/etc/rules.txt"
-	configYAML             = installRoot + "/etc/config.yaml"
-	stateDir               = managerRoot + "/state"
-	subscriptionDataFile   = managerRoot + "/state/subscription-data.txt"
-	subscriptionURLFile    = managerRoot + "/state/subscription-url.txt"
-	subscriptionSourceFile = managerRoot + "/state/subscription-source.txt"
+	binaryPath             = filepath.Join(installRoot, "bin", coreExecutableName())
+	configDir              = filepath.Join(installRoot, "etc")
+	OverrideFilePath       = filepath.Join(configDir, "override.yaml")
+	RoutingRulesPath       = filepath.Join(configDir, "rules.txt")
+	configYAML             = filepath.Join(configDir, "config.yaml")
+	stateDir               = filepath.Join(managerRoot, "state")
+	ServiceLogPath         = filepath.Join(managerRoot, "logs", "mihomo.log")
+	subscriptionDataFile   = filepath.Join(stateDir, "subscription-data.txt")
+	subscriptionURLFile    = filepath.Join(stateDir, "subscription-url.txt")
+	subscriptionSourceFile = filepath.Join(stateDir, "subscription-source.txt")
 	// This inode must survive uninstall; config and lifecycle share this lock.
-	instanceOperationLockFile  = "/run/mihomo-manager/instance.lock"
 	subscriptionUpdateLockFile = instanceOperationLockFile
-	configApplyStatusFile      = managerRoot + "/state/config-apply-status.json"
-	configApplyTransactionFile = managerRoot + "/state/config-apply-transaction.json"
+	configApplyStatusFile      = filepath.Join(stateDir, "config-apply-status.json")
+	configApplyTransactionFile = filepath.Join(stateDir, "config-apply-transaction.json")
 )

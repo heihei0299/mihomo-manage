@@ -2,11 +2,9 @@ package manager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -29,23 +27,27 @@ func (l *fileOperationLock) Acquire(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(l.path), 0755); err != nil {
+	if err := (OSSystem{}).MkdirAll(filepath.Dir(l.path), dirPermPrivate); err != nil {
 		return nil, fmt.Errorf("creating update lock directory: %w", err)
 	}
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_RDWR, 0644)
+	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_RDWR, filePermPrivateRW)
 	if err != nil {
 		return nil, fmt.Errorf("opening update lock: %w", err)
 	}
+	if err := (OSSystem{}).Chmod(l.path, filePermPrivateRW); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("protecting update lock: %w", err)
+	}
 
 	tryLock := func() error {
-		return syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		return lockOperationFile(file)
 	}
 	if err := tryLock(); err == nil {
 		return func() {
-			_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+			_ = unlockOperationFile(file)
 			_ = file.Close()
 		}, nil
-	} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+	} else if !operationLockBusy(err) {
 		_ = file.Close()
 		return nil, fmt.Errorf("acquiring update lock: %w", err)
 	}
@@ -68,10 +70,10 @@ func (l *fileOperationLock) Acquire(ctx context.Context) (func(), error) {
 		case <-ticker.C:
 			if err := tryLock(); err == nil {
 				return func() {
-					_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+					_ = unlockOperationFile(file)
 					_ = file.Close()
 				}, nil
-			} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			} else if !operationLockBusy(err) {
 				_ = file.Close()
 				return nil, fmt.Errorf("acquiring update lock: %w", err)
 			}

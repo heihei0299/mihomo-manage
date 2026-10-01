@@ -216,70 +216,9 @@ func TestOSServiceManagerStartStopRestartLinux(t *testing.T) {
 	}
 }
 
-func TestOSServiceManagerIsRunningDarwin(t *testing.T) {
-	rec := &commandRecorder{output: "PID 12345 mihomo"}
-	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
-
-	running, err := svc.IsRunning(context.Background(), "mihomo")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !running {
-		t.Error("expected running=true for output containing PID")
-	}
-	if rec.captured[0].name != "launchctl" {
-		t.Errorf("expected launchctl, got %s", rec.captured[0].name)
-	}
-}
-
-func TestOSServiceManagerRegisterDarwin(t *testing.T) {
-	rec := &commandRecorder{output: "success"}
-	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
-
-	err := svc.Register(context.Background(), "mihomo", "/path/to/mihomo.plist")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(rec.captured) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rec.captured))
-	}
-	if rec.captured[0].name != "launchctl" || rec.captured[0].args[0] != "load" {
-		t.Errorf("expected launchctl load, got %v", rec.captured[0])
-	}
-}
-
-func TestOSServiceManagerUnregisterDarwin(t *testing.T) {
-	rec := &commandRecorder{output: "success"}
-	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
-
-	err := svc.Unregister(context.Background(), "mihomo")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(rec.captured) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rec.captured))
-	}
-	if rec.captured[0].name != "launchctl" || rec.captured[0].args[0] != "unload" {
-		t.Errorf("expected launchctl unload, got %v", rec.captured[0])
-	}
-}
-
-func TestOSServiceManagerIsNotRunningDarwin(t *testing.T) {
-	rec := &commandRecorder{output: "mihomo\tstopped"}
-	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
-
-	running, err := svc.IsRunning(context.Background(), "mihomo")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if running {
-		t.Error("expected running=false for output without PID")
-	}
-}
-
 func TestOSServiceManagerUnsupportedOS(t *testing.T) {
 	rec := &commandRecorder{}
-	svc := &OSServiceManager{cmd: rec, osType: "windows"}
+	svc := &OSServiceManager{cmd: rec, osType: "darwin"}
 
 	_, err := svc.IsRunning(context.Background(), "mihomo")
 	if err == nil {
@@ -289,7 +228,7 @@ func TestOSServiceManagerUnsupportedOS(t *testing.T) {
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("error = %v, want UnsupportedPlatformError", err)
 	}
-	if unsupported.Feature != "service" || unsupported.GOOS != "windows" {
+	if unsupported.Feature != "service" || unsupported.GOOS != "darwin" {
 		t.Fatalf("unsupported error = %+v", unsupported)
 	}
 }

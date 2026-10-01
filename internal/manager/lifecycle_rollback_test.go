@@ -122,7 +122,7 @@ func TestInstallDeployFailsRollsBack(t *testing.T) {
 }
 
 func TestUpgradeStartFailsRollsBack(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	source := &fakeReleaseSource{}
 	linkStorage(fs, source)

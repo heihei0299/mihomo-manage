@@ -86,6 +86,9 @@ func (OSSystem) WriteFile(path string, data []byte, perm uint32) error {
 	if err := out.Chmod(os.FileMode(perm)); err != nil {
 		return err
 	}
+	if err := protectPathPermissions(path, perm); err != nil {
+		return err
+	}
 	if err := out.Truncate(0); err != nil {
 		return err
 	}
@@ -104,11 +107,17 @@ func (OSSystem) Rename(oldPath, newPath string) error {
 }
 
 func (OSSystem) MkdirAll(path string, perm uint32) error {
-	return os.MkdirAll(path, os.FileMode(perm))
+	if err := os.MkdirAll(path, os.FileMode(perm)); err != nil {
+		return err
+	}
+	return protectPathPermissions(path, perm)
 }
 
 func (OSSystem) Chmod(path string, perm uint32) error {
-	return os.Chmod(path, os.FileMode(perm))
+	if err := os.Chmod(path, os.FileMode(perm)); err != nil {
+		return err
+	}
+	return protectPathPermissions(path, perm)
 }
 
 func (OSSystem) RunCommand(ctx context.Context, name string, args ...string) (string, error) {
@@ -158,6 +167,9 @@ func (OSSystem) Download(ctx context.Context, rawURL, dest string) error {
 	defer out.Close()
 	if err := out.Chmod(0600); err != nil {
 		return fmt.Errorf("protecting %s: %w", dest, err)
+	}
+	if err := protectPathPermissions(dest, filePermPrivateRW); err != nil {
+		return err
 	}
 	if err := out.Truncate(0); err != nil {
 		return fmt.Errorf("preparing %s: %w", dest, err)

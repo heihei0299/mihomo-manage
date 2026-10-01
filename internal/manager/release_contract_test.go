@@ -18,8 +18,8 @@ func TestSupportedReleaseContract(t *testing.T) {
 	for _, target := range []string{
 		"goos: linux\n            goarch: amd64",
 		"goos: linux\n            goarch: arm64",
-		"goos: darwin\n            goarch: amd64",
-		"goos: darwin\n            goarch: arm64",
+		"goos: windows\n            goarch: amd64",
+		"goos: windows\n            goarch: arm64",
 	} {
 		if !strings.Contains(text, target) {
 			t.Errorf("release workflow missing target %q", target)
@@ -27,10 +27,10 @@ func TestSupportedReleaseContract(t *testing.T) {
 	}
 	targets := regexp.MustCompile(`(?m)^\s+- goos: ([^\s]+)\s*\n\s+goarch: ([^\s]+)`).FindAllStringSubmatch(text, -1)
 	wantTargets := map[string]bool{
-		"linux/amd64":  true,
-		"linux/arm64":  true,
-		"darwin/amd64": true,
-		"darwin/arm64": true,
+		"linux/amd64":   true,
+		"linux/arm64":   true,
+		"windows/amd64": true,
+		"windows/arm64": true,
 	}
 	if len(targets) != len(wantTargets) {
 		t.Fatalf("release targets = %d, want exactly %d", len(targets), len(wantTargets))

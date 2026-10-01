@@ -13,7 +13,10 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,19 +42,19 @@ jobs:
           - goos: linux
             goarch: arm64
             ext: ""
-          - goos: darwin
+          - goos: windows
             goarch: amd64
-            ext: ""
-          - goos: darwin
+            ext: ".exe"
+          - goos: windows
             goarch: arm64
-            ext: ""
+            ext: ".exe"
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: build
         run: |

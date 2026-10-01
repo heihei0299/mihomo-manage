@@ -8,9 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
-const lifecycleUpgradeTransactionFile = stateDir + "/upgrade-transaction.json"
+var lifecycleUpgradeTransactionFile = filepath.Join(stateDir, "upgrade-transaction.json")
 
 // The journal is written before stopping the service. An in-progress operation
 // restores the binary identified by OldHash and the previous running state;

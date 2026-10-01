@@ -6,7 +6,7 @@ mihomo (Clash Meta) 代理管理工具。管理实例的完整生命周期：安
 
 ### 从 Release 下载
 
-从 [Releases](https://github.com/heihei0299/mihomo-manage/releases) 下载对应平台的二进制。当前正式支持 Linux amd64、Linux arm64、Darwin amd64 和 Darwin arm64；Windows 暂不发布：
+从 [Releases](https://github.com/heihei0299/mihomo-manage/releases) 下载对应平台的二进制。支持 Linux amd64、Linux arm64、Windows amd64 和 Windows arm64。Linux 需要 systemd，Windows 需要 Windows 10/Server 2016 或更新版本。macOS 不再支持。
 
 ```bash
 # Linux amd64
@@ -16,15 +16,21 @@ sudo install -m 0755 mihomo-manager-linux-amd64 /usr/local/bin/mihomo-manager
 sudo install -m 0755 mihomo-manager-linux-arm64 /usr/local/bin/mihomo-manager
 ```
 
-### macOS
+### Windows
 
-```bash
-# Intel
-sudo install -m 0755 mihomo-manager-darwin-amd64 /usr/local/bin/mihomo-manager
+使用管理员身份打开 PowerShell，将下载的 `.exe` 保存到固定位置：
 
-# Apple Silicon
-sudo install -m 0755 mihomo-manager-darwin-arm64 /usr/local/bin/mihomo-manager
+```powershell
+New-Item -ItemType Directory -Force "$env:ProgramFiles\mihomo-manager"
+Copy-Item .\mihomo-manager-windows-amd64.exe "$env:ProgramFiles\mihomo-manager\mihomo-manager.exe"
+& "$env:ProgramFiles\mihomo-manager\mihomo-manager.exe" install
+& "$env:ProgramFiles\mihomo-manager\mihomo-manager.exe" subscription set 'https://example.com/sub'
+& "$env:ProgramFiles\mihomo-manager\mihomo-manager.exe" subscription update
 ```
+
+ARM64 Windows 使用 `mihomo-manager-windows-arm64.exe`。安装后服务和定时任务会引用 manager 的绝对路径，请保留该文件。需要修改系统状态的命令和 TUI 应从管理员终端运行。
+
+Windows 的核心及配置保存在 `%ProgramData%\mihomo`，状态和日志保存在 `%ProgramData%\mihomo-manager`。`reload` 通过重启核心应用配置，会短暂中断连接；`logs` 读取核心日志并支持 `--tail=N` 和 `--follow`。默认编辑器为 `notepad.exe`，可通过 `$env:EDITOR` 指定其他编辑器。
 
 ### Debian/Ubuntu
 
@@ -44,13 +50,17 @@ sudo pacman -U mihomo-manager-*-x86_64.pkg.tar.zst
 go build -o mihomo-manager .
 ```
 
+### GitHub Actions 编译
+
+推送到 `main`、提交 Pull Request，或在 Actions 页面手动运行 `ci`，会在 Linux 和 Windows 上执行检查，并编译两个平台的 amd64、arm64 二进制。可在对应运行的 **Artifacts** 中下载构建产物，保留 14 天。推送 `v*` 标签会触发 Release 打包和发布。
+
 ## 快速开始
 
 ```bash
 # 安装 mihomo（在线下载）
 sudo mihomo-manager install
 
-# 安装 mihomo（从本地 .gz 或二进制文件）
+# 安装 mihomo（从本地 .gz、.zip 或二进制文件）
 sudo mihomo-manager install --from ./mihomo-linux-amd64.gz
 
 # 设置订阅
@@ -140,11 +150,11 @@ TUI 的 Config → Subscription 页面支持按 `e` 使用 `$EDITOR` 输入 URL 
 
 `subscription update` 会先生成并校验临时配置，再原子替换最终配置；reload 失败或进程在确认重载前中断时，保留生成物并报告 `pending-reload`。事务记录保留到重载结果持久化；预览或校验时恢复记录不会自动重载服务。`status` 和 TUI 状态页显示最近一次配置应用结果（`applied`、`pending-reload`、`validation-failed` 或 `apply-failed`）。
 
-scheduled subscription-update 由 Linux systemd timer 或 Darwin launchd job 负责，manager CLI 退出后仍会执行；关闭或卸载时会移除 native task。
+scheduled subscription-update 由 Linux systemd timer 或 Windows 任务计划程序负责，manager CLI 退出后仍会执行；关闭或卸载时会移除 native task。Windows 任务以 SYSTEM 运行，间隔支持 1 小时到 31 天，精确到整秒。
 
 `start`/`restart` 前会自动校验配置，非法配置拒绝启动。
 
-`logs` 使用 Linux 的 `journalctl`；Darwin 和其他非 Linux 平台返回明确的 unsupported 错误。
+`logs` 在 Linux 使用 `journalctl`，在 Windows 读取 `%ProgramData%\mihomo-manager\logs\mihomo.log`。
 
 ## 环境变量
 
@@ -166,6 +176,6 @@ sudo -E env "PATH=$PATH" go test -tags=acceptance ./acceptance/ -count=1 -v
 
 GNU GPLv3-or-later
 
-订阅、覆写、生成配置及状态文件按私有权限保存（文件 `0600`、配置/状态目录 `0700`）。已有文件会在配置操作时收紧权限；目录权限同时保护旧备份。`status` 读取私有应用状态时通过现有 sudo 流程提升权限。systemd 单元不包含订阅数据，仍使用 `0644`。
+订阅、覆写、生成配置及状态文件按私有权限保存：Linux 文件 `0600`、配置/状态目录 `0700`；Windows 使用 ACL，只允许文件所有者、Administrators 和 SYSTEM 访问。已有文件会在配置操作时收紧权限；目录权限同时保护旧备份。Linux 的 `status` 读取私有应用状态时通过 sudo 提升权限。systemd 单元不包含订阅数据，仍使用 `0644`。
 
 升级在停止核心前持久记录事务与原始二进制 hash。管理器进程中断后，下次安装、升级或卸载会先恢复原二进制和原运行状态；恢复失败时保留事务及备份并报告错误。

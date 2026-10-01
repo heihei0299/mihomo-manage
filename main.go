@@ -77,6 +77,17 @@ func main() {
 		printUsage()
 		return
 	}
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		fmt.Fprintf(os.Stderr, "unsupported platform: %s; supported platforms are Linux and Windows\n", runtime.GOOS)
+		os.Exit(1)
+	}
+	if len(args) == 1 && args[0] == "service-run" {
+		if err := manager.RunWindowsService(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	oss := &manager.OSSystem{}
 	svcMgr := manager.NewOSServiceManager(oss, oss)
@@ -316,7 +327,7 @@ func cliLogsForOS(goos string, args []string) int {
 }
 
 func runCLILogsForOS(goos string, args []string) error {
-	if goos != "linux" {
+	if goos != "linux" && goos != "windows" {
 		return manager.UnsupportedPlatformError{Feature: "logs", GOOS: goos}
 	}
 
@@ -332,6 +343,14 @@ func runCLILogsForOS(goos string, args []string) error {
 				tail = n
 			}
 		}
+	}
+	if tail < 0 {
+		return fmt.Errorf("log tail must be non-negative")
+	}
+	if goos == "windows" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+		return streamLogFile(ctx, manager.ServiceLogPath, os.Stdout, tail, follow)
 	}
 	journalArgs := []string{"-u", "mihomo", "-n", fmt.Sprintf("%d", tail)}
 	if follow {
@@ -433,7 +452,7 @@ Environments:
   MIHOMO_RELEASE_CHECKSUM_URL=<tmpl>  Checksum URL template with {version} {asset} placeholders
 
 Lifecycle:
-  install/i [ver] [--no-autostart] [--from <path>]   Install mihomo (default: latest; --from for local .gz/binary)
+  install/i [ver] [--no-autostart] [--from <path>]   Install mihomo (default: latest; --from for local .gz/.zip/binary)
   upgrade/ug [ver]                    Upgrade mihomo (default: latest)
   uninstall/ui [--keep-backup]        Remove mihomo
   autostart on|off                    Toggle auto-start on boot
@@ -449,8 +468,10 @@ func needsElevation(args []string) bool {
 	switch args[0] {
 	case "status":
 		return true // Apply status may contain private subscription diagnostics.
-	case "versions", "v", "logs":
+	case "versions", "v":
 		return false
+	case "logs":
+		return runtime.GOOS == "windows"
 	case "config":
 		// Preview currently performs recovery and legacy migration while holding
 		// the root-owned config lock, so it must use the same elevation path as
@@ -462,25 +483,5 @@ func needsElevation(args []string) bool {
 }
 
 func tryElevate(args []string) bool {
-	if os.Geteuid() == 0 {
-		return false
-	}
-	if !needsElevation(args) {
-		return false
-	}
-	sudoPath, err := exec.LookPath("sudo")
-	if err != nil {
-		return false
-	}
-	cmd := exec.Command(sudoPath, os.Args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			os.Exit(exit.ExitCode())
-		}
-		os.Exit(1)
-	}
-	return true
+	return elevateForPlatform(args)
 }

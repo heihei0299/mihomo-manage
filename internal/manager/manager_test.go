@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -8,6 +9,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,12 +59,12 @@ func (m *fakeFileSystem) RemoveAll(path string) error {
 	m.accessed = true
 	m.removed = append(m.removed, path)
 	for existing := range m.written {
-		if existing == path || strings.HasPrefix(existing, path+"/") {
+		if existing == path || strings.HasPrefix(existing, path+"/") || strings.HasPrefix(existing, path+string(filepath.Separator)) {
 			delete(m.written, existing)
 		}
 	}
 	for existing := range m.fileExists {
-		if existing == path || strings.HasPrefix(existing, path+"/") {
+		if existing == path || strings.HasPrefix(existing, path+"/") || strings.HasPrefix(existing, path+string(filepath.Separator)) {
 			delete(m.fileExists, existing)
 		}
 	}
@@ -132,6 +135,13 @@ func fakeReleaseArchive() []byte {
 
 func fakeReleaseArchiveWith(content string) []byte {
 	var buf bytes.Buffer
+	if runtime.GOOS == "windows" {
+		archive := zip.NewWriter(&buf)
+		file, _ := archive.Create("mihomo.exe")
+		_, _ = file.Write([]byte(content))
+		_ = archive.Close()
+		return buf.Bytes()
+	}
 	gw := gzip.NewWriter(&buf)
 	gw.Write([]byte(content))
 	gw.Close()
@@ -539,7 +549,7 @@ func TestStatusNotInstalled(t *testing.T) {
 }
 
 func TestStatusInstalledStopped(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
 	svc := &mockServiceManager{running: false}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -561,7 +571,7 @@ func TestStatusInstalledStopped(t *testing.T) {
 }
 
 func TestStatusInstalledRunning(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{cmdOutput: "Mihomo Meta v1.18.0 linux amd64"}
 	svc := &mockServiceManager{running: true}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -580,7 +590,7 @@ func TestStatusInstalledRunning(t *testing.T) {
 }
 
 func TestStatusServiceManagerError(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{err: testError{"service not found"}}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -660,12 +670,12 @@ func TestSetSubscriptionSourceNoDeadWrite(t *testing.T) {
 func TestSubscriptionRemoteURLFetched(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			OverrideFilePath: true,
-			"/opt/mihomo-manager/state/subscription-url.txt": true,
+			OverrideFilePath:    true,
+			subscriptionURLFile: true,
 		},
 		written: map[string][]byte{
-			OverrideFilePath: []byte(`proxies: {{subscription}}`),
-			"/opt/mihomo-manager/state/subscription-url.txt": []byte(`https://example.com/sub`),
+			OverrideFilePath:    []byte(`proxies: {{subscription}}`),
+			subscriptionURLFile: []byte(`https://example.com/sub`),
 		},
 	}
 	source := &fakeReleaseSource{}
@@ -774,12 +784,12 @@ rules:
 func TestUpdateConfigReloadsInstance(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			"/opt/mihomo/etc/config-template.yaml": true,
+			legacyTemplatePath: true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte("mode: rule\n"),
-			subscriptionSourceFile:                 []byte("local\n"),
-			subscriptionDataFile:                   []byte("mode: rule\n"),
+			legacyTemplatePath:     []byte("mode: rule\n"),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
 	source := &fakeReleaseSource{}
@@ -798,14 +808,14 @@ func TestUpdateConfigReloadsInstance(t *testing.T) {
 func TestUpdateConfigCreatesBackup(t *testing.T) {
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
-			"/opt/mihomo/etc/config-template.yaml": true,
-			"/opt/mihomo/etc/config.yaml":          true,
+			legacyTemplatePath: true,
+			configYAML:         true,
 		},
 		written: map[string][]byte{
-			"/opt/mihomo/etc/config-template.yaml": []byte("mode: rule\n"),
-			"/opt/mihomo/etc/config.yaml":          []byte(`old content`),
-			subscriptionSourceFile:                 []byte("local\n"),
-			subscriptionDataFile:                   []byte("mode: rule\n"),
+			legacyTemplatePath:     []byte("mode: rule\n"),
+			configYAML:             []byte(`old content`),
+			subscriptionSourceFile: []byte("local\n"),
+			subscriptionDataFile:   []byte("mode: rule\n"),
 		},
 	}
 	source := &fakeReleaseSource{}
@@ -855,7 +865,7 @@ func TestStartNotInstalled(t *testing.T) {
 }
 
 func TestStartStopped(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: false}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -870,7 +880,7 @@ func TestStartStopped(t *testing.T) {
 }
 
 func TestStartAlreadyRunning(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -894,7 +904,7 @@ func TestStopNotInstalled(t *testing.T) {
 }
 
 func TestStopRunning(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -909,7 +919,7 @@ func TestStopRunning(t *testing.T) {
 }
 
 func TestStopAlreadyStopped(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: false}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -933,7 +943,7 @@ func TestRestartNotInstalled(t *testing.T) {
 }
 
 func TestRestartRunning(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -957,7 +967,7 @@ func TestReloadNotInstalled(t *testing.T) {
 }
 
 func TestReloadRunning(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: true}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)
@@ -969,7 +979,7 @@ func TestReloadRunning(t *testing.T) {
 }
 
 func TestReloadStopped(t *testing.T) {
-	fs := &fakeFileSystem{fileExists: map[string]bool{"/opt/mihomo/bin/mihomo": true}}
+	fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true}}
 	cmd := &fakeCmdRunner{}
 	svc := &mockServiceManager{running: false}
 	m := NewServiceControl(fs, cmd, svc, passConfigValidation)

@@ -19,7 +19,7 @@ the first compile-time boundary.
 | Lifecycle | `lifecycle*.go` | install, upgrade, uninstall, rollback |
 | Service | `service*.go`, `servicemanager.go` | service process control and platform service registration |
 | Schedule orchestration | `native_scheduler.go`, `schedule_manager.go` | installed prerequisite, legacy schedule migration, platform selection, caller-facing errors |
-| Native scheduler | `internal/scheduler/*` | systemd/launchd generation, native runtime state interpretation, platform scheduling |
+| Native scheduler | `internal/scheduler/*` | systemd/Windows Task Scheduler generation, native runtime state interpretation, platform scheduling |
 | OS seams | `system.go` | filesystem, command execution, release/network boundary implementations |
 | Shared contract | `manager.go`, role interface files, `errors.go` | shared domain contracts, public role contracts, caller-branchable errors |
 | Instance serialization | `lock.go` | cross-process lock shared by config and lifecycle; stable inode outside uninstall roots |
@@ -32,7 +32,7 @@ Rules:
    cross-domain helpers in a generic utility file.
 2. Config internals must not call lifecycle internals; lifecycle may depend on
    role interfaces, not config implementation details.
-3. Native scheduler implementations own systemd/launchd state interpretation.
+3. Native scheduler implementations own systemd/Windows Task Scheduler state interpretation.
    Callers must not infer platform state from persisted files.
 4. Dependency direction is one-way: `internal/manager` may depend on
    `internal/scheduler`; `internal/scheduler` must not import
@@ -50,7 +50,8 @@ Required matrices:
 
 - Config apply: validation failure, pre-commit failure, pending reload, applied,
   and applied-with-cleanup-warning.
-- launchd: runtime loaded/unloaded crossed with plist present/missing.
+- Windows tasks: registered/missing crossed with XML staging file present/missing; disabled tasks are inactive.
+- Windows service host: requested stop versus unexpected core exit; stopped hosts leave no core process.
 - Lifecycle: failures before deployment, after deployment, after registration,
   after replacement, and rollback failure propagation.
 
@@ -218,4 +219,6 @@ Preferred first-read boundaries:
 This rule is intended to improve both human navigation and AI context/cache
 efficiency.
 
-Instance writes acquire the same `/run/mihomo-manager/instance.lock` across Config and Lifecycle. Lifecycle holds it through deployment, service transitions, and rollback; uninstall never removes this inode. Domain-specific busy errors remain caller-facing. This shared side-effect boundary introduces no reverse dependency between Config and Lifecycle.
+Instance writes acquire the same platform lock across Config and Lifecycle: `/run/mihomo-manager/instance.lock` on Linux, `%ProgramData%\mihomo-manager-locks\instance.lock` on Windows. Lifecycle holds it through deployment, service transitions, and rollback; uninstall never removes this inode. Domain-specific busy errors remain caller-facing. This shared side-effect boundary introduces no reverse dependency between Config and Lifecycle.
+
+Supported operating systems are Linux and Windows. Windows uses SCM through `golang.org/x/sys/windows/svc/mgr`, a manager service host for the core process, Windows Task Scheduler for recurring updates, and protected ACLs for private storage. Platform implementations and release targets must follow ADR-0011.

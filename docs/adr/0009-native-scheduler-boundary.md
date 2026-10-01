@@ -1,6 +1,6 @@
 # ADR-0009: Native scheduler package boundary
 
-Status: Accepted
+Status: Accepted; current platform implementations are defined by ADR-0011
 
 ## Context
 

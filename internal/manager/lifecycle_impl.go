@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -18,7 +19,7 @@ import (
 	"time"
 )
 
-const backupDir = managerRoot + "/backups"
+var backupDir = filepath.Join(managerRoot, "backups")
 
 type lifecycleManager struct {
 	fs       FileSystem
@@ -89,9 +90,13 @@ func withCleanupError(primary error, fs FileSystem, paths ...string) error {
 
 func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version string, onProgress ProgressCallback, checkPhase, fetchPhase InstallationPhase) (string, error) {
 	tempPath := fmt.Sprintf("%s.tmp.%s", binaryPath, version)
-	gzPath := tempPath + ".gz"
 	assetURL := releaseURL(runtime.GOOS, runtime.GOARCH, version)
 	assetName := releaseAssetName(assetURL)
+	archiveExtension := path.Ext(assetName)
+	if archiveExtension == "" {
+		archiveExtension = ".gz"
+	}
+	archivePath := tempPath + archiveExtension
 
 	onProgress(ProgressEvent{Phase: checkPhase, Message: fmt.Sprintf("Checking mihomo %s", version)})
 	expected, err := m.source.ExpectedChecksum(ctx, "MetaCubeX", "mihomo", version, assetName)
@@ -104,27 +109,27 @@ func (m *lifecycleManager) downloadAndDecompress(ctx context.Context, version st
 	}
 
 	onProgress(ProgressEvent{Phase: fetchPhase, Message: fmt.Sprintf("Downloading mihomo %s", version)})
-	if err := m.source.Download(ctx, assetURL, gzPath); err != nil {
+	if err := m.source.Download(ctx, assetURL, archivePath); err != nil {
 		onProgress(ProgressEvent{Phase: fetchPhase, Message: "Download failed", Error: err})
-		return "", withCleanupError(fmt.Errorf("download failed: %w", err), m.fs, gzPath, tempPath)
+		return "", withCleanupError(fmt.Errorf("download failed: %w", err), m.fs, archivePath, tempPath)
 	}
 	if err := ctx.Err(); err != nil {
-		return "", withCleanupError(err, m.fs, gzPath, tempPath)
+		return "", withCleanupError(err, m.fs, archivePath, tempPath)
 	}
-	if err := verifyChecksum(m.fs, gzPath, expected, assetName); err != nil {
+	if err := verifyChecksum(m.fs, archivePath, expected, assetName); err != nil {
 		onProgress(ProgressEvent{Phase: checkPhase, Message: "Checksum verification failed", Error: err})
-		return "", withCleanupError(err, m.fs, gzPath, tempPath)
+		return "", withCleanupError(err, m.fs, archivePath, tempPath)
 	}
 	onProgress(ProgressEvent{Phase: checkPhase, Message: "Checksum verified"})
 	onProgress(ProgressEvent{Phase: fetchPhase, Message: "Decompressing"})
-	if err := m.decompressGzip(gzPath, tempPath); err != nil {
-		return "", withCleanupError(fmt.Errorf("decompress failed: %w", err), m.fs, gzPath, tempPath)
+	if err := m.decompressRelease(archivePath, tempPath); err != nil {
+		return "", withCleanupError(fmt.Errorf("decompress failed: %w", err), m.fs, archivePath, tempPath)
 	}
 	if err := ctx.Err(); err != nil {
-		return "", withCleanupError(err, m.fs, gzPath, tempPath)
+		return "", withCleanupError(err, m.fs, archivePath, tempPath)
 	}
-	if err := m.fs.RemoveAll(gzPath); err != nil {
-		return "", withCleanupError(fmt.Errorf("cleanup downloaded artifact: %w", err), m.fs, gzPath, tempPath)
+	if err := m.fs.RemoveAll(archivePath); err != nil {
+		return "", withCleanupError(fmt.Errorf("cleanup downloaded artifact: %w", err), m.fs, archivePath, tempPath)
 	}
 	onProgress(ProgressEvent{Phase: fetchPhase, Message: "Download complete"})
 	return tempPath, nil
@@ -171,6 +176,43 @@ func (m *lifecycleManager) decompressGzip(src, dest string) error {
 	}
 	gr.Close()
 	return m.fs.WriteFile(dest, decompressed, filePermUserRWX)
+}
+
+func (m *lifecycleManager) decompressRelease(src, dest string) error {
+	if strings.EqualFold(filepath.Ext(src), ".zip") {
+		data, err := m.fs.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return fmt.Errorf("reading ZIP archive: %w", err)
+		}
+		var executable *zip.File
+		for _, file := range archive.File {
+			if file.FileInfo().IsDir() || !strings.HasSuffix(strings.ToLower(file.Name), ".exe") {
+				continue
+			}
+			if executable != nil {
+				return errors.New("ZIP archive contains multiple executables")
+			}
+			executable = file
+		}
+		if executable == nil {
+			return errors.New("ZIP archive contains no executable")
+		}
+		reader, err := executable.Open()
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		content, err := io.ReadAll(reader)
+		if err != nil {
+			return err
+		}
+		return m.fs.WriteFile(dest, content, filePermUserRWX)
+	}
+	return m.decompressGzip(src, dest)
 }
 
 // rollbackInstall defines the install recovery boundary.
@@ -226,6 +268,13 @@ func (m *lifecycleManager) Install(ctx context.Context, version string, autoStar
 	if err := m.ensureInstallTargetAvailable(); err != nil {
 		return err
 	}
+	if checker, ok := m.svcMgr.(interface {
+		CheckRegistrationTarget(context.Context, string) error
+	}); ok {
+		if err := checker.CheckRegistrationTarget(ctx, serviceName); err != nil {
+			return err
+		}
+	}
 	if version == "latest" {
 		if resolved, err := m.resolveVersion(ctx, version); err == nil {
 			version = resolved
@@ -262,6 +311,13 @@ func (m *lifecycleManager) InstallFromLocal(ctx context.Context, localPath strin
 	if err := m.ensureInstallTargetAvailable(); err != nil {
 		return err
 	}
+	if checker, ok := m.svcMgr.(interface {
+		CheckRegistrationTarget(context.Context, string) error
+	}); ok {
+		if err := checker.CheckRegistrationTarget(ctx, serviceName); err != nil {
+			return err
+		}
+	}
 	tempPath, err := m.resolveLocalBinary(ctx, localPath)
 	if err != nil {
 		return fmt.Errorf("local binary: %w", err)
@@ -283,12 +339,12 @@ func (m *lifecycleManager) resolveLocalBinary(ctx context.Context, localPath str
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if strings.HasSuffix(localPath, ".gz") {
+	if strings.HasSuffix(strings.ToLower(localPath), ".gz") || strings.HasSuffix(strings.ToLower(localPath), ".zip") {
 		tempPath := binaryPath + ".tmp.local"
 		if err := m.fs.MkdirAll(filepath.Dir(tempPath), filePermUserRWX); err != nil {
 			return "", fmt.Errorf("creating local binary directory: %w", err)
 		}
-		if err := m.decompressGzip(localPath, tempPath); err != nil {
+		if err := m.decompressRelease(localPath, tempPath); err != nil {
 			return "", withCleanupError(err, m.fs, tempPath)
 		}
 		if err := ctx.Err(); err != nil {

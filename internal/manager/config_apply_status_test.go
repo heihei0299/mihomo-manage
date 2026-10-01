@@ -24,7 +24,7 @@ func requireConfigApplyFailure(t *testing.T, m ConfigManager) {
 }
 
 func TestUpdateConfigCleansDownloadTempAfterFailure(t *testing.T) {
-	const tempPath = subscriptionDataFile + ".tmp"
+	tempPath := subscriptionDataFile + ".tmp"
 	fs := &fakeFileSystem{
 		fileExists: map[string]bool{
 			OverrideFilePath:       true,

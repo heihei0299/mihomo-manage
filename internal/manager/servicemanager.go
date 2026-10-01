@@ -1,9 +1,9 @@
 package manager
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -19,8 +19,8 @@ func serviceUnitPathFor(goos string) (string, error) {
 	switch goos {
 	case "linux":
 		return "/etc/systemd/system/mihomo.service", nil
-	case "darwin":
-		return "/Library/LaunchAgents/mihomo.plist", nil
+	case "windows":
+		return filepath.Join(managerRoot, "mihomo-service.json"), nil
 	default:
 		return "", UnsupportedPlatformError{Feature: "service", GOOS: goos}
 	}
@@ -35,43 +35,8 @@ func serviceUnitContentFor(goos string, autoStart bool) ([]byte, error) {
 	if _, err := serviceUnitPathFor(goos); err != nil {
 		return nil, err
 	}
-	if goos == "darwin" {
-		if autoStart {
-			return []byte(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>mihomo</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/mihomo/bin/mihomo</string>
-    <string>-d</string>
-    <string>/opt/mihomo/etc</string>
-  </array>
-  <key>KeepAlive</key>
-  <true/>
-  <key>RunAtLoad</key>
-  <true/>
-</dict>
-</plist>
-`), nil
-		}
-		return []byte(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>mihomo</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/mihomo/bin/mihomo</string>
-    <string>-d</string>
-    <string>/opt/mihomo/etc</string>
-  </array>
-</dict>
-</plist>
-`), nil
+	if goos == "windows" {
+		return []byte("{\"name\":\"mihomo\"}\n"), nil
 	}
 	return []byte(`[Unit]
 Description=mihomo (Clash Meta) proxy
@@ -176,127 +141,12 @@ func (l linuxSystemctl) disableAutoStart(ctx context.Context, name string) error
 	return nil
 }
 
-type darwinLaunchctl struct {
-	cmd CommandRunner
-	fs  FileSystem
-}
-
-func (d darwinLaunchctl) isActive(ctx context.Context, name string) (bool, error) {
-	out, err := d.cmd.RunCommand(ctx, "launchctl", "list", name)
-	if err != nil {
-		return false, fmt.Errorf("launchctl list %s: %w", name, err)
-	}
-	return strings.Contains(out, "PID"), nil
-}
-
-func (d darwinLaunchctl) enable(ctx context.Context, name, serviceFilePath string) error {
-	_, err := d.cmd.RunCommand(ctx, "launchctl", "load", serviceFilePath)
-	return err
-}
-
-func (d darwinLaunchctl) disable(ctx context.Context, name string) error {
-	_, err := d.cmd.RunCommand(ctx, "launchctl", "unload", fmt.Sprintf("/Library/LaunchAgents/%s.plist", name))
-	return err
-}
-
-func (d darwinLaunchctl) start(ctx context.Context, name string) error {
-	_, err := d.cmd.RunCommand(ctx, "launchctl", "start", name)
-	return err
-}
-
-func (d darwinLaunchctl) stop(ctx context.Context, name string) error {
-	_, err := d.cmd.RunCommand(ctx, "launchctl", "stop", name)
-	return err
-}
-
-func (d darwinLaunchctl) restart(ctx context.Context, name string) error {
-	if _, err := d.cmd.RunCommand(ctx, "launchctl", "stop", name); err != nil {
-		return err
-	}
-	_, err := d.cmd.RunCommand(ctx, "launchctl", "start", name)
-	return err
-}
-
-func (d darwinLaunchctl) reload(ctx context.Context, name string) error {
-	if _, err := d.cmd.RunCommand(ctx, "launchctl", "stop", name); err != nil {
-		return err
-	}
-	_, err := d.cmd.RunCommand(ctx, "launchctl", "start", name)
-	return err
-}
-
-func (d darwinLaunchctl) isEnabled(ctx context.Context, name string) (bool, error) {
-	path := fmt.Sprintf("/Library/LaunchAgents/%s.plist", name)
-	data, err := d.fs.ReadFile(path)
-	if err != nil {
-		return false, nil
-	}
-	return bytes.Contains(data, []byte("<key>RunAtLoad</key>")), nil
-}
-
-func (d darwinLaunchctl) enableAutoStart(ctx context.Context, name, serviceFilePath string) error {
-	data, err := d.fs.ReadFile(serviceFilePath)
-	if err != nil {
-		return err
-	}
-	if bytes.Contains(data, []byte("<key>RunAtLoad</key>")) {
-		return nil
-	}
-	// Insert RunAtLoad and KeepAlive before </dict>
-	insert := []byte("\t<key>KeepAlive</key>\n\t<true/>\n\t<key>RunAtLoad</key>\n\t<true/>\n")
-	data = bytes.ReplaceAll(data, []byte("</dict>"), append(insert, []byte("</dict>")...))
-	if err := d.fs.WriteFile(serviceFilePath, data, 0644); err != nil {
-		return err
-	}
-	if _, err := d.cmd.RunCommand(ctx, "launchctl", "unload", serviceFilePath); err != nil {
-		return err
-	}
-	_, err = d.cmd.RunCommand(ctx, "launchctl", "load", serviceFilePath)
-	return err
-}
-
-func (d darwinLaunchctl) disableAutoStart(ctx context.Context, name string) error {
-	path := fmt.Sprintf("/Library/LaunchAgents/%s.plist", name)
-	data, err := d.fs.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	if !bytes.Contains(data, []byte("<key>RunAtLoad</key>")) {
-		return nil
-	}
-	// Remove KeepAlive and RunAtLoad lines
-	lines := strings.Split(string(data), "\n")
-	var out []string
-	skip := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "<key>KeepAlive</key>" || trimmed == "<key>RunAtLoad</key>" {
-			skip = true
-			continue
-		}
-		if skip {
-			skip = false
-			continue
-		}
-		out = append(out, line)
-	}
-	data = []byte(strings.Join(out, "\n"))
-	if err := d.fs.WriteFile(path, data, 0644); err != nil {
-		return err
-	}
-	if _, err := d.cmd.RunCommand(ctx, "launchctl", "unload", path); err != nil {
-		return err
-	}
-	_, err = d.cmd.RunCommand(ctx, "launchctl", "load", path)
-	return err
-}
-
 func strategyFor(cmd CommandRunner, fs FileSystem, os string) osStrategy {
 	switch os {
 	case "linux":
 		return linuxSystemctl{cmd: cmd}
-	case "darwin":
-		return darwinLaunchctl{cmd: cmd, fs: fs}
+	case "windows":
+		return newWindowsServiceStrategy()
 	default:
 		return nil
 	}
@@ -325,6 +175,15 @@ type OSServiceManager struct {
 
 func NewOSServiceManager(cmd CommandRunner, fs FileSystem) *OSServiceManager {
 	return &OSServiceManager{cmd: cmd, fs: fs}
+}
+
+// CheckRegistrationTarget prevents installation from taking ownership of an
+// unrelated Windows service with the same name, including a stopped service.
+func (s *OSServiceManager) CheckRegistrationTarget(ctx context.Context, name string) error {
+	if s.goos() == "windows" {
+		return checkWindowsServiceTarget(ctx, name)
+	}
+	return nil
 }
 
 func (s *OSServiceManager) EnableAutoStart(ctx context.Context, name, serviceFilePath string) error {

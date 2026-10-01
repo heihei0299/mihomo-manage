@@ -41,9 +41,9 @@ func managerFileOwner(name string) string {
 		return "service"
 	case strings.HasPrefix(name, "schedule"), name == "native_scheduler.go":
 		return "schedule"
-	case name == "system.go":
+	case name == "system.go", strings.HasPrefix(name, "system_"):
 		return "os-seam"
-	case name == "manager.go", name == "errors.go", name == "paths.go", name == "defaults.go", name == "lock.go":
+	case name == "manager.go", name == "errors.go", name == "paths.go", name == "defaults.go", name == "lock.go", strings.HasPrefix(name, "paths_"), strings.HasPrefix(name, "lock_"):
 		return "shared"
 	default:
 		return ""

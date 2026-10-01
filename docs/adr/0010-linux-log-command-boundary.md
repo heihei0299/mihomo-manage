@@ -1,6 +1,6 @@
 # ADR-0010: Keep log lookup Linux-only
 
-- Status: Accepted
+- Status: Superseded by ADR-0011
 - Date: 2026-09-19
 
 ## Decision

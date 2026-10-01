@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const legacyTemplatePath = "/opt/mihomo/etc/config-template.yaml"
+var legacyTemplatePath = filepath.Join(configDir, "config-template.yaml")
 
 type ConfigValidator interface {
 	Validate(ctx context.Context, configPath string) error

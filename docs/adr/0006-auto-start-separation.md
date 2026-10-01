@@ -3,3 +3,5 @@
 We added a user-controllable auto-start toggle (`autostart on/off`) and split the existing `register` lifecycle phase in two: `register` (write unit file + notify system daemon) and `enable-auto-start` (conditional on user choice). The `ServiceManager` interface gained `EnableAutoStart`/`DisableAutoStart` methods independent of `Register`/`Unregister`.
 
 The alternative was to keep auto-start bundled inside `Register`/`Unregister` as it was, but then there's no way to change auto-start without reinstalling. We also considered using `launchctl load -w`/`unload -w` on Darwin for parity with `systemctl enable/disable`, but chose plist conditional generation instead because launchctl's `-w` flag is a sticky disabled-state database (not a deterministic toggle), which makes the state harder to inspect and predict from the manager's perspective. Writing the plist with or without `RunAtLoad`/`KeepAlive` keeps auto-start state self-documenting in the file system.
+
+Windows platform details and removal of macOS support are defined by [ADR-0011](./0011-linux-windows-platform-support.md).

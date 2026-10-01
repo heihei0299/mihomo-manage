@@ -181,7 +181,7 @@ func TestSetRemoteSubscriptionSelectsRemoteSourceAndClearsLocalState(t *testing.
 		t.Fatalf("SetSubscriptionSource failed: %v", err)
 	}
 
-	if got := string(fs.written[stateDir+"/subscription-source.txt"]); got != "remote\n" {
+	if got := string(fs.written[subscriptionSourceFile]); got != "remote\n" {
 		t.Fatalf("source marker = %q, want remote", got)
 	}
 	if got := string(fs.written[subscriptionURLFile]); got != "https://example.com/sub.yaml" {

@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -146,7 +147,7 @@ func TestUpdateConfigValidatesStagedConfigBeforeAtomicCommit(t *testing.T) {
 	if err := m.UpdateConfig(context.Background()); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
-	if validator.path == configYAML || !strings.HasSuffix(validator.path, "/config.yaml") {
+	if validator.path == configYAML || filepath.Base(validator.path) != "config.yaml" {
 		t.Fatalf("validator path = %q, want staged config.yaml", validator.path)
 	}
 	committed := false

@@ -8,9 +8,10 @@ This page is the navigation index for the repository's architecture decisions. R
 | [0002](./0002-config-pipeline-module.md) | ConfigPipeline module | Accepted; current override-file semantics are defined by ADR-0007 |
 | [0003](./0003-split-system-interface.md) | Split system interface | Accepted |
 | [0004](./0004-cli-module-extraction.md) | CLI module extraction | Accepted |
-| [0005](./0005-scheduler-module.md) | Scheduler module | Superseded by the native systemd/launchd scheduler implementation |
-| [0006](./0006-auto-start-separation.md) | Auto-start separation | Accepted |
+| [0005](./0005-scheduler-module.md) | Scheduler module | Superseded by the native platform scheduler implementation |
+| [0006](./0006-auto-start-separation.md) | Auto-start separation | Accepted; platform details updated by ADR-0011 |
 | [0007](./0007-override-file-semantics.md) | Override-file semantics | Accepted |
 | [0008](./0008-yaml-deep-merge.md) | YAML deep merge | Superseded by ADR-0007 |
 | [0009](./0009-native-scheduler-boundary.md) | Native scheduler package boundary | Accepted |
-| [0010](./0010-linux-log-command-boundary.md) | Linux-only log command boundary | Accepted |
+| [0010](./0010-linux-log-command-boundary.md) | Linux-only log command boundary | Superseded by ADR-0011 |
+| [0011](./0011-linux-windows-platform-support.md) | Linux and Windows platform support | Accepted |

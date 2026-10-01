@@ -4,7 +4,7 @@
 
 ## 环境约定
 
-- 操作系统：Linux (systemd)；以下 shell 验收命令以 Linux 为准，macOS (launchd) 行为由平台测试覆盖
+- 操作系统：Linux (systemd) 或 Windows（服务管理器、任务计划程序）；以下 shell 验收命令以 Linux 为准，Windows 构建及平台测试由 CI 覆盖。macOS 不再支持。
 - 测试账户：sudo 权限
 - 测试路径：`/opt/mihomo/`、`/opt/mihomo-manager/`
 - mihomo 版本：latest

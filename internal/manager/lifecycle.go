@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -11,6 +12,13 @@ func releaseURL(goos, goarch, version string) string {
 	tmpl := os.Getenv("MIHOMO_RELEASE_URL")
 	if tmpl == "" {
 		tmpl = defaultReleaseTemplate
+		if goos == "windows" {
+			arch := goarch
+			if arch == "amd64" {
+				arch = "amd64-v1"
+			}
+			return fmt.Sprintf("https://github.com/MetaCubeX/mihomo/releases/download/%s/mihomo-windows-%s-%s.zip", version, arch, version)
+		}
 	}
 	r := strings.NewReplacer(
 		"{os}", goos,

@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -137,12 +139,12 @@ func TestConfigOverrideEditEmptyResultDoesNotUpdate(t *testing.T) {
 }
 
 func TestCLILogsForOSReturnsTypedUnsupportedError(t *testing.T) {
-	err := runCLILogsForOS("windows", nil)
+	err := runCLILogsForOS("darwin", nil)
 	var unsupported manager.UnsupportedPlatformError
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("error = %v, want UnsupportedPlatformError", err)
 	}
-	if unsupported.Feature != "logs" || unsupported.GOOS != "windows" {
+	if unsupported.Feature != "logs" || unsupported.GOOS != "darwin" {
 		t.Fatalf("unsupported error = %+v", unsupported)
 	}
 }
@@ -150,12 +152,12 @@ func TestCLILogsForOSReturnsTypedUnsupportedError(t *testing.T) {
 func TestCLILogsRejectsUnsupportedPlatform(t *testing.T) {
 	var code int
 	errOut := captureStderr(t, func() {
-		code = cliLogsForOS("windows", nil)
+		code = cliLogsForOS("darwin", nil)
 	})
 	if code != 1 {
 		t.Fatalf("exit code = %d, want failure", code)
 	}
-	if !strings.Contains(errOut, "unsupported logs platform: windows") {
+	if !strings.Contains(errOut, "unsupported logs platform: darwin") {
 		t.Fatalf("stderr = %q, want typed unsupported diagnostic", errOut)
 	}
 }

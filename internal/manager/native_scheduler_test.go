@@ -85,7 +85,7 @@ func TestScheduleUsesPackageAndReleaseInstallationPaths(t *testing.T) {
 	for _, path := range []string{"/usr/bin/mihomo-manager", "/usr/local/bin/mihomo-manager", "/opt/mihomo-manager/bin/mihomo-manager"} {
 		t.Run(path, func(t *testing.T) {
 			fs := &fakeFileSystem{fileExists: map[string]bool{binaryPath: true, path: true}}
-			schedule := NewScheduleManagerWithPlatform(fs, NewLinuxPlatformScheduler(fs, &fakeCmdRunner{}), managerPathForExecutable(path))
+			schedule := NewScheduleManagerWithPlatform(fs, NewLinuxPlatformScheduler(fs, &fakeCmdRunner{}), managerPathForExecutableForOS(path, "linux"))
 			if err := schedule.SetSchedule(context.Background(), time.Hour); err != nil {
 				t.Fatal(err)
 			}
