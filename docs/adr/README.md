@@ -15,3 +15,4 @@ This page is the navigation index for the repository's architecture decisions. R
 | [0009](./0009-native-scheduler-boundary.md) | Native scheduler package boundary | Accepted |
 | [0010](./0010-linux-log-command-boundary.md) | Linux-only log command boundary | Superseded by ADR-0011 |
 | [0011](./0011-linux-windows-platform-support.md) | Linux and Windows platform support | Accepted |
+| [0012](./0012-tui-presentation-layer.md) | TUI presentation layer: lipgloss styling, no bubbles, alt screen | Accepted |

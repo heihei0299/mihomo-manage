@@ -11,6 +11,7 @@ import (
 	"github.com/heihei0299/mihomo-manage/internal/manager"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type viewMode int
@@ -62,6 +63,46 @@ var actionRegistry = map[action]actionDef{
 	actReload:  {enabled: installedRunning},
 }
 
+// The TUI palette. Lipgloss downgrades to plain text when the output is not a
+// terminal or NO_COLOR is set; adaptive colors stay readable on both light and
+// dark terminals.
+var (
+	colRunning = lipgloss.AdaptiveColor{Light: "#15803d", Dark: "#4ade80"}
+	colStopped = lipgloss.AdaptiveColor{Light: "#b45309", Dark: "#fbbf24"}
+	colError   = lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"}
+	colAccent  = lipgloss.AdaptiveColor{Light: "#1d4ed8", Dark: "#60a5fa"}
+	colDim     = lipgloss.AdaptiveColor{Light: "#6b7280", Dark: "#9ca3af"}
+)
+
+var (
+	styleRunning   = lipgloss.NewStyle().Foreground(colRunning).Bold(true)
+	styleStopped   = lipgloss.NewStyle().Foreground(colStopped).Bold(true)
+	styleUpgrading = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	styleSuccess   = lipgloss.NewStyle().Foreground(colRunning).Bold(true)
+	styleError     = lipgloss.NewStyle().Foreground(colError)
+	styleAccent    = lipgloss.NewStyle().Foreground(colAccent)
+	styleSelected  = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	styleDim       = lipgloss.NewStyle().Foreground(colDim)
+	styleCard      = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colDim).
+			Padding(0, 1)
+	styleDialog = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colDim).
+			Padding(1, 2)
+)
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+const spinnerInterval = 80 * time.Millisecond
+
+type tickMsg struct{}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
 type model struct {
 	ctx              context.Context
 	control          manager.ServiceControl
@@ -81,6 +122,11 @@ type model struct {
 	actionErr        error
 	phaseLabel       string
 	phaseMsg         string
+	startedAt        time.Time
+	spinnerFrame     int
+
+	width  int
+	height int
 
 	mode           viewMode
 	keepBackup     bool
@@ -89,6 +135,9 @@ type model struct {
 	selectedIdx    int
 	configTab      configTab
 	previewContent string
+	previewOffset  int
+	previewErr     error
+	previewLoading bool
 }
 
 type statusMsg struct {
@@ -256,6 +305,21 @@ func execActionCmdWithContext(ctx context.Context, ctrl manager.ServiceControl, 
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		if max := m.previewMaxOffset(); m.previewOffset > max {
+			m.previewOffset = max
+		}
+		return m, nil
+
+	case tickMsg:
+		if m.executing == actNone {
+			return m, nil
+		}
+		m.spinnerFrame++
+		return m, tickCmd()
+
 	case tea.KeyMsg:
 		if m.executing != actNone {
 			return m, nil
@@ -279,9 +343,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if isInstalled(m.status) {
 				m.mode = modeConfig
 				m.configTab = configTabSubscription
-				m.previewContent = ""
 				m.execResult = ""
 				m.actionErr = nil
+				m.previewErr = nil
+				m.previewOffset = 0
+				m.previewLoading = true
 				return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 			}
 		case "r":
@@ -357,8 +423,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case configPreviewMsg:
+		m.previewLoading = false
+		m.previewErr = msg.err
 		if msg.err == nil {
 			m.previewContent = msg.content
+			m.previewOffset = 0
 		}
 		return m, nil
 
@@ -381,6 +450,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.execResult = "success"
 		}
+		m.previewLoading = true
+		m.previewErr = nil
 		return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 
 	case progressMsg:
@@ -442,13 +513,6 @@ func (m model) updateChooseVersion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func schedulePresetLabel(interval time.Duration) string {
-	if interval == 0 {
-		return "off"
-	}
-	return interval.String()
-}
-
 func schedulePresetIndex(interval time.Duration, active bool) int {
 	if !active {
 		return 0
@@ -492,18 +556,6 @@ func (m model) updateScheduleMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) scheduleView() string {
-	view := "Schedule subscription-update (enter to apply, q to cancel):\n\n"
-	for i, preset := range schedulePresets {
-		prefix := "  "
-		if i == m.selectedIdx {
-			prefix = "> "
-		}
-		view += fmt.Sprintf("%s%s\n", prefix, schedulePresetLabel(preset))
-	}
-	return view
-}
-
 func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
@@ -516,20 +568,52 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.configTab = (m.configTab - 1 + 3) % 3
 		return m, nil
 	case "r":
+		m.previewLoading = true
+		m.previewErr = nil
 		return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 	case "e":
 		if m.configTab == configTabSubscription {
 			return m, editSubscriptionCmd(m.config, tuiContext(m.ctx))
 		}
+	case "up", "k", "down", "j", "pgup", "pgdown":
+		m.scrollPreview(msg.String())
 	}
 	return m, nil
+}
+
+func (m *model) scrollPreview(key string) {
+	if m.configTab != configTabPreview {
+		return
+	}
+	max := m.previewMaxOffset()
+	switch key {
+	case "up", "k":
+		m.previewOffset--
+	case "down", "j":
+		m.previewOffset++
+	case "pgup":
+		m.previewOffset -= m.previewHeight()
+	case "pgdown":
+		m.previewOffset += m.previewHeight()
+	}
+	if m.previewOffset < 0 {
+		m.previewOffset = 0
+	}
+	if m.previewOffset > max {
+		m.previewOffset = max
+	}
 }
 
 func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
 	m.executing = a
 	m.mode = modeStatus
+	m.startedAt = time.Now()
+	m.spinnerFrame = 0
+	m.phaseLabel = ""
+	m.phaseMsg = ""
 	ch := make(chan progressMsg, 20)
 	return m, tea.Batch(
+		tickCmd(),
 		progressReaderCmd(ch),
 		execActionCmdWithContext(tuiContext(m.ctx), m.control, m.lifecycle, a, ch, version, m.keepBackup),
 	)
@@ -563,12 +647,137 @@ func isActionAllowed(s *manager.Status, a action) bool {
 	return false
 }
 
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "off"
+	}
+	var b strings.Builder
+	if h := d / time.Hour; h > 0 {
+		fmt.Fprintf(&b, "%dh", h)
+	}
+	if m := (d % time.Hour) / time.Minute; m > 0 {
+		fmt.Fprintf(&b, "%dm", m)
+	}
+	if s := (d % time.Minute) / time.Second; s > 0 {
+		fmt.Fprintf(&b, "%ds", s)
+	}
+	return b.String()
+}
+
+func scheduleSummary(err error, active bool, interval time.Duration) string {
+	if err != nil {
+		var legacy manager.LegacyScheduleError
+		if errors.As(err, &legacy) {
+			return "legacy"
+		}
+		return "unknown"
+	}
+	if active {
+		return "every " + formatDuration(interval)
+	}
+	return "off"
+}
+
+func helpLine(items ...string) string {
+	return styleDim.Render(strings.Join(items, "   "))
+}
+
+func joinColumns(left, right []string, gap string) string {
+	width := 0
+	for _, cell := range left {
+		if w := lipgloss.Width(cell); w > width {
+			width = w
+		}
+	}
+	rows := make([]string, 0, len(left))
+	for i, cell := range left {
+		row := cell + strings.Repeat(" ", width-lipgloss.Width(cell))
+		if i < len(right) && right[i] != "" {
+			row += gap + right[i]
+		}
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func renderActionToken(key, label string, enabled bool) string {
+	token := key + ") " + label
+	if !enabled {
+		return styleDim.Render(token)
+	}
+	return token
+}
+
+func statusActions(s *manager.Status) string {
+	if !s.Installed {
+		return renderActionToken("i", "Install", true)
+	}
+	autostart := "Autostart on"
+	if s.AutoStartEnabled {
+		autostart = "Autostart off"
+	}
+	row1 := strings.Join([]string{
+		renderActionToken("1", "Start", isActionAllowed(s, actStart)),
+		renderActionToken("2", "Stop", isActionAllowed(s, actStop)),
+		renderActionToken("3", "Restart", isActionAllowed(s, actRestart)),
+		renderActionToken("4", "Reload", isActionAllowed(s, actReload)),
+		renderActionToken("5", "Upgrade", true),
+	}, "  ")
+	row2 := strings.Join([]string{
+		renderActionToken("c", "Config", true),
+		renderActionToken("a", autostart, true),
+		renderActionToken("t", "Schedule", true),
+		renderActionToken("u", "Uninstall", true),
+	}, "  ")
+	return row1 + "\n" + row2
+}
+
+// windowLines returns the visible slice of lines and the offset clamped to a
+// valid window position.
+func windowLines(lines []string, offset, height int) ([]string, int) {
+	if height <= 0 || len(lines) == 0 {
+		return nil, 0
+	}
+	max := len(lines) - height
+	if max < 0 {
+		max = 0
+	}
+	if offset > max {
+		offset = max
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	end := offset + height
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return lines[offset:end], offset
+}
+
+func (m model) previewHeight() int {
+	h := m.height - 5
+	if h < 3 {
+		return 3
+	}
+	return h
+}
+
+func (m model) previewMaxOffset() int {
+	lines := strings.Count(m.previewContent, "\n") + 1
+	max := lines - m.previewHeight()
+	if max < 0 {
+		return 0
+	}
+	return max
+}
+
 func (m model) View() string {
 	if !m.ready {
-		return "Checking mihomo status...\n\nPress q to quit"
+		return "Checking mihomo status...\n\n" + helpLine("q) Quit")
 	}
 	if m.statusErr != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit", m.statusErr)
+		return styleError.Render(fmt.Sprintf("Error: %v", m.statusErr)) + "\n\n" + helpLine("r) Retry", "q) Quit")
 	}
 
 	if m.executing != actNone {
@@ -611,11 +820,15 @@ func (m model) executingView() string {
 	case actAutostartOff:
 		label = "disabling autostart..."
 	}
-	phase := ""
+	frame := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+	lines := []string{styleAccent.Render(label + " " + frame)}
 	if m.phaseMsg != "" {
-		phase = fmt.Sprintf("\n[%s] %s", m.phaseLabel, m.phaseMsg)
+		lines = append(lines, styleDim.Render(fmt.Sprintf("[%s] %s", m.phaseLabel, m.phaseMsg)))
 	}
-	return fmt.Sprintf("Status: %s%s\n\nPress r to refresh, q to quit", label, phase)
+	if !m.startedAt.IsZero() {
+		lines = append(lines, styleDim.Render("elapsed "+time.Since(m.startedAt).Round(time.Second).String()))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) uninstallView() string {
@@ -623,35 +836,40 @@ func (m model) uninstallView() string {
 	if m.keepBackup {
 		backup = "yes"
 	}
-	return fmt.Sprintf(
-		"Uninstall mihomo?\n\n"+
-			"Keep backup: %s  (b to toggle)\n\n"+
-			"y) Confirm    n) Cancel",
-		backup,
-	)
+	body := fmt.Sprintf("Uninstall mihomo?\n\nbackup: %s  (b to toggle)", backup)
+	return styleDialog.Render(body) + "\n\n" + helpLine("y) Confirm", "n) Cancel")
 }
 
 func (m model) versionChoiceView() string {
-	s := "Select version (enter to confirm, q to cancel):\n\n"
+	header := "Select version"
+	if m.status != nil && m.status.Version != "" {
+		header += "\n\ninstalled: " + m.status.Version
+	}
+	footer := helpLine("↑↓) select", "Enter) confirm", "q) cancel")
+
 	if m.versionsErr != nil {
-		return s + "Error loading versions: " + m.versionsErr.Error() + "\n"
+		return header + "\n\n" + styleError.Render("Error loading versions: "+m.versionsErr.Error()) + "\n\n" + footer
 	}
 	if len(m.versions) == 0 {
-		return s + "No releases available.\n"
+		return header + "\n\nNo releases available.\n\n" + footer
 	}
+	lines := make([]string, 0, len(m.versions))
 	for i, v := range m.versions {
-		prefix := "  "
 		if i == m.selectedIdx {
-			prefix = "> "
+			lines = append(lines, styleSelected.Render("> "+v.Tag))
+		} else {
+			lines = append(lines, "  "+v.Tag)
 		}
-		s += fmt.Sprintf("%s%s\n", prefix, v.Tag)
 	}
-	return s
+	return header + "\n\n" + strings.Join(lines, "\n") + "\n\n" + footer
 }
 
 func (m model) statusView() string {
 	s := m.status
-	stateStr := s.InstanceState.String()
+	if s == nil {
+		return "No status available.\n\n" + helpLine("r) Refresh", "q) Quit")
+	}
+
 	version := s.Version
 	if version == "" {
 		version = "unknown"
@@ -662,118 +880,146 @@ func (m model) statusView() string {
 		autostart = "on"
 	}
 
-	var actions string
-	if !s.Installed {
-		actions = "\ni) Install"
-	} else {
-		actions += "\n1) Start"
-		if !isActionAllowed(s, actStart) {
-			actions += "  (already running)"
-		}
-		actions += "\n2) Stop"
-		if !isActionAllowed(s, actStop) {
-			actions += "  (not running)"
-		}
-		actions += "\n3) Restart"
-		if !isActionAllowed(s, actRestart) {
-			actions += "  (not running)"
-		}
-		actions += "\n4) Reload"
-		if !isActionAllowed(s, actReload) {
-			actions += "  (not running)"
-		}
-		actions += "\n5) Upgrade"
-		actions += "\na) Autostart: " + autostart + "  (toggle)"
-		actions += "\nt) Schedule"
-		actions += "\nu) Uninstall"
+	state := s.InstanceState.String()
+	glyph := "●"
+	stateStyle := styleStopped
+	switch {
+	case !s.Installed:
+		state = "not installed"
+		glyph = "○"
+		stateStyle = styleDim
+	case s.InstanceState == manager.Running:
+		stateStyle = styleRunning
+	case s.InstanceState == manager.Upgrading:
+		glyph = "◐"
+		stateStyle = styleUpgrading
 	}
-
-	result := ""
-	if m.execResult == "success" {
-		result = "\n✓ Operation succeeded"
-	} else if m.execResult == "failed" {
-		result = fmt.Sprintf("\n✗ %v", m.actionErr)
-	}
+	stateCell := stateStyle.Render(glyph + " " + state)
 
 	configState := string(m.configStatus.State)
 	if configState == "" || m.configErr != nil {
 		configState = "unknown"
 	}
-	configDiagnostic := ""
+	configCell := "config: " + configState
+	switch {
+	case m.configErr != nil:
+		configCell = styleDim.Render(configCell)
+	case m.configStatus.State == manager.ConfigApplyFailed ||
+		m.configStatus.State == manager.ConfigValidationFailed ||
+		m.configStatus.ErrorSummary != "":
+		configCell = styleError.Render(configCell)
+	}
+
+	scheduleText := scheduleSummary(m.scheduleErr, m.scheduleActive, m.scheduleInterval)
+	scheduleCell := "schedule: " + scheduleText
+	if scheduleText == "legacy" || scheduleText == "unknown" {
+		scheduleCell = styleStopped.Render(scheduleCell)
+	}
+
+	var body string
+	var narrow []string
+	if !s.Installed {
+		body = stateCell
+		narrow = []string{stateCell}
+	} else {
+		body = joinColumns(
+			[]string{stateCell, "autostart: " + autostart, scheduleCell},
+			[]string{"version: " + version, configCell, ""},
+			"   ",
+		)
+		narrow = []string{stateCell, "version: " + version, "autostart: " + autostart, configCell, scheduleCell}
+	}
+	card := styleCard.Render(body)
+	if m.width > 0 && lipgloss.Width(card) > m.width {
+		card = strings.Join(narrow, "\n")
+	}
+
+	sections := []string{card}
 	if m.configStatus.ErrorSummary != "" {
-		configDiagnostic = "\nConfig error: " + m.configStatus.ErrorSummary
+		sections = append(sections, styleError.Render("Config error: "+m.configStatus.ErrorSummary))
 	}
-	scheduleState := "off"
-	if m.scheduleErr != nil {
-		var legacy manager.LegacyScheduleError
-		if errors.As(m.scheduleErr, &legacy) {
-			scheduleState = "legacy"
-		} else {
-			scheduleState = "unknown"
-		}
-	} else if m.scheduleActive {
-		scheduleState = "every " + m.scheduleInterval.String()
+	if m.execResult == "success" {
+		sections = append(sections, styleSuccess.Render("✓ Operation succeeded"))
+	} else if m.execResult == "failed" {
+		sections = append(sections, styleError.Render(fmt.Sprintf("✗ %v", m.actionErr)))
 	}
-	return fmt.Sprintf(
-		"┌────────────────────────────┐\n"+
-			"│ mihomo: %-18s │\n"+
-			"│ version: %-18s │\n"+
-			"│ autostart: %-15s │\n"+
-			"│ config: %-17s │\n"+
-			"│ schedule: %-15s │\n"+
-			"└────────────────────────────┘%s%s\n\n"+
-			"r) Refresh    q) Quit",
-		stateStr, version, autostart, configState, scheduleState, actions, result+configDiagnostic,
-	)
+	sections = append(sections, "", statusActions(s), "", helpLine("r) Refresh", "q) Quit"))
+	return strings.Join(sections, "\n")
 }
 
 func (m model) configView() string {
 	tabs := []string{"Subscription", "Override", "Preview"}
-	tabLine := ""
+	tabParts := make([]string, 0, len(tabs))
 	for i, t := range tabs {
-		sep := "  "
-		if i == int(m.configTab) {
-			tabLine += fmt.Sprintf("[%s]", t)
+		if configTab(i) == m.configTab {
+			tabParts = append(tabParts, styleSelected.Render("["+t+"]"))
 		} else {
-			tabLine += fmt.Sprintf(" %s ", t)
-		}
-		if i < len(tabs)-1 {
-			tabLine += sep
+			tabParts = append(tabParts, styleDim.Render(" "+t+" "))
 		}
 	}
-	tabLine += "\n\n"
+	tabLine := strings.Join(tabParts, " ")
 
-	var content string
+	var content, footer string
 	switch m.configTab {
 	case configTabSubscription:
-		content = "Subscription source: remote or local\n"
-		content += "e) Edit source with $EDITOR (URL or local subscription-data)\n"
-		content += "CLI: mihomo-manager subscription set <url-or-data>\n"
+		content = "Subscription source: remote or local\n" +
+			styleDim.Render("e) Edit source with $EDITOR (URL or local subscription-data)") + "\n" +
+			styleDim.Render("CLI: mihomo-manager subscription set <url-or-data>")
+		footer = helpLine("Tab/← →) switch tab", "e) Edit", "r) Refresh preview", "q) Back")
 	case configTabOverride:
-		content = fmt.Sprintf("Override file: %s\n", manager.OverrideFilePath)
-		content += "Edit with: mihomo-manager config override edit\n"
-		content += "\nRules are embedded in the override file's 'rules:' field.\n"
+		content = fmt.Sprintf("Override file: %s\n", manager.OverrideFilePath) +
+			styleDim.Render("Edit with: mihomo-manager config override edit") + "\n\n" +
+			"Rules are embedded in the override file's 'rules:' field."
+		footer = helpLine("Tab/← →) switch tab", "q) Back")
 	case configTabPreview:
-		if m.previewContent == "" {
-			content = "Loading preview...\n"
-		} else if len(m.previewContent) > 1000 {
-			content = m.previewContent[:1000] + "\n... (truncated)"
-		} else {
-			content = m.previewContent
-		}
+		content, footer = m.previewTab()
 	}
 
-	editResult := ""
+	result := ""
 	if m.execResult == "success" {
-		editResult = "\n✓ Configuration updated"
+		result = "\n" + styleSuccess.Render("✓ Configuration updated")
 	} else if m.execResult == "failed" {
-		editResult = fmt.Sprintf("\n✗ %v", m.actionErr)
+		result = "\n" + styleError.Render(fmt.Sprintf("✗ %v", m.actionErr))
 	}
-	return tabLine + content + editResult + "\n\nTab/← → switch tab  r) refresh preview  q) back"
+
+	return tabLine + "\n\n" + content + result + "\n\n" + footer
+}
+
+func (m model) previewTab() (string, string) {
+	switch {
+	case m.previewErr != nil:
+		return styleError.Render("✗ " + m.previewErr.Error()),
+			helpLine("r) Retry", "q) Back")
+	case m.previewContent == "" && m.previewLoading:
+		return styleDim.Render("Loading preview..."), helpLine("q) Back")
+	case m.previewContent == "":
+		return styleDim.Render("(empty)"), helpLine("r) Refresh", "q) Back")
+	}
+	lines := strings.Split(m.previewContent, "\n")
+	visible, offset := windowLines(lines, m.previewOffset, m.previewHeight())
+	position := fmt.Sprintf("lines %d-%d / %d", offset+1, offset+len(visible), len(lines))
+	return strings.Join(visible, "\n"),
+		helpLine(position, "↑↓/jk) scroll", "PgUp/PgDn) page", "r) Refresh", "q) Back")
+}
+
+func (m model) scheduleView() string {
+	lines := make([]string, 0, len(schedulePresets))
+	for i, preset := range schedulePresets {
+		label := formatDuration(preset)
+		if i == m.selectedIdx {
+			lines = append(lines, styleSelected.Render("> "+label))
+		} else {
+			lines = append(lines, "  "+label)
+		}
+	}
+	current := scheduleSummary(m.scheduleErr, m.scheduleActive, m.scheduleInterval)
+	return "Schedule subscription update\n\ncurrent: " + current + "\n\n" +
+		strings.Join(lines, "\n") + "\n\n" +
+		helpLine("↑↓) select", "Enter) apply", "q) cancel")
 }
 
 func startTUI(ctx context.Context, ctrl manager.ServiceControl, lifecycle manager.LifecycleManager, cfg manager.ConfigManager, schedule manager.ScheduleManager) error {
-	p := tea.NewProgram(model{ctx: ctx, control: ctrl, lifecycle: lifecycle, config: cfg, schedule: schedule}, tea.WithContext(ctx))
+	p := tea.NewProgram(model{ctx: ctx, control: ctrl, lifecycle: lifecycle, config: cfg, schedule: schedule}, tea.WithContext(ctx), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

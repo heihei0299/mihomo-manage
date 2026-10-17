@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/heihei0299/mihomo-manage/internal/manager"
 )
 
@@ -331,5 +334,146 @@ func TestTUIRestartCallsServiceControl(t *testing.T) {
 	}
 	if !ctrl.restartCalled {
 		t.Error("Restart should be called")
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "off"},
+		{time.Hour, "1h"},
+		{6 * time.Hour, "6h"},
+		{24 * time.Hour, "24h"},
+		{90 * time.Minute, "1h30m"},
+		{45 * time.Minute, "45m"},
+		{30 * time.Second, "30s"},
+	}
+	for _, tc := range cases {
+		if got := formatDuration(tc.d); got != tc.want {
+			t.Fatalf("formatDuration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestWindowLinesClampsOffset(t *testing.T) {
+	lines := []string{"a", "b", "c", "d", "e"}
+	visible, offset := windowLines(lines, 2, 2)
+	if offset != 2 || strings.Join(visible, ",") != "c,d" {
+		t.Fatalf("windowLines(offset 2) = %v at %d, want c,d at 2", visible, offset)
+	}
+	visible, offset = windowLines(lines, 99, 2)
+	if offset != 3 || strings.Join(visible, ",") != "d,e" {
+		t.Fatalf("windowLines(offset 99) = %v at %d, want d,e at 3", visible, offset)
+	}
+	visible, offset = windowLines(lines, -5, 2)
+	if offset != 0 || strings.Join(visible, ",") != "a,b" {
+		t.Fatalf("windowLines(offset -5) = %v at %d, want a,b at 0", visible, offset)
+	}
+	if visible, offset := windowLines(nil, 3, 2); visible != nil || offset != 0 {
+		t.Fatalf("windowLines(no lines) = %v at %d, want nil at 0", visible, offset)
+	}
+}
+
+func TestTUITickRunsOnlyWhileExecuting(t *testing.T) {
+	m := model{}
+	if _, cmd := m.Update(tickMsg{}); cmd != nil {
+		t.Fatal("idle tick should not reschedule")
+	}
+	m.executing = actInstall
+	updated, cmd := m.Update(tickMsg{})
+	if cmd == nil {
+		t.Fatal("running tick should reschedule")
+	}
+	if updated.(model).spinnerFrame != 1 {
+		t.Fatalf("spinner frame = %d, want 1", updated.(model).spinnerFrame)
+	}
+}
+
+func TestTUIPreviewScrollsAndResetsOnRefresh(t *testing.T) {
+	m := model{
+		mode:           modeConfig,
+		configTab:      configTabPreview,
+		previewContent: "1\n2\n3\n4\n5",
+		height:         8,
+	}
+	down := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	updated, _ := m.Update(down)
+	updated, _ = updated.(model).Update(down)
+	if got := updated.(model).previewOffset; got != 2 {
+		t.Fatalf("previewOffset after two scrolls = %d, want 2", got)
+	}
+	updated, _ = updated.(model).Update(down)
+	if got := updated.(model).previewOffset; got != 2 {
+		t.Fatalf("previewOffset should clamp at the last window, got %d", got)
+	}
+	up := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}
+	updated, _ = updated.(model).Update(up)
+	if got := updated.(model).previewOffset; got != 1 {
+		t.Fatalf("previewOffset after scroll up = %d, want 1", got)
+	}
+	updated, _ = updated.(model).Update(configPreviewMsg{content: "only"})
+	if got := updated.(model).previewOffset; got != 0 {
+		t.Fatalf("refresh should reset the preview offset, got %d", got)
+	}
+}
+
+func TestTUIStatusNotInstalledShowsInstallOnly(t *testing.T) {
+	m := model{status: &manager.Status{Installed: false}, width: 80}
+	view := m.statusView()
+	if !strings.Contains(view, "not installed") {
+		t.Fatalf("status view = %q, want not-installed state", view)
+	}
+	if strings.Contains(view, "version:") {
+		t.Fatalf("not-installed card should hide version, got %q", view)
+	}
+	if !strings.Contains(view, "i) Install") {
+		t.Fatalf("status view should offer install, got %q", view)
+	}
+}
+
+func TestTUIStatusCardStaysAlignedWithLongVersion(t *testing.T) {
+	long := "v1.19.13-custom-build-20260101-abcdef123456"
+	m := model{status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: long}}
+	view := m.statusView()
+	if !strings.Contains(view, long) {
+		t.Fatalf("status view should show the full version, got %q", view)
+	}
+	var widths []int
+	for _, line := range strings.Split(view, "\n") {
+		if strings.ContainsAny(line, "╭│╰") {
+			widths = append(widths, lipgloss.Width(line))
+		}
+	}
+	if len(widths) < 3 {
+		t.Fatalf("expected a bordered card in %q", view)
+	}
+	for _, w := range widths {
+		if w != widths[0] {
+			t.Fatalf("card lines misaligned: %v", widths)
+		}
+	}
+}
+
+func TestTUIStatusErrorViewOffersRetry(t *testing.T) {
+	m := model{ready: true, statusErr: errors.New("status lookup failed")}
+	view := m.View()
+	if !strings.Contains(view, "status lookup failed") {
+		t.Fatalf("error view = %q, want the error text", view)
+	}
+	if !strings.Contains(view, "r) Retry") {
+		t.Fatalf("error view = %q, want a retry hint", view)
+	}
+}
+
+func TestTUIPreviewErrorIsShown(t *testing.T) {
+	m := model{configTab: configTabPreview, previewErr: errors.New("preview fetch failed")}
+	view := m.configView()
+	if !strings.Contains(view, "preview fetch failed") {
+		t.Fatalf("preview view = %q, want the fetch error", view)
+	}
+	if !strings.Contains(view, "r) Retry") {
+		t.Fatalf("preview view = %q, want a retry hint", view)
 	}
 }

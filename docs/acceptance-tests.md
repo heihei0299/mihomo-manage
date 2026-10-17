@@ -637,7 +637,8 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 
 ### 启动
 
-- TUI 启动，顶部显示当前实例状态（running / stopped / not installed）
+- TUI 全屏运行（alt screen），退出后终端恢复进入前的画面
+- 顶部状态卡片显示当前实例状态（running / stopped / not installed）
 - 无报错信息
 
 ### 键盘操作
@@ -650,23 +651,24 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 | <kbd>4</kbd> (Reload) | 仅当状态为 Running 时可触发 |
 | <kbd>i</kbd> (Install) | 仅当未安装时可触发 |
 | <kbd>5</kbd> (Upgrade) | 弹出版本选择列表，<kbd>↑</kbd>/<kbd>↓</kbd> 导航，<kbd>Enter</kbd> 确认，显示进度 |
-| <kbd>u</kbd> (Uninstall) | 弹出确认对话框，<kbd>y</kbd> 保留备份 / <kbd>n</kbd> 完全删除 / 其他键取消 |
-| <kbd>Tab</kbd> | 切换到 Config 视图，显示三个标签页（Subscription / Override / Preview） |
-| <kbd>←</kbd> / <kbd>→</kbd> | 在 Config 四个标签页之间循环切换 |
-| <kbd>r</kbd> (Refresh) | 刷新状态显示 |
+| <kbd>u</kbd> (Uninstall) | 弹出确认对话框，<kbd>b</kbd> 切换是否保留备份，<kbd>y</kbd> 确认卸载 / <kbd>n</kbd> 取消 |
+| <kbd>c</kbd> | 进入 Config 视图，显示三个标签页（Subscription / Override / Preview） |
+| <kbd>Tab</kbd> / <kbd>←</kbd> / <kbd>→</kbd> | 在 Config 三个标签页之间循环切换 |
+| <kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>PgUp</kbd> / <kbd>PgDn</kbd> | Preview 标签页内滚动配置预览，页脚显示当前行范围 |
+| <kbd>r</kbd> (Refresh) | 刷新状态显示；Config 视图内刷新预览 |
 | <kbd>q</kbd> (Quit) | 退出 TUI，返回 shell |
 
 ### Executing 视图
 
-- 触发操作后显示当前阶段进度消息
+- 触发操作后显示 spinner、当前阶段进度消息和已耗时
 - 完成后自动返回 Status 视图
-- 失败时显示错误信息
+- 失败时在 Status 视图显示错误信息
 
 ### Config 视图
 
 - Subscription 标签页：显示当前 source 类型；按 <kbd>e</kbd> 使用 `$EDITOR` 输入 URL 或本地 subscription-data
 - Override 标签页：显示覆写文件
-- Preview 标签页：显示生成的最终配置
+- Preview 标签页：显示生成的最终配置，<kbd>↑</kbd>/<kbd>↓</kbd>、<kbd>PgUp</kbd>/<kbd>PgDn</kbd> 滚动，加载失败时显示错误并可按 <kbd>r</kbd> 重试
 
 ---
 
