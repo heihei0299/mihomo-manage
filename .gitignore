@@ -1,6 +1,7 @@
 # Generated and local-only artifacts. Keep this list explicit so repository
 # infrastructure remains visible to Git.
 /mihomo-manager
+/mihomo-manager-v*-linux-amd64
 /config-template.yaml
 /test.sh
 /bin/
@@ -10,3 +11,17 @@
 /release-assets/
 /coverage.out
 /04-issue/
+# Local AI tooling, agent notes and reference material.
+/.mcp.json
+/opencode.jsonc
+/skills-lock.json
+/AGENTS.md
+/CONTEXT.md
+/MISSION.md
+/PROJECT.md
+/RESOURCES.md
+/fushen.md
+/assets/
+/learning-records/
+/lessons/
+/reference/
