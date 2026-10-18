@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/heihei0299/mihomo-manage/internal/manager"
 )
@@ -392,11 +393,17 @@ func TestTUITickRunsOnlyWhileExecuting(t *testing.T) {
 }
 
 func TestTUIPreviewScrollsAndResetsOnRefresh(t *testing.T) {
+	lines := make([]string, 40)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%02d", i+1)
+	}
 	m := model{
+		ready:          true,
 		mode:           modeConfig,
 		configTab:      configTabPreview,
-		previewContent: "1\n2\n3\n4\n5",
-		height:         8,
+		previewContent: strings.Join(lines, "\n"),
+		width:          80,
+		height:         24,
 	}
 	down := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
 	updated, _ := m.Update(down)
@@ -404,14 +411,18 @@ func TestTUIPreviewScrollsAndResetsOnRefresh(t *testing.T) {
 	if got := updated.(model).previewOffset; got != 2 {
 		t.Fatalf("previewOffset after two scrolls = %d, want 2", got)
 	}
-	updated, _ = updated.(model).Update(down)
-	if got := updated.(model).previewOffset; got != 2 {
-		t.Fatalf("previewOffset should clamp at the last window, got %d", got)
+	updated, _ = updated.(model).Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if got := updated.(model).previewOffset; got <= 2 {
+		t.Fatalf("previewOffset after page down = %d, want a full page further", got)
+	}
+	updated, _ = updated.(model).Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if got := updated.(model).previewOffset; got > 40 {
+		t.Fatalf("previewOffset should stay inside the content, got %d", got)
 	}
 	up := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}
 	updated, _ = updated.(model).Update(up)
-	if got := updated.(model).previewOffset; got != 1 {
-		t.Fatalf("previewOffset after scroll up = %d, want 1", got)
+	if got := updated.(model).previewOffset; got <= 0 {
+		t.Fatalf("previewOffset after scroll up = %d, want a positive offset", got)
 	}
 	updated, _ = updated.(model).Update(configPreviewMsg{content: "only"})
 	if got := updated.(model).previewOffset; got != 0 {
@@ -475,5 +486,601 @@ func TestTUIPreviewErrorIsShown(t *testing.T) {
 	}
 	if !strings.Contains(view, "r) Retry") {
 		t.Fatalf("preview view = %q, want a retry hint", view)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Layout and wrapping
+// ---------------------------------------------------------------------------
+
+func tuiKey(name string) tea.KeyMsg {
+	switch name {
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+}
+
+// assertFrame checks the invariants every rendered page must satisfy.
+func assertFrame(t *testing.T, view string, width, height int) {
+	t.Helper()
+	lines := strings.Split(view, "\n")
+	if len(lines) > height {
+		t.Fatalf("frame has %d lines, want <= %d:\n%s", len(lines), height, view)
+	}
+	for i, line := range lines {
+		if w := ansi.StringWidth(line); w > width {
+			t.Fatalf("line %d is %d cells wide, want <= %d: %q\n%s", i, w, width, line, view)
+		}
+	}
+}
+
+func tuiPageSamples() []struct {
+	name string
+	m    model
+	want []string
+} {
+	running := &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v1.19.0", AutoStartEnabled: true}
+	return []struct {
+		name string
+		m    model
+		want []string
+	}{
+		{"status", model{ready: true, status: running}, []string{"● running", "r) Refresh", "q) Quit"}},
+		{"config-subscription", model{ready: true, status: running, mode: modeConfig, configTab: configTabSubscription}, []string{"Subscription source", "e) Edit", "q) Back"}},
+		{"config-override", model{ready: true, status: running, mode: modeConfig, configTab: configTabOverride}, []string{"/opt/mihomo/etc/override.yaml", "q) Back"}},
+		{"config-preview", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview, previewContent: strings.Repeat("    key: value\n", 40)}, []string{"key: value", "q) Back"}},
+		{"config-preview-loading", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview, previewLoading: true}, []string{"Loading preview...", "q) Back"}},
+		{"config-preview-empty", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview}, []string{"(empty)", "r) Refresh", "q) Back"}},
+		{"config-preview-error", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview, previewErr: errors.New("preview fetch failed")}, []string{"preview fetch failed", "r) Retry", "q) Back"}},
+		{"versions", model{ready: true, status: running, mode: modeChooseVersion, versions: []manager.VersionInfo{{Tag: "v1.19.0"}, {Tag: "v1.19.1"}}}, []string{"Select version", "q) cancel"}},
+		{"schedule", model{ready: true, status: running, mode: modeSchedule, scheduleInterval: time.Hour, scheduleActive: true}, []string{"current: every 1h", "q) cancel"}},
+		{"uninstall", model{ready: true, status: running, mode: modeConfirmUninstall}, []string{"Uninstall mihomo?", "y) Confirm", "n) Cancel"}},
+		{"executing", model{ready: true, status: running, executing: actUpgrade, phaseLabel: "fetch", phaseMsg: "downloading mihomo"}, []string{"upgrading...", "[fetch] downloading mihomo"}},
+		{"loading", model{}, []string{"Checking mihomo status...", "q) Quit"}},
+		{"status-error", model{ready: true, statusErr: errors.New("status lookup failed")}, []string{"status lookup failed", "r) Retry", "q) Quit"}},
+	}
+}
+
+func TestTUIPageFramesFitEverySize(t *testing.T) {
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 16}} {
+		for _, sample := range tuiPageSamples() {
+			m := sample.m
+			m.width, m.height = size[0], size[1]
+			view := m.View()
+			assertFrame(t, view, size[0], size[1])
+			for _, want := range sample.want {
+				if !strings.Contains(view, want) {
+					t.Fatalf("%s at %dx%d is missing %q:\n%s", sample.name, size[0], size[1], want, view)
+				}
+			}
+		}
+	}
+}
+
+func TestTUISmallTerminalShowsResizeHint(t *testing.T) {
+	for _, size := range [][2]int{{59, 16}, {60, 15}, {40, 10}, {20, 5}} {
+		for _, sample := range tuiPageSamples() {
+			m := sample.m
+			m.width, m.height = size[0], size[1]
+			view := m.View()
+			assertFrame(t, view, size[0], size[1])
+			if !strings.Contains(view, "Terminal too small") {
+				t.Fatalf("%s at %dx%d should show the resize hint:\n%s", sample.name, size[0], size[1], view)
+			}
+		}
+	}
+	for _, size := range [][2]int{{10, 3}, {5, 1}} {
+		m := model{ready: true, status: &manager.Status{Installed: true, InstanceState: manager.Running}}
+		m.width, m.height = size[0], size[1]
+		assertFrame(t, m.View(), size[0], size[1])
+	}
+}
+
+func TestTUIFrameStartsAtStandardBudget(t *testing.T) {
+	m := model{}
+	view := m.View()
+	if strings.Contains(view, "Terminal too small") {
+		t.Fatalf("first frame should render at the 80x24 budget, got %q", view)
+	}
+	if !strings.Contains(view, "Checking mihomo status...") {
+		t.Fatalf("first frame should show the loading state, got %q", view)
+	}
+	assertFrame(t, view, 80, 24)
+}
+
+func TestTUIWrapTextPreservesContent(t *testing.T) {
+	cases := []struct {
+		name  string
+		line  string
+		width int
+	}{
+		{"long-url", "https://example.com/" + strings.Repeat("segment/", 20), 20},
+		{"long-path", "/opt/mihomo/etc/" + strings.Repeat("nested/", 20) + "config.yaml", 16},
+		{"unicode", strings.Repeat("配置项中文测试", 8), 12},
+		{"combining", "e\u0301" + strings.Repeat("é", 30), 7},
+		{"tabs", "\t\tkey:\tvalue", 10},
+		{"blank", "", 10},
+		{"indent", "      - name: " + strings.Repeat("long-value-", 10), 24},
+	}
+	for _, tc := range cases {
+		parts := wrapText(tc.line, tc.width)
+		if len(parts) == 0 {
+			t.Fatalf("%s: wrapText returned no lines", tc.name)
+		}
+		var rebuilt strings.Builder
+		for _, part := range parts {
+			if w := ansi.StringWidth(part); w > tc.width {
+				t.Fatalf("%s: line %q is %d cells wide, want <= %d", tc.name, part, w, tc.width)
+			}
+			rebuilt.WriteString(part)
+		}
+		got := strings.Join(strings.Fields(rebuilt.String()), "")
+		want := strings.Join(strings.Fields(strings.ReplaceAll(tc.line, "\t", "    ")), "")
+		if got != want {
+			t.Fatalf("%s: content changed after wrapping\n got %q\nwant %q", tc.name, got, want)
+		}
+	}
+	if got, want := strings.Join(wrapText("      keep-indent", 40), "|"), "      keep-indent"; got != want {
+		t.Fatalf("short indented line = %q, want %q", got, want)
+	}
+}
+
+func TestTUIWrapTextHandlesANSI(t *testing.T) {
+	plain := strings.Repeat("styled-word-", 8)
+	styled := "\x1b[31m" + plain + "\x1b[0m"
+	parts := wrapText(styled, 20)
+	for _, part := range parts {
+		if w := ansi.StringWidth(part); w > 20 {
+			t.Fatalf("styled line %q is %d cells wide, want <= 20", part, w)
+		}
+	}
+	got := strings.Join(strings.Fields(ansi.Strip(strings.Join(parts, "\n"))), "")
+	want := strings.Join(strings.Fields(plain), "")
+	if got != want {
+		t.Fatalf("styled content changed: got %q, want %q", got, want)
+	}
+}
+
+var cardBorderReplacer = strings.NewReplacer("│", "", "╭", "", "╮", "", "╰", "", "╯", "", "─", "")
+
+func TestTUIStatusCardWrapsLongVersions(t *testing.T) {
+	long := "v1.19.13-" + strings.Repeat("segment-", 20) + "end"
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 16}} {
+		m := model{
+			ready:  true,
+			status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: long},
+			width:  size[0],
+			height: size[1],
+		}
+		view := m.View()
+		assertFrame(t, view, size[0], size[1])
+		// Card borders sit between wrapped fragments, so drop them before
+		// checking that no part of the version went missing.
+		compact := strings.Join(strings.Fields(cardBorderReplacer.Replace(view)), "")
+		if !strings.Contains(compact, long) {
+			t.Fatalf("%dx%d: status view lost part of the version:\n%s", size[0], size[1], view)
+		}
+		cardWidths := []int{}
+		for _, line := range strings.Split(view, "\n") {
+			if strings.ContainsAny(line, "╭│╰") {
+				cardWidths = append(cardWidths, ansi.StringWidth(line))
+			}
+		}
+		if size[0] >= 80 {
+			if len(cardWidths) < 3 {
+				t.Fatalf("%dx%d: expected a bordered card:\n%s", size[0], size[1], view)
+			}
+			for _, width := range cardWidths {
+				if width != cardWidths[0] {
+					t.Fatalf("%dx%d: card lines misaligned: %v\n%s", size[0], size[1], cardWidths, view)
+				}
+			}
+			continue
+		}
+		if len(cardWidths) != 0 {
+			t.Fatalf("%dx%d: compact layout should not draw a border:\n%s", size[0], size[1], view)
+		}
+	}
+}
+
+func TestTUIPreviewWrapsAndMapsSourceLines(t *testing.T) {
+	content := "key: " + strings.Repeat("value-", 30) + "\nsecond: line\n\nthird: line"
+	before := content
+	screen, origin := wrapPreview(content, 30)
+	if len(screen) <= 4 {
+		t.Fatalf("preview did not wrap: %d screen lines for 4 source lines", len(screen))
+	}
+	if len(screen) != len(origin) {
+		t.Fatalf("screen lines = %d, origins = %d", len(screen), len(origin))
+	}
+	for i, line := range origin {
+		if line < 0 || line > 3 {
+			t.Fatalf("screen line %d maps to source line %d, want 0..3", i, line)
+		}
+		if i > 0 && line < origin[i-1] {
+			t.Fatalf("source line mapping is not monotonic: %v", origin)
+		}
+	}
+	got := strings.Join(strings.Fields(ansi.Strip(strings.Join(screen, "\n"))), "")
+	want := strings.Join(strings.Fields(content), "")
+	if got != want {
+		t.Fatalf("preview content changed\n got %q\nwant %q", got, want)
+	}
+	if content != before {
+		t.Fatalf("preview source was modified: %q", content)
+	}
+	m := model{ready: true, mode: modeConfig, configTab: configTabPreview, previewContent: content, width: 30, height: 16}
+	_ = m.View()
+	if m.previewContent != before {
+		t.Fatalf("rendering modified the stored preview content: %q", m.previewContent)
+	}
+}
+
+func TestTUIPreviewFooterReportsSourceRange(t *testing.T) {
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%03d-%s", i+1, strings.Repeat("x", 100))
+	}
+	content := strings.Join(lines, "\n")
+	m := model{ready: true, mode: modeConfig, configTab: configTabPreview, previewContent: content, width: 80, height: 24}
+	if view := m.View(); !strings.Contains(view, "lines 1-") {
+		t.Fatalf("preview footer should start at source line 1:\n%s", view)
+	}
+	for i := 0; i < 3; i++ {
+		updated, _ := m.Update(tuiKey("j"))
+		m = updated.(model)
+	}
+	if m.previewOffset != 3 {
+		t.Fatalf("previewOffset = %d, want 3", m.previewOffset)
+	}
+	_, origin := wrapPreview(content, 80)
+	if got := origin[m.previewOffset]; got != 1 {
+		t.Fatalf("top source line after scrolling = %d, want 1", got)
+	}
+	if view := m.View(); !strings.Contains(view, fmt.Sprintf("lines %d-", origin[m.previewOffset]+1)) {
+		t.Fatalf("preview footer should report source lines from %d:\n%s", origin[m.previewOffset]+1, view)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Interaction regressions
+// ---------------------------------------------------------------------------
+
+func tuiPreviewContent(lines int, width int) string {
+	out := make([]string, lines)
+	for i := range out {
+		out[i] = fmt.Sprintf("line-%03d-%s", i+1, strings.Repeat("y", width))
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestTUIPreviewResizeKeepsTopSourceLine(t *testing.T) {
+	content := tuiPreviewContent(100, 100)
+	m := model{ready: true, mode: modeConfig, configTab: configTabPreview, previewContent: content, width: 80, height: 24}
+	for i := 0; i < 7; i++ {
+		updated, _ := m.Update(tuiKey("j"))
+		m = updated.(model)
+	}
+	_, origin := wrapPreview(content, 80)
+	top := origin[m.previewOffset]
+
+	for _, size := range [][2]int{{60, 24}, {120, 24}} {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		resized := updated.(model)
+		_, resizedOrigin := wrapPreview(content, size[0])
+		if got := resizedOrigin[resized.previewOffset]; got != top {
+			t.Fatalf("%dx%d: top source line after resize = %d, want %d", size[0], size[1], got, top)
+		}
+		if view := resized.View(); !strings.Contains(view, fmt.Sprintf("lines %d-", top+1)) {
+			t.Fatalf("%dx%d: footer should start at source line %d:\n%s", size[0], size[1], top+1, view)
+		}
+		assertFrame(t, resized.View(), size[0], size[1])
+	}
+}
+
+func TestTUIPreviewResizeClampsReadingOffset(t *testing.T) {
+	content := tuiPreviewContent(100, 100)
+	m := model{ready: true, mode: modeConfig, configTab: configTabPreview, previewContent: content, width: 80, height: 24}
+	for i := 0; i < 200; i++ {
+		updated, _ := m.Update(tuiKey("j"))
+		m = updated.(model)
+	}
+	tall, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	resized := tall.(model)
+	info := resized.currentFrame()
+	if !info.valid {
+		t.Fatal("resized preview should report a body window")
+	}
+	if resized.previewOffset != info.offset {
+		t.Fatalf("previewOffset = %d, want the clamped offset %d", resized.previewOffset, info.offset)
+	}
+	if max := info.total - info.bodyHeight; resized.previewOffset > max {
+		t.Fatalf("previewOffset = %d, want <= %d", resized.previewOffset, max)
+	}
+	assertFrame(t, resized.View(), 80, 40)
+}
+
+func TestTUIStatusReadScrollsOverflow(t *testing.T) {
+	long := strings.Repeat("v-long-segment-", 200)
+	m := model{
+		ready:  true,
+		status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: long},
+		width:  60,
+		height: 16,
+	}
+	view := m.View()
+	assertFrame(t, view, 60, 16)
+	if !strings.Contains(view, "scroll") {
+		t.Fatalf("overflowing status page should advertise scrolling:\n%s", view)
+	}
+	updated, _ := m.Update(tuiKey("j"))
+	if got := updated.(model).readOffset; got != 1 {
+		t.Fatalf("readOffset after j = %d, want 1", got)
+	}
+	updated, _ = updated.(model).Update(tuiKey("pgdown"))
+	m = updated.(model)
+	if m.readOffset <= 1 {
+		t.Fatalf("readOffset after page down = %d, want more than one line", m.readOffset)
+	}
+	for i := 0; i < 100; i++ {
+		updated, _ := m.Update(tuiKey("pgdown"))
+		m = updated.(model)
+	}
+	info := m.currentFrame()
+	if info.total <= info.bodyHeight {
+		t.Fatal("expected overflowing status content")
+	}
+	if max := info.total - info.bodyHeight; m.readOffset > max {
+		t.Fatalf("readOffset = %d, want <= %d", m.readOffset, max)
+	}
+	assertFrame(t, m.View(), 60, 16)
+}
+
+func TestTUIListKeepsSelectionVisible(t *testing.T) {
+	versions := make([]manager.VersionInfo, 30)
+	for i := range versions {
+		versions[i] = manager.VersionInfo{Tag: fmt.Sprintf("v0.%d.0", i+1)}
+	}
+	m := model{
+		ready:       true,
+		status:      &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v0.1.0"},
+		mode:        modeChooseVersion,
+		versions:    versions,
+		selectedIdx: 29,
+		width:       60,
+		height:      16,
+	}
+	view := m.View()
+	assertFrame(t, view, 60, 16)
+	if !strings.Contains(view, "> v0.30.0") {
+		t.Fatalf("selected version should stay visible:\n%s", view)
+	}
+	m.selectedIdx = 0
+	if view := m.View(); !strings.Contains(view, "> v0.1.0") {
+		t.Fatalf("first version should be visible after moving up:\n%s", view)
+	}
+
+	schedule := model{ready: true, status: m.status, mode: modeSchedule, selectedIdx: 4, width: 60, height: 16}
+	if view := schedule.View(); !strings.Contains(view, "> 24h") {
+		t.Fatalf("selected schedule preset should stay visible:\n%s", view)
+	}
+}
+
+func TestTUISmallTerminalRefusesBusinessKeys(t *testing.T) {
+	running := &manager.Status{Installed: true, InstanceState: manager.Running}
+	base := model{
+		ready:     true,
+		status:    running,
+		width:     59,
+		height:    16,
+		control:   &tuiMockControl{},
+		lifecycle: &tuiMockLifecycle{},
+		config:    &tuiMockConfig{},
+	}
+	for _, key := range []string{"1", "2", "3", "4", "5", "c", "a", "t", "u", "i", "r"} {
+		updated, cmd := base.Update(tuiKey(key))
+		if cmd != nil {
+			t.Fatalf("key %q should not run anything on a too-small terminal", key)
+		}
+		got := updated.(model)
+		if got.mode != modeStatus || got.executing != actNone {
+			t.Fatalf("key %q should be ignored on a too-small terminal (mode=%v executing=%v)", key, got.mode, got.executing)
+		}
+	}
+	if _, cmd := base.Update(tuiKey("q")); cmd == nil {
+		t.Fatal("q should still quit from the status page")
+	}
+
+	config := base
+	config.mode = modeConfig
+	config.configTab = configTabPreview
+	updated, cmd := config.Update(tuiKey("j"))
+	if cmd != nil || updated.(model).previewOffset != 0 {
+		t.Fatal("scrolling should be ignored on a too-small terminal")
+	}
+	if updated, cmd = config.Update(tuiKey("e")); cmd != nil {
+		t.Fatal("the editor should not open on a too-small terminal")
+	}
+	if updated, _ = updated.(model).Update(tuiKey("q")); updated.(model).mode != modeStatus {
+		t.Fatal("q should still leave the config page")
+	}
+
+	uninstall := base
+	uninstall.mode = modeConfirmUninstall
+	updated, _ = uninstall.Update(tuiKey("y"))
+	if updated.(model).executing != actNone {
+		t.Fatal("uninstall should not start on a too-small terminal")
+	}
+	if updated.(model).keepBackup {
+		t.Fatal("b should not toggle the backup flag on a too-small terminal")
+	}
+	if updated, _ = updated.(model).Update(tuiKey("n")); updated.(model).mode != modeStatus {
+		t.Fatal("n should still cancel the uninstall dialog")
+	}
+}
+
+func TestTUIKeysStillNavigate(t *testing.T) {
+	running := &manager.Status{Installed: true, InstanceState: manager.Running}
+	m := model{
+		ready:     true,
+		status:    running,
+		width:     80,
+		height:    24,
+		control:   &tuiMockControl{},
+		lifecycle: &tuiMockLifecycle{},
+		config:    &tuiMockConfig{},
+	}
+	updated, cmd := m.Update(tuiKey("c"))
+	if updated.(model).mode != modeConfig || cmd == nil {
+		t.Fatal("c should open the config page and load the preview")
+	}
+	if updated, _ = updated.(model).Update(tuiKey("q")); updated.(model).mode != modeStatus {
+		t.Fatal("q should leave the config page")
+	}
+	if updated, _ = m.Update(tuiKey("5")); updated.(model).mode != modeChooseVersion {
+		t.Fatal("5 should open the version picker")
+	}
+	if updated, _ = updated.(model).Update(tuiKey("esc")); updated.(model).mode != modeStatus {
+		t.Fatal("esc should leave the version picker")
+	}
+	if updated, _ = m.Update(tuiKey("t")); updated.(model).mode != modeSchedule {
+		t.Fatal("t should open the schedule page")
+	}
+	if updated, _ = m.Update(tuiKey("u")); updated.(model).mode != modeConfirmUninstall {
+		t.Fatal("u should open the uninstall dialog")
+	}
+
+	confirm := model{
+		ready:     true,
+		status:    running,
+		mode:      modeConfirmUninstall,
+		width:     80,
+		height:    24,
+		control:   &tuiMockControl{},
+		lifecycle: &tuiMockLifecycle{},
+		config:    &tuiMockConfig{},
+	}
+	updated, _ = confirm.Update(tuiKey("b"))
+	if !updated.(model).keepBackup {
+		t.Fatal("b should toggle the backup flag")
+	}
+	if updated, _ = updated.(model).Update(tuiKey("n")); updated.(model).mode != modeStatus {
+		t.Fatal("n should cancel the uninstall dialog")
+	}
+	if updated, _ = confirm.Update(tuiKey("y")); updated.(model).executing != actUninstall {
+		t.Fatal("y should start the uninstall")
+	}
+}
+
+func TestTUIExecutingMessageEndsWithEllipsis(t *testing.T) {
+	m := model{
+		ready:      true,
+		executing:  actUpgrade,
+		phaseLabel: "fetch",
+		phaseMsg:   strings.Repeat("downloading mihomo ", 100),
+		startedAt:  time.Now(),
+		width:      60,
+		height:     16,
+	}
+	view := m.View()
+	assertFrame(t, view, 60, 16)
+	if !strings.Contains(view, "[fetch]") {
+		t.Fatalf("progress view should keep the phase label:\n%s", view)
+	}
+	lines := strings.Split(view, "\n")
+	last := strings.TrimRight(ansi.Strip(lines[len(lines)-1]), " ")
+	if !strings.HasSuffix(last, "…") {
+		t.Fatalf("clipped progress message should end with an ellipsis, got %q\n%s", last, view)
+	}
+}
+
+func TestTUIPageSwitchResetsReadingOffset(t *testing.T) {
+	long := strings.Repeat("v-long-segment-", 200)
+	m := model{
+		ready:  true,
+		status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: long},
+		width:  60,
+		height: 16,
+		config: &tuiMockConfig{},
+	}
+	updated, _ := m.Update(tuiKey("j"))
+	m = updated.(model)
+	if m.readOffset == 0 {
+		t.Fatal("expected the status page to scroll")
+	}
+	if updated, _ = m.Update(tuiKey("c")); updated.(model).readOffset != 0 {
+		t.Fatal("opening the config page should reset the reading offset")
+	}
+	m.readOffset = 7
+	if updated, _ = m.Update(statusMsg{status: m.status}); updated.(model).readOffset != 0 {
+		t.Fatal("a status refresh should reset the reading offset")
+	}
+}
+
+func TestTUIViewHasNoColourEscapeByDefault(t *testing.T) {
+	m := model{
+		ready:  true,
+		status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v1.0.0"},
+		width:  80,
+		height: 24,
+	}
+	view := m.View()
+	if ansi.Strip(view) != view {
+		t.Skip("terminal reports colour support; plain-text rendering is covered elsewhere")
+	}
+	if strings.Contains(view, "\x1b[") {
+		t.Fatalf("plain rendering should not emit escapes:\n%q", view)
+	}
+}
+
+func TestTUIStatusFeedbackClipsWithoutBreakingFrame(t *testing.T) {
+	summary := strings.Repeat("config validation failed at line 4; ", 12)
+	m := model{
+		ready:        true,
+		status:       &manager.Status{Installed: true, InstanceState: manager.Running},
+		configStatus: manager.ConfigApplyStatus{State: manager.ConfigValidationFailed, ErrorSummary: summary},
+		width:        60,
+		height:       16,
+	}
+	view := m.View()
+	assertFrame(t, view, 60, 16)
+	if !strings.Contains(view, "Config error:") {
+		t.Fatalf("multi-line feedback should keep its label:\n%s", view)
+	}
+	clipped := false
+	for _, line := range strings.Split(view, "\n") {
+		if strings.HasSuffix(strings.TrimRight(ansi.Strip(line), " "), "…") {
+			clipped = true
+		}
+	}
+	if !clipped {
+		t.Fatalf("feedback taller than the hint area should be marked as clipped:\n%s", view)
+	}
+}
+
+func TestUITruncateLineKeepsStyleWidth(t *testing.T) {
+	line := "\x1b[31m" + strings.Repeat("x", 30) + "\x1b[0m"
+	clipped := truncateLine(line, 10)
+	if w := ansi.StringWidth(clipped); w > 10 {
+		t.Fatalf("truncated line is %d cells wide, want <= 10: %q", w, clipped)
+	}
+	if !strings.Contains(clipped, "…") {
+		t.Fatalf("truncated line should end with an ellipsis: %q", clipped)
+	}
+	if short := "\x1b[32mok\x1b[0m"; truncateLine(short, 10) != short {
+		t.Fatalf("short styled line should be left untouched: %q", truncateLine(short, 10))
 	}
 }

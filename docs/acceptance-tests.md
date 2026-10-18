@@ -641,6 +641,21 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 - 顶部状态卡片显示当前实例状态（running / stopped / not installed）
 - 无报错信息
 
+### 页面框架与尺寸
+
+每个页面统一为「标题（+ 可选标签栏）→ 正文 → 反馈提示 → 底部快捷键」，正文按剩余高度排版，不依赖终端自动换行：
+
+| 终端尺寸 | 通过条件 |
+|----------|----------|
+| ≥80×24（标准布局） | 首页使用带边框双列状态卡；正文与快捷键全部可见，逐行不超出窗口宽度，总高度不超出窗口 |
+| ≥60×16 且未达标准布局 | 首页改为无边框单列；快捷键以完整「按键＋说明」为单位按宽度换行，必要快捷键（<kbd>q</kbd>）始终可见 |
+| <60×16 | 显示 `Terminal too small (WxH). Resize to at least 60x16.`；业务按键不再生效，仅保留当前页面的 <kbd>q</kbd>（退出／返回）能力；后台进度继续处理 |
+
+- 首个窗口尺寸事件到达前按 80×24 渲染，不出现小窗口提示
+- 连续改变终端尺寸后页面立即重排，正文阅读偏移被夹紧，配置预览尽量保持顶部源行不变
+- 不可用操作以 `(n/a)` 文字标记并弱化显示；状态同时用符号与文字区分（● running / ○ not installed / ◐ upgrading），不只依赖颜色
+- 正文超出正文预算时可用 <kbd>↑</kbd>/<kbd>↓</kbd>/<kbd>j</kbd>/<kbd>k</kbd>、<kbd>PgUp</kbd>/<kbd>PgDn</kbd> 翻阅，仅在需要时于底部显示滚动提示
+
 ### 键盘操作
 
 | 按键 | 验证 |
@@ -650,25 +665,34 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 | <kbd>3</kbd> (Restart) | 仅当状态为 Running 时可触发 |
 | <kbd>4</kbd> (Reload) | 仅当状态为 Running 时可触发 |
 | <kbd>i</kbd> (Install) | 仅当未安装时可触发 |
-| <kbd>5</kbd> (Upgrade) | 弹出版本选择列表，<kbd>↑</kbd>/<kbd>↓</kbd> 导航，<kbd>Enter</kbd> 确认，显示进度 |
+| <kbd>5</kbd> (Upgrade) | 弹出版本选择列表，<kbd>↑</kbd>/<kbd>↓</kbd> 导航且选中项始终可见，<kbd>Enter</kbd> 确认，显示进度 |
 | <kbd>u</kbd> (Uninstall) | 弹出确认对话框，<kbd>b</kbd> 切换是否保留备份，<kbd>y</kbd> 确认卸载 / <kbd>n</kbd> 取消 |
 | <kbd>c</kbd> | 进入 Config 视图，显示三个标签页（Subscription / Override / Preview） |
 | <kbd>Tab</kbd> / <kbd>←</kbd> / <kbd>→</kbd> | 在 Config 三个标签页之间循环切换 |
-| <kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>PgUp</kbd> / <kbd>PgDn</kbd> | Preview 标签页内滚动配置预览，页脚显示当前行范围 |
+| <kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>j</kbd> / <kbd>k</kbd> / <kbd>PgUp</kbd> / <kbd>PgDn</kbd> | 滚动当前页正文（Status、Config 信息页、Preview），列表页用于移动选中项；内容溢出时才显示滚动提示 |
 | <kbd>r</kbd> (Refresh) | 刷新状态显示；Config 视图内刷新预览 |
-| <kbd>q</kbd> (Quit) | 退出 TUI，返回 shell |
+| <kbd>q</kbd> (Quit) | 退出 TUI，返回 shell（子页面中返回上一级） |
 
 ### Executing 视图
 
 - 触发操作后显示 spinner、当前阶段进度消息和已耗时
+- 过长的阶段消息在剩余空间内折行，仍超出时以省略号收尾
 - 完成后自动返回 Status 视图
-- 失败时在 Status 视图显示错误信息
+- 失败时在 Status 视图的反馈提示区显示错误信息
 
 ### Config 视图
 
 - Subscription 标签页：显示当前 source 类型；按 <kbd>e</kbd> 使用 `$EDITOR` 输入 URL 或本地 subscription-data
-- Override 标签页：显示覆写文件
-- Preview 标签页：显示生成的最终配置，<kbd>↑</kbd>/<kbd>↓</kbd>、<kbd>PgUp</kbd>/<kbd>PgDn</kbd> 滚动，加载失败时显示错误并可按 <kbd>r</kbd> 重试
+- Override 标签页：显示覆写文件（长路径按可用宽度折行）
+- Preview 标签页：按终端显示宽度折行显示生成的最终配置，保留 YAML 缩进与空行；按折行后的屏幕行滚动，页脚显示当前源行范围（`lines A-B / N`）；窗口宽度变化后重新折行并保持顶部源行，刷新后回到顶部；加载、空内容和错误状态使用同一页面框架，加载失败时显示错误并可按 <kbd>r</kbd> 重试
+- 页面切换、标签切换和内容刷新会重置正文阅读偏移
+
+### 人工验收方法
+
+- 用模拟数据（空状态、长版本号、长路径、多行错误、长配置行、Unicode 与 ANSI 内容）渲染全部页面，检查宽高边界、深／浅背景下的可读性以及连续缩放行为
+- 验证小窗口提示与业务按键屏蔽：把终端缩到 60×16 以下，确认只保留退出／返回按键
+- 验收 TUI 时只观察界面，不触发真实安装、卸载或服务变更
+- 退出 TUI 后确认 alt screen 恢复进入前的终端画面
 
 ---
 
