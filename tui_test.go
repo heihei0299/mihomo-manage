@@ -23,8 +23,10 @@ import (
 type tuiMockControl struct {
 	startCalled   bool
 	restartCalled bool
+	reloadCalled  bool
 	startErr      error
 	restartErr    error
+	reloadErr     error
 }
 
 func (m *tuiMockControl) Status(ctx context.Context) (*manager.Status, error) {
@@ -43,7 +45,10 @@ func (m *tuiMockControl) Restart(ctx context.Context) error {
 	return m.restartErr
 }
 
-func (m *tuiMockControl) Reload(ctx context.Context) error { return nil }
+func (m *tuiMockControl) Reload(ctx context.Context) error {
+	m.reloadCalled = true
+	return m.reloadErr
+}
 
 func (m *tuiMockControl) SetAutoStart(ctx context.Context, enabled bool) error { return nil }
 
@@ -165,7 +170,7 @@ func TestTUIScheduleStatusShowsLegacy(t *testing.T) {
 }
 
 func TestTUIConfigViewShowsSubscriptionEditError(t *testing.T) {
-	m := model{configTab: configTabSubscription, execResult: "failed", actionErr: errors.New("config update failed")}
+	m := model{configTab: configTabSubscription, execResult: "failed", resultLabel: "Subscription source update", actionErr: errors.New("config update failed")}
 	if got := m.configView(); !strings.Contains(got, "config update failed") {
 		t.Fatalf("config view = %q, want edit error", got)
 	}
@@ -339,6 +344,136 @@ func TestTUIRestartCallsServiceControl(t *testing.T) {
 	}
 	if !ctrl.restartCalled {
 		t.Error("Restart should be called")
+	}
+}
+
+func TestTUIReloadFeedback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"success", nil, "✓ Reload succeeded"},
+		{"failure", errors.New("permission denied\nreload diagnostic"), "✗ Reload failed: permission denied"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := &tuiMockControl{reloadErr: tc.err}
+			m := model{
+				ready: true, width: 80, height: 24,
+				status:  &manager.Status{Installed: true, InstanceState: manager.Running},
+				control: ctrl, config: &tuiMockConfig{},
+			}
+			updated, dispatch := m.Update(tuiKey("4"))
+			m = updated.(model)
+			if m.executing != actReload || dispatch == nil {
+				t.Fatal("4 should dispatch Reload")
+			}
+			done := execActionCmd(ctrl, nil, actReload, nil, "", false)()
+			updated, refresh := m.Update(done)
+			m = updated.(model)
+			if !ctrl.reloadCalled || refresh == nil {
+				t.Fatal("Reload should execute and request a status refresh")
+			}
+			assertFeedback := func(stage string, m model) {
+				t.Helper()
+				if view := ansi.Strip(m.View()); !strings.Contains(view, tc.want) {
+					t.Errorf("%s should retain %q:\n%s", stage, tc.want, view)
+				}
+			}
+			assertFeedback("completion", m)
+			updated, _ = m.Update(refresh())
+			m = updated.(model)
+			assertFeedback("automatic status refresh", m)
+			for _, event := range []tea.Msg{tickMsg{}, tuiKey("down"), tuiKey("1")} {
+				updated, _ = m.Update(event)
+				m = updated.(model)
+				assertFeedback("idle tick, scrolling or unavailable action", m)
+			}
+			updated, refresh = m.Update(tuiKey("r"))
+			updated, _ = updated.(model).Update(refresh())
+			m = updated.(model)
+			assertFeedback("manual status refresh", m)
+			updated, _ = m.Update(tuiKey("c"))
+			assertFeedback("configuration view", updated.(model))
+			updated, _ = updated.(model).Update(tuiKey("q"))
+			m = updated.(model)
+			assertFeedback("return from configuration", m)
+			updated, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+			m = updated.(model)
+			assertFeedback("compact terminal", m)
+
+			failedRefresh, _ := m.Update(statusMsg{err: errors.New("status lookup failed")})
+			assertFeedback("failed status refresh", failedRefresh.(model))
+			if !strings.Contains(ansi.Strip(failedRefresh.View()), "status lookup failed") {
+				t.Error("status refresh failure should remain readable alongside the command result")
+			}
+			if tc.err != nil && !strings.Contains(ansi.Strip(failedRefresh.View()), "reload diagnostic") {
+				t.Error("the complete command error should survive a failed status refresh")
+			}
+
+			updated, _ = m.Update(tuiKey("3"))
+			m = updated.(model)
+			if m.executing != actRestart || m.execResult != "" || m.actionErr != nil {
+				t.Error("starting the next command should clear the previous result")
+			}
+			updated, _ = m.Update(execActionCmd(ctrl, nil, actRestart, nil, "", false)())
+			if view := ansi.Strip(updated.View()); !strings.Contains(view, "✓ Restart succeeded") || strings.Contains(view, tc.want) {
+				t.Errorf("the next command should replace the previous result:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestTUIActionFeedbackNamesCommand(t *testing.T) {
+	for _, tc := range []struct {
+		a    action
+		name string
+	}{
+		{actStart, "Start"}, {actStop, "Stop"}, {actRestart, "Restart"},
+		{actReload, "Reload"}, {actInstall, "Install"}, {actUpgrade, "Upgrade"},
+		{actUninstall, "Uninstall"}, {actAutostartOn, "Enable autostart"},
+		{actAutostartOff, "Disable autostart"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, err := range []error{nil, errors.New("command error")} {
+				m := model{ready: true, status: &manager.Status{Installed: true}}
+				updated, _ := m.Update(actionDoneMsg{action: tc.a, err: err})
+				want := "✓ " + tc.name + " succeeded"
+				if err != nil {
+					want = "✗ " + tc.name + " failed: command error"
+				}
+				if view := ansi.Strip(updated.View()); !strings.Contains(view, want) {
+					t.Errorf("command result should contain %q:\n%s", want, view)
+				}
+			}
+		})
+	}
+}
+
+func TestTUISettingsFeedbackNamesCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message func(error) tea.Msg
+	}{
+		{"Schedule update", func(err error) tea.Msg { return scheduleDoneMsg{err: err} }},
+		{"Subscription source update", func(err error) tea.Msg { return subscriptionEditMsg{err: err} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, err := range []error{nil, errors.New("command error")} {
+				m := model{
+					ready: true, mode: modeConfig,
+					status: &manager.Status{Installed: true},
+				}
+				updated, _ := m.Update(tc.message(err))
+				want := "✓ " + tc.name + " succeeded"
+				if err != nil {
+					want = "✗ " + tc.name + " failed: command error"
+				}
+				if view := ansi.Strip(updated.View()); !strings.Contains(view, want) {
+					t.Errorf("settings result should contain %q:\n%s", want, view)
+				}
+			}
+		})
 	}
 }
 
@@ -1081,7 +1216,7 @@ func TestTUILongErrorsStayReadable(t *testing.T) {
 		{
 			name: "status-action",
 			m: model{ready: true, status: running,
-				execResult: "failed", actionErr: errors.New(details)},
+				execResult: "failed", resultLabel: "Reload", actionErr: errors.New(details)},
 			check: func(t *testing.T, m model) {
 				if m.readOffset == 0 {
 					t.Fatalf("action details should scroll with the reading offset")
@@ -1091,7 +1226,7 @@ func TestTUILongErrorsStayReadable(t *testing.T) {
 		{
 			name: "config",
 			m: model{ready: true, mode: modeConfig, configTab: configTabSubscription,
-				execResult: "failed", actionErr: errors.New(details)},
+				execResult: "failed", resultLabel: "Subscription source update", actionErr: errors.New(details)},
 			check: func(t *testing.T, m model) {
 				if m.readOffset == 0 {
 					t.Fatalf("config error details should scroll with the reading offset")

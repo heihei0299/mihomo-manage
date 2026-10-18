@@ -64,6 +64,18 @@ var actionRegistry = map[action]actionDef{
 	actReload:  {enabled: installedRunning},
 }
 
+var actionLabels = map[action]string{
+	actStart:        "Start",
+	actStop:         "Stop",
+	actRestart:      "Restart",
+	actReload:       "Reload",
+	actInstall:      "Install",
+	actUpgrade:      "Upgrade",
+	actUninstall:    "Uninstall",
+	actAutostartOn:  "Enable autostart",
+	actAutostartOff: "Disable autostart",
+}
+
 // The TUI palette. Lipgloss downgrades to plain text when the output is not a
 // terminal or NO_COLOR is set; adaptive colors stay readable on both light and
 // dark terminals.
@@ -121,6 +133,7 @@ type model struct {
 	ready            bool
 	executing        action
 	execResult       string
+	resultLabel      string
 	actionErr        error
 	phaseLabel       string
 	phaseMsg         string
@@ -352,8 +365,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if isInstalled(m.status) {
 				m.mode = modeConfig
 				m.configTab = configTabSubscription
-				m.execResult = ""
-				m.actionErr = nil
 				m.previewErr = nil
 				m.resetViewOffsets()
 				m.previewLoading = true
@@ -449,24 +460,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scheduleDoneMsg:
 		m.mode = modeStatus
-		m.execResult = ""
-		m.actionErr = msg.err
-		if msg.err != nil {
-			m.execResult = "failed"
-		} else {
-			m.execResult = "success"
-		}
+		m.recordResult("Schedule update", msg.err)
 		m.resetViewOffsets()
 		return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
 
 	case subscriptionEditMsg:
-		m.execResult = ""
-		m.actionErr = msg.err
-		if msg.err != nil {
-			m.execResult = "failed"
-		} else {
-			m.execResult = "success"
-		}
+		m.recordResult("Subscription source update", msg.err)
 		m.previewLoading = true
 		m.previewErr = nil
 		return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
@@ -479,13 +478,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionDoneMsg:
 		m.executing = actNone
 		m.mode = modeStatus
-		if msg.err != nil {
-			m.execResult = "failed"
-			m.actionErr = msg.err
-		} else {
-			m.execResult = "success"
-			m.actionErr = nil
-		}
+		m.recordResult(actionLabels[msg.action], msg.err)
 		m.resetViewOffsets()
 		return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
 	}
@@ -580,6 +573,7 @@ func (m model) updateScheduleMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedIdx++
 		}
 	case "enter":
+		m.clearResult()
 		return m, scheduleCommand(m.schedule, tuiContext(m.ctx), schedulePresets[m.selectedIdx])
 	}
 	return m, nil
@@ -605,6 +599,7 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
 	case "e":
 		if m.configTab == configTabSubscription {
+			m.clearResult()
 			return m, editSubscriptionCmd(m.config, tuiContext(m.ctx))
 		}
 	case "up", "k", "down", "j", "pgup", "pgdown":
@@ -614,6 +609,7 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
+	m.clearResult()
 	m.executing = a
 	m.mode = modeStatus
 	m.startedAt = time.Now()
@@ -626,6 +622,21 @@ func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
 		progressReaderCmd(ch),
 		execActionCmdWithContext(tuiContext(m.ctx), m.control, m.lifecycle, a, ch, version, m.keepBackup),
 	)
+}
+
+func (m *model) clearResult() {
+	m.execResult = ""
+	m.resultLabel = ""
+	m.actionErr = nil
+}
+
+func (m *model) recordResult(label string, err error) {
+	m.resultLabel = label
+	m.actionErr = err
+	m.execResult = "success"
+	if err != nil {
+		m.execResult = "failed"
+	}
 }
 
 func progressReaderCmd(ch <-chan progressMsg) tea.Cmd {
@@ -1189,10 +1200,16 @@ func (m model) currentPage() page {
 			exit:   []string{"q) Quit"},
 		}
 	case m.statusErr != nil:
+		summary := m.resultSummary()
+		if summary == "" {
+			summary = styleError.Render("✗ Error: " + firstLine(m.statusErr.Error()))
+		}
+		body := styleBlock("Error: "+m.statusErr.Error(), m.viewWidth(), styleError)
+		body = append(body, m.statusDetails(m.viewWidth())...)
 		return page{
 			title:      titleStatus,
-			summary:    styleError.Render("✗ Error: " + firstLine(m.statusErr.Error())),
-			body:       styleBlock("Error: "+m.statusErr.Error(), m.viewWidth(), styleError),
+			summary:    summary,
+			body:       body,
 			scrollable: true,
 			offset:     m.readOffset,
 			tokens:     []string{"r) Retry", "q) Quit"},
@@ -1368,6 +1385,7 @@ type textCell struct {
 func (m model) statusPage() page {
 	p := page{
 		title:      titleStatus,
+		summary:    m.statusSummary(),
 		scrollable: true,
 		offset:     m.readOffset,
 		exit:       []string{"q) Quit"},
@@ -1379,7 +1397,6 @@ func (m model) statusPage() page {
 	}
 	p.body = m.statusCard()
 	p.body = append(p.body, m.statusDetails(m.viewWidth())...)
-	p.summary = m.statusSummary()
 	p.tokens = statusTokens(m.status)
 	return p
 }
@@ -1401,13 +1418,25 @@ func (m model) statusDetails(width int) []string {
 
 // statusSummary is the single line shown in the fixed hint area.
 func (m model) statusSummary() string {
-	switch {
-	case m.execResult == "success":
-		return styleSuccess.Render("✓ Operation succeeded")
-	case m.execResult == "failed" && m.actionErr != nil:
-		return styleError.Render("✗ " + firstLine(m.actionErr.Error()))
-	case m.configStatus.ErrorSummary != "":
+	if summary := m.resultSummary(); summary != "" {
+		return summary
+	}
+	if m.configStatus.ErrorSummary != "" {
 		return styleError.Render("✗ Config error: " + firstLine(m.configStatus.ErrorSummary))
+	}
+	return ""
+}
+
+func (m model) resultSummary() string {
+	switch m.execResult {
+	case "success":
+		return styleSuccess.Render("✓ " + m.resultLabel + " succeeded")
+	case "failed":
+		summary := "✗ " + m.resultLabel + " failed"
+		if m.actionErr != nil {
+			summary += ": " + firstLine(m.actionErr.Error())
+		}
+		return styleError.Render(summary)
 	}
 	return ""
 }
@@ -1596,7 +1625,7 @@ func (m model) configPage() page {
 		offset:     m.readOffset,
 		exit:       []string{"q) Back"},
 	}
-	p.summary = m.configSummary()
+	p.summary = m.resultSummary()
 	width := m.viewWidth()
 	switch m.configTab {
 	case configTabSubscription:
@@ -1618,19 +1647,6 @@ func (m model) configPage() page {
 		p.body = append(p.body, styleBlock("✗ "+m.actionErr.Error(), width, styleError)...)
 	}
 	return p
-}
-
-func (m model) configSummary() string {
-	switch m.execResult {
-	case "success":
-		return styleSuccess.Render("✓ Configuration updated")
-	case "failed":
-		if m.actionErr != nil {
-			return styleError.Render("✗ " + firstLine(m.actionErr.Error()))
-		}
-		return styleError.Render("✗ Configuration update failed")
-	}
-	return ""
 }
 
 func (m model) configTabsLine() string {
