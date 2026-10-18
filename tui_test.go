@@ -1564,11 +1564,22 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 	if count := strings.Count(view, fullRule); count != 2 {
 		t.Fatalf("standard layout should render header and footer rules, saw %d:\n%s", count, view)
 	}
-	if !strings.Contains(view, "1) Start (n/a) · 2) Stop · 3) Restart · 4) Reload · 5) Upgrade\n") {
-		t.Fatalf("standard layout should keep service actions on their own grouped line:\n%s", view)
+	wantVertical := strings.Join([]string{
+		"1) Start (n/a)",
+		"2) Stop",
+		"3) Restart",
+		"4) Reload",
+		"5) Upgrade",
+		"c) Config",
+		"a) Autostart off",
+		"t) Schedule",
+		"u) Uninstall",
+	}, "\n")
+	if !strings.Contains(view, wantVertical) {
+		t.Fatalf("status commands should be rendered vertically:\n%s", view)
 	}
-	if !strings.Contains(view, "c) Config · a) Autostart off · t) Schedule · u) Uninstall · r) Refresh · q) Quit") {
-		t.Fatalf("standard layout should keep management and exit actions on the second line:\n%s", view)
+	if !strings.Contains(view, "r) Refresh · q) Quit") {
+		t.Fatalf("footer should render refresh and quit shortcuts:\n%s", view)
 	}
 
 	m.width, m.height = 60, 16
@@ -1576,6 +1587,9 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 	assertFrame(t, m.View(), 60, 16)
 	if strings.Contains(compactView, strings.Repeat("─", 60)) {
 		t.Fatalf("compact layout should omit full-width section rules to preserve height:\n%s", compactView)
+	}
+	if !strings.Contains(compactView, wantVertical) {
+		t.Fatalf("compact layout should also render status commands vertically:\n%s", compactView)
 	}
 }
 

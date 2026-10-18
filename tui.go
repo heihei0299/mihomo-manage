@@ -846,8 +846,6 @@ func firstLine(text string) string {
 	return text
 }
 
-const tokenGroupBreak = "\n"
-
 // layoutTokens arranges complete "key) action" tokens into as many lines as the
 // width requires. Tokens are never split between lines.
 func layoutTokens(tokens []string, width int) []string {
@@ -861,13 +859,6 @@ func layoutTokens(tokens []string, width int) []string {
 	currentWidth := 0
 	for _, token := range tokens {
 		if token == "" {
-			continue
-		}
-		if token == tokenGroupBreak {
-			if width >= standardLayoutWidth && currentWidth > 0 {
-				lines = append(lines, current)
-				current, currentWidth = "", 0
-			}
 			continue
 		}
 		token = truncateLine(token, width)
@@ -1455,8 +1446,12 @@ func (m model) statusPage() page {
 		return p
 	}
 	p.body = m.statusCard()
+	if m.layoutMode() == layoutStandard {
+		p.body = append(p.body, "")
+	}
+	p.body = append(p.body, statusActionLines(m.status)...)
 	p.body = append(p.body, m.statusDetails(m.viewWidth())...)
-	p.tokens = statusTokens(m.status)
+	p.tokens = statusTokens()
 	return p
 }
 
@@ -1685,9 +1680,9 @@ func renderActionToken(key, label string, enabled bool) string {
 	return styleAccent.Render(token)
 }
 
-func statusTokens(s *manager.Status) []string {
+func statusActionLines(s *manager.Status) []string {
 	if !isInstalled(s) {
-		return []string{renderActionToken("i", "Install", true), styleDim.Render("r) Refresh"), styleDim.Render("q) Quit")}
+		return []string{renderActionToken("i", "Install", true)}
 	}
 	autostart := "Autostart on"
 	if s.AutoStartEnabled {
@@ -1699,14 +1694,15 @@ func statusTokens(s *manager.Status) []string {
 		renderActionToken("3", "Restart", isActionAllowed(s, actRestart)),
 		renderActionToken("4", "Reload", isActionAllowed(s, actReload)),
 		renderActionToken("5", "Upgrade", true),
-		tokenGroupBreak,
 		renderActionToken("c", "Config", true),
 		renderActionToken("a", autostart, true),
 		renderActionToken("t", "Schedule", true),
 		renderActionToken("u", "Uninstall", true),
-		styleDim.Render("r) Refresh"),
-		styleDim.Render("q) Quit"),
 	}
+}
+
+func statusTokens() []string {
+	return []string{styleDim.Render("r) Refresh"), styleDim.Render("q) Quit")}
 }
 
 func (m model) configPage() page {
