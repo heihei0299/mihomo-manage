@@ -1538,6 +1538,96 @@ func TestTUIStylesCloseOnEveryLine(t *testing.T) {
 	progress := model{ready: true, executing: actUpgrade, phaseLabel: "fetch",
 		phaseMsg: strings.Repeat("downloading mihomo ", 50), startedAt: time.Now(), width: 60, height: 16}
 	assertStylesClosed(t, progress.View())
+
+	for _, sample := range tuiPageSamples() {
+		std := sample.m
+		std.width, std.height = 80, 24
+		assertStylesClosed(t, std.View())
+	}
+}
+
+func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
+	running := &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v1.19.0", AutoStartEnabled: true}
+	m := model{
+		ready:            true,
+		status:           running,
+		configStatus:     manager.ConfigApplyStatus{State: manager.ConfigApplied},
+		scheduleInterval: time.Hour,
+		scheduleActive:   true,
+		width:            80,
+		height:           24,
+	}
+	view := ansi.Strip(m.View())
+	assertFrame(t, m.View(), 80, 24)
+
+	fullRule := strings.Repeat("─", 80)
+	if count := strings.Count(view, fullRule); count != 2 {
+		t.Fatalf("standard layout should render header and footer rules, saw %d:\n%s", count, view)
+	}
+	if !strings.Contains(view, "1) Start (n/a) · 2) Stop · 3) Restart · 4) Reload · 5) Upgrade\n") {
+		t.Fatalf("standard layout should keep service actions on their own grouped line:\n%s", view)
+	}
+	if !strings.Contains(view, "c) Config · a) Autostart off · t) Schedule · u) Uninstall · r) Refresh · q) Quit") {
+		t.Fatalf("standard layout should keep management and exit actions on the second line:\n%s", view)
+	}
+
+	m.width, m.height = 60, 16
+	compactView := ansi.Strip(m.View())
+	assertFrame(t, m.View(), 60, 16)
+	if strings.Contains(compactView, strings.Repeat("─", 60)) {
+		t.Fatalf("compact layout should omit full-width section rules to preserve height:\n%s", compactView)
+	}
+}
+
+func TestTUISubPagesVisualIndicators(t *testing.T) {
+	running := &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v1.19.0"}
+
+	cfg := model{ready: true, status: running, mode: modeConfig, configTab: configTabSubscription, width: 80, height: 24}
+	cfgView := ansi.Strip(cfg.View())
+	if !strings.Contains(cfgView, "● [Subscription]  ·  ○ Override  ·  ○ Preview") {
+		t.Fatalf("config tabs should highlight active tab with indicator:\n%s", cfgView)
+	}
+	if !strings.Contains(cfgView, "╭") {
+		t.Fatalf("standard config subscription tab should render inside a card:\n%s", cfgView)
+	}
+
+	ver := model{
+		ready:       true,
+		status:      running,
+		mode:        modeChooseVersion,
+		versions:    []manager.VersionInfo{{Tag: "v1.19.0"}, {Tag: "v1.19.1"}},
+		selectedIdx: 1,
+		width:       80,
+		height:      24,
+	}
+	verView := ansi.Strip(ver.View())
+	if !strings.Contains(verView, "  v1.19.0 (current)") {
+		t.Fatalf("version list should mark the installed version as (current):\n%s", verView)
+	}
+	if !strings.Contains(verView, "> v1.19.1") {
+		t.Fatalf("version list should mark the selected version:\n%s", verView)
+	}
+
+	sched := model{
+		ready:            true,
+		status:           running,
+		mode:             modeSchedule,
+		scheduleInterval: 6 * time.Hour,
+		scheduleActive:   true,
+		selectedIdx:      1,
+		width:            80,
+		height:           24,
+	}
+	schedView := ansi.Strip(sched.View())
+	if !strings.Contains(schedView, "  6h (current)") {
+		t.Fatalf("schedule list should mark the active schedule as (current):\n%s", schedView)
+	}
+
+	uninst := model{ready: true, status: running, mode: modeConfirmUninstall, width: 80, height: 24}
+	uninstView := ansi.Strip(uninst.View())
+	if !strings.Contains(uninstView, "b) Toggle backup") {
+		t.Fatalf("uninstall dialog should advertise the backup toggle shortcut:\n%s", uninstView)
+	}
 }
 
 func envWithOverrides(extra map[string]string) []string {

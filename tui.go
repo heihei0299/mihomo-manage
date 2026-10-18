@@ -103,7 +103,7 @@ var (
 			Padding(0, 1)
 	styleDialog = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colDim).
+			BorderForeground(colStopped).
 			Padding(1, 2)
 )
 
@@ -781,7 +781,26 @@ func truncateLine(line string, width int) string {
 	if displayWidth(line) <= width {
 		return line
 	}
-	return ansi.Truncate(line, width, "…")
+	out := ansi.Truncate(line, width, "…")
+	if strings.Contains(out, "\x1b[") && !strings.HasSuffix(out, "\x1b[0m") && !strings.HasSuffix(out, "\x1b[m") {
+		out += "\x1b[0m"
+	}
+	return out
+}
+
+func renderTitle(title string, width int) string {
+	plain := truncateLine(title, width)
+	if prefix, suffix, ok := strings.Cut(plain, " · "); ok {
+		return styleSelected.Render(prefix) + styleDim.Render(" · ") + styleTitle.Render(suffix)
+	}
+	return styleTitle.Render(plain)
+}
+
+func renderRule(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return styleDim.Render(strings.Repeat("─", width))
 }
 
 // wrapText lays one logical line out over as many width-cell lines as needed.
@@ -827,13 +846,16 @@ func firstLine(text string) string {
 	return text
 }
 
+const tokenGroupBreak = "\n"
+
 // layoutTokens arranges complete "key) action" tokens into as many lines as the
 // width requires. Tokens are never split between lines.
 func layoutTokens(tokens []string, width int) []string {
 	if width <= 0 || len(tokens) == 0 {
 		return nil
 	}
-	const gap = "   "
+	const gapWidth = 3
+	gap := styleDim.Render(" · ")
 	lines := make([]string, 0, 2)
 	current := ""
 	currentWidth := 0
@@ -841,17 +863,24 @@ func layoutTokens(tokens []string, width int) []string {
 		if token == "" {
 			continue
 		}
+		if token == tokenGroupBreak {
+			if width >= standardLayoutWidth && currentWidth > 0 {
+				lines = append(lines, current)
+				current, currentWidth = "", 0
+			}
+			continue
+		}
 		token = truncateLine(token, width)
 		tokenWidth := displayWidth(token)
 		switch {
 		case currentWidth == 0:
 			current, currentWidth = token, tokenWidth
-		case currentWidth+len(gap)+tokenWidth > width:
+		case currentWidth+gapWidth+tokenWidth > width:
 			lines = append(lines, current)
 			current, currentWidth = token, tokenWidth
 		default:
 			current += gap + token
-			currentWidth += len(gap) + tokenWidth
+			currentWidth += gapWidth + tokenWidth
 		}
 	}
 	if currentWidth > 0 {
@@ -950,6 +979,7 @@ type frameInfo struct {
 type frameParts struct {
 	header   []string
 	body     []string
+	divider  string
 	tail     []string
 	position string
 	summary  []string
@@ -959,7 +989,7 @@ type frameParts struct {
 	preview  bool
 }
 
-var scrollTokens = []string{"↑↓/jk) scroll", "PgUp/PgDn) page"}
+var scrollTokens = []string{styleDim.Render("↑↓/jk) scroll"), styleDim.Render("PgUp/PgDn) page")}
 
 func firstToken(tokens []string) string {
 	if len(tokens) == 0 {
@@ -975,7 +1005,7 @@ func (m model) renderPage(p page) (string, frameInfo) {
 		return renderResizeHint(p, width, height), frameInfo{}
 	}
 	parts := m.layoutPage(p, width, height)
-	lines := make([]string, 0, len(parts.header)+len(parts.body)+len(parts.tail)+len(parts.summary)+len(parts.help)+1)
+	lines := make([]string, 0, len(parts.header)+len(parts.body)+len(parts.tail)+len(parts.summary)+len(parts.help)+2)
 	lines = append(lines, parts.header...)
 	lines = append(lines, parts.body...)
 	if len(parts.body) > 0 && len(parts.body) < parts.total && !p.scrollable && p.list == nil {
@@ -984,6 +1014,9 @@ func (m model) renderPage(p page) (string, frameInfo) {
 		lines[len(lines)-1] = truncateLine(lines[len(lines)-1]+"…", width)
 	}
 	bodyEnd := len(lines)
+	if parts.divider != "" {
+		lines = append(lines, parts.divider)
+	}
 	if parts.position != "" {
 		lines = append(lines, parts.position)
 	}
@@ -1020,10 +1053,14 @@ func (m model) renderPage(p page) (string, frameInfo) {
 func (m model) layoutPage(p page, width, height int) frameParts {
 	parts := frameParts{preview: p.preview, total: contentTotal(p)}
 	if p.title != "" {
-		parts.header = append(parts.header, truncateLine(styleTitle.Render(p.title), width))
+		parts.header = append(parts.header, renderTitle(p.title, width))
 	}
 	if p.tabs != "" {
 		parts.header = append(parts.header, truncateLine(p.tabs, width))
+	}
+	standard := m.layoutMode() == layoutStandard
+	if standard && len(parts.header) > 0 {
+		parts.header = append(parts.header, renderRule(width))
 	}
 
 	pinned := len(p.tail)
@@ -1038,8 +1075,12 @@ func (m model) layoutPage(p page, width, height int) frameParts {
 
 	base := append([]string{}, p.tokens...)
 	help := layoutTokens(base, width)
+	dividerLines := 0
+	if standard && (len(help) > 0 || summaryLines > 0 || positionLines > 0 || pinned > 0) {
+		dividerLines = 1
+	}
 	budget := func(helpLines []string) int {
-		return height - len(parts.header) - len(helpLines) - summaryLines - positionLines - pinned
+		return height - len(parts.header) - dividerLines - len(helpLines) - summaryLines - positionLines - pinned
 	}
 	bodyHeight := budget(help)
 	if p.scrollable && parts.total > bodyHeight {
@@ -1049,6 +1090,7 @@ func (m model) layoutPage(p page, width, height int) frameParts {
 	if bodyHeight < 0 {
 		// Extremely small frames keep the exit shortcut and drop the summary
 		// and the source-range line rather than the body.
+		dividerLines = 0
 		limit := height - len(parts.header) - summaryLines - positionLines - pinned
 		if limit < 1 {
 			limit = 1
@@ -1074,11 +1116,14 @@ func (m model) layoutPage(p page, width, height int) frameParts {
 	parts.total = total
 	parts.help = help
 	parts.tail = append([]string{}, p.tail...)
+	if dividerLines > 0 {
+		parts.divider = renderRule(width)
+	}
 	if summaryLines > 0 {
 		parts.summary = []string{truncateLine(p.summary, width)}
 	}
 	if positionLines > 0 && len(body) > 0 {
-		parts.position = m.previewPosition(p.origin, offset, len(body))
+		parts.position = styleDim.Render(m.previewPosition(p.origin, offset, len(body)))
 	}
 	return parts
 }
@@ -1196,8 +1241,8 @@ func (m model) currentPage() page {
 		return page{
 			title:  titleStatus,
 			body:   []string{styleDim.Render("Checking mihomo status...")},
-			tokens: []string{"q) Quit"},
-			exit:   []string{"q) Quit"},
+			tokens: []string{styleDim.Render("q) Quit")},
+			exit:   []string{styleDim.Render("q) Quit")},
 		}
 	case m.statusErr != nil:
 		summary := m.resultSummary()
@@ -1212,8 +1257,8 @@ func (m model) currentPage() page {
 			body:       body,
 			scrollable: true,
 			offset:     m.readOffset,
-			tokens:     []string{"r) Retry", "q) Quit"},
-			exit:       []string{"q) Quit"},
+			tokens:     []string{renderActionToken("r", "Retry", true), styleDim.Render("q) Quit")},
+			exit:       []string{styleDim.Render("q) Quit")},
 		}
 	case m.executing != actNone:
 		return m.executingPage()
@@ -1303,22 +1348,24 @@ func (m model) executingPage() page {
 
 func (m model) uninstallPage() page {
 	backup := "no"
+	backupStyle := styleDim
 	if m.keepBackup {
 		backup = "yes"
+		backupStyle = styleRunning
 	}
 	inner := m.viewWidth() - 4
 	if inner < 1 {
 		inner = 1
 	}
-	body := wrapText("Uninstall mihomo?", inner)
+	body := styleLines(wrapText("Uninstall mihomo?", inner), styleStopped)
 	body = append(body, "")
-	body = append(body, wrapText("backup: "+backup+"  (b to toggle)", inner)...)
+	body = append(body, styleLines(wrapText("backup: "+backup+"  (b to toggle)", inner), backupStyle)...)
 	dialog := strings.Split(styleDialog.Render(strings.Join(body, "\n")), "\n")
 	return page{
 		title:  titleUninstall,
 		body:   dialog,
-		tokens: []string{"y) Confirm", "n) Cancel"},
-		exit:   []string{"n) Cancel"},
+		tokens: []string{renderActionToken("y", "Confirm", true), renderActionToken("b", "Toggle backup", true), styleDim.Render("n) Cancel")},
+		exit:   []string{styleDim.Render("n) Cancel")},
 	}
 }
 
@@ -1328,12 +1375,12 @@ func (m model) versionChoicePage() page {
 		title:      titleVersions,
 		scrollable: true,
 		offset:     m.readOffset,
-		tokens:     []string{"↑↓) select", "Enter) confirm", "q) cancel"},
-		exit:       []string{"q) cancel"},
+		tokens:     []string{styleDim.Render("↑↓) select"), styleAccent.Render("Enter) confirm"), styleDim.Render("q) cancel")},
+		exit:       []string{styleDim.Render("q) cancel")},
 	}
 	prefix := []string{}
 	if m.status != nil && m.status.Version != "" {
-		prefix = []string{truncateLine("installed: "+m.status.Version, width)}
+		prefix = []string{styleDim.Render(truncateLine("installed: "+m.status.Version, width))}
 	}
 	switch {
 	case m.versionsErr != nil:
@@ -1341,7 +1388,7 @@ func (m model) versionChoicePage() page {
 		p.body = append(p.body, styleBlock("Error loading versions: "+m.versionsErr.Error(), width, styleError)...)
 		p.summary = styleError.Render("✗ Version list unavailable")
 	case len(m.versions) == 0:
-		p.body = append(prefix, "No releases available.")
+		p.body = append(prefix, styleDim.Render("No releases available."))
 	default:
 		// The list itself is navigated by the selection keys, so it must not
 		// advertise the body scrolling shortcuts.
@@ -1356,20 +1403,32 @@ func (m model) versionItems() [][]string {
 	if width < 1 {
 		width = 1
 	}
+	installed := ""
+	if m.status != nil {
+		installed = m.status.Version
+	}
 	items := make([][]string, 0, len(m.versions))
 	for i, version := range m.versions {
+		label := version.Tag
+		isCurrent := installed != "" && version.Tag == installed
+		if isCurrent && displayWidth(label+" (current)") <= width {
+			label += " (current)"
+		}
 		lines := make([]string, 0, 2)
-		for j, part := range wrapText(version.Tag, width) {
+		for j, part := range wrapText(label, width) {
 			prefix := "  "
 			selected := i == m.selectedIdx
 			if selected && j == 0 {
 				prefix = "> "
 			}
-			if selected {
+			switch {
+			case selected:
 				lines = append(lines, styleSelected.Render(prefix+part))
-				continue
+			case isCurrent:
+				lines = append(lines, styleRunning.Render(prefix+part))
+			default:
+				lines = append(lines, prefix+part)
 			}
-			lines = append(lines, prefix+part)
 		}
 		items = append(items, lines)
 	}
@@ -1388,11 +1447,11 @@ func (m model) statusPage() page {
 		summary:    m.statusSummary(),
 		scrollable: true,
 		offset:     m.readOffset,
-		exit:       []string{"q) Quit"},
+		exit:       []string{styleDim.Render("q) Quit")},
 	}
 	if m.status == nil {
-		p.body = []string{"No status available."}
-		p.tokens = []string{"r) Refresh", "q) Quit"}
+		p.body = []string{styleDim.Render("No status available.")}
+		p.tokens = []string{renderActionToken("r", "Refresh", true), styleDim.Render("q) Quit")}
 		return p
 	}
 	p.body = m.statusCard()
@@ -1460,17 +1519,21 @@ func (m model) statusCells() []textCell {
 	}
 
 	version := s.Version
+	versionStyle := styleAccent
 	if version == "" {
 		version = "unknown"
+		versionStyle = styleDim
 	}
 	autostart := "off"
+	autostartStyle := styleDim
 	if s.AutoStartEnabled {
 		autostart = "on"
+		autostartStyle = styleRunning
 	}
 	configState := string(m.configStatus.State)
-	configStyle := lipgloss.NewStyle()
+	configStyle := styleRunning
 	switch {
-	case configState == "" || m.configErr != nil:
+	case configState == "" || m.configErr != nil || m.configStatus.State == manager.ConfigUnknown:
 		configState = "unknown"
 		configStyle = styleDim
 	case m.configStatus.State == manager.ConfigApplyFailed ||
@@ -1479,13 +1542,16 @@ func (m model) statusCells() []textCell {
 		configStyle = styleError
 	}
 	scheduleText := scheduleSummary(m.scheduleErr, m.scheduleActive, m.scheduleInterval)
-	scheduleStyle := lipgloss.NewStyle()
-	if scheduleText == "legacy" || scheduleText == "unknown" {
+	scheduleStyle := styleDim
+	switch {
+	case scheduleText == "legacy" || scheduleText == "unknown":
 		scheduleStyle = styleStopped
+	case m.scheduleActive:
+		scheduleStyle = styleAccent
 	}
 	return append(cells,
-		textCell{text: "version: " + version},
-		textCell{text: "autostart: " + autostart},
+		textCell{text: "version: " + version, style: versionStyle},
+		textCell{text: "autostart: " + autostart, style: autostartStyle},
 		textCell{text: "config: " + configState, style: configStyle},
 		textCell{text: "schedule: " + scheduleText, style: scheduleStyle},
 	)
@@ -1504,6 +1570,16 @@ func (m model) statusCard() []string {
 				return lines
 			}
 		}
+		if lines, ok := renderCard(cells, width); ok {
+			return lines
+		}
+	}
+	return renderColumn(cells, width)
+}
+
+func (m model) renderSectionCells(cells []textCell) []string {
+	width := m.viewWidth()
+	if m.layoutMode() == layoutStandard {
 		if lines, ok := renderCard(cells, width); ok {
 			return lines
 		}
@@ -1534,7 +1610,7 @@ func renderTwoColumnCard(left, right []textCell, width int) ([]string, bool) {
 		return nil, false
 	}
 	const gap = 3
-	leftWidth := 0
+	leftWidth := 20
 	for _, cell := range left {
 		if w := displayWidth(cell.text); w > leftWidth {
 			leftWidth = w
@@ -1547,12 +1623,19 @@ func renderTwoColumnCard(left, right []textCell, width int) ([]string, bool) {
 	if rightWidth < 10 {
 		return nil, false
 	}
-	rows := make([]string, 0, len(left))
+	rightContentWidth := min(rightWidth, 24)
+	rows := make([]string, 0, len(left)+1)
+	dividerIdx := -1
 	for i := range left {
 		leftLines := renderCell(left[i], leftWidth)
 		var rightLines []string
 		if i < len(right) {
 			rightLines = renderCell(right[i], rightWidth)
+			for _, line := range rightLines {
+				if w := displayWidth(line); w > rightContentWidth {
+					rightContentWidth = w
+				}
+			}
 		}
 		height := len(leftLines)
 		if len(rightLines) > height {
@@ -1569,6 +1652,14 @@ func renderTwoColumnCard(left, right []textCell, width int) ([]string, bool) {
 			}
 			rows = append(rows, row)
 		}
+		if i == 0 && len(left) > 1 {
+			dividerIdx = len(rows)
+			rows = append(rows, "")
+		}
+	}
+	if dividerIdx >= 0 {
+		ruleWidth := leftWidth + gap + rightContentWidth
+		rows[dividerIdx] = styleDim.Render(strings.Repeat("─", ruleWidth))
 	}
 	return strings.Split(styleCard.Render(strings.Join(rows, "\n")), "\n"), true
 }
@@ -1591,12 +1682,12 @@ func renderActionToken(key, label string, enabled bool) string {
 		// Unavailable actions stay readable without relying on colour alone.
 		return styleDim.Render(token + " (n/a)")
 	}
-	return token
+	return styleAccent.Render(token)
 }
 
 func statusTokens(s *manager.Status) []string {
 	if !isInstalled(s) {
-		return []string{renderActionToken("i", "Install", true), "r) Refresh", "q) Quit"}
+		return []string{renderActionToken("i", "Install", true), styleDim.Render("r) Refresh"), styleDim.Render("q) Quit")}
 	}
 	autostart := "Autostart on"
 	if s.AutoStartEnabled {
@@ -1608,12 +1699,13 @@ func statusTokens(s *manager.Status) []string {
 		renderActionToken("3", "Restart", isActionAllowed(s, actRestart)),
 		renderActionToken("4", "Reload", isActionAllowed(s, actReload)),
 		renderActionToken("5", "Upgrade", true),
+		tokenGroupBreak,
 		renderActionToken("c", "Config", true),
 		renderActionToken("a", autostart, true),
 		renderActionToken("t", "Schedule", true),
 		renderActionToken("u", "Uninstall", true),
-		"r) Refresh",
-		"q) Quit",
+		styleDim.Render("r) Refresh"),
+		styleDim.Render("q) Quit"),
 	}
 }
 
@@ -1623,22 +1715,30 @@ func (m model) configPage() page {
 		tabs:       m.configTabsLine(),
 		scrollable: true,
 		offset:     m.readOffset,
-		exit:       []string{"q) Back"},
+		exit:       []string{styleDim.Render("q) Back")},
 	}
 	p.summary = m.resultSummary()
 	width := m.viewWidth()
 	switch m.configTab {
 	case configTabSubscription:
-		p.body = wrapText("Subscription source: remote or local", width)
-		p.body = append(p.body, styleLines(wrapText("e) Edit source with $EDITOR (URL or local subscription-data)", width), styleDim)...)
-		p.body = append(p.body, styleLines(wrapText("CLI: mihomo-manager subscription set <url-or-data>", width), styleDim)...)
-		p.tokens = []string{"Tab/← →) switch tab", "e) Edit", "r) Refresh preview", "q) Back"}
+		p.body = m.renderSectionCells([]textCell{
+			{text: "Subscription source: remote or local", style: styleTitle},
+			{text: "e) Edit source with $EDITOR (URL or local subscription-data)", style: styleAccent},
+			{text: "CLI: mihomo-manager subscription set <url-or-data>", style: styleDim},
+		})
+		p.tokens = []string{
+			styleDim.Render("Tab/← →) switch tab"),
+			renderActionToken("e", "Edit", true),
+			renderActionToken("r", "Refresh preview", true),
+			styleDim.Render("q) Back"),
+		}
 	case configTabOverride:
-		p.body = wrapText("Override file: "+manager.OverrideFilePath, width)
-		p.body = append(p.body, styleLines(wrapText("Edit with: mihomo-manager config override edit", width), styleDim)...)
-		p.body = append(p.body, "")
-		p.body = append(p.body, wrapText("Rules are embedded in the override file's 'rules:' field.", width)...)
-		p.tokens = []string{"Tab/← →) switch tab", "q) Back"}
+		p.body = m.renderSectionCells([]textCell{
+			{text: "Override file: " + manager.OverrideFilePath, style: styleTitle},
+			{text: "Edit with: mihomo-manager config override edit", style: styleAccent},
+			{text: "Rules are embedded in the override file's 'rules:' field.", style: styleDim},
+		})
+		p.tokens = []string{styleDim.Render("Tab/← →) switch tab"), styleDim.Render("q) Back")}
 	case configTabPreview:
 		p = m.previewPage(p)
 	}
@@ -1654,12 +1754,12 @@ func (m model) configTabsLine() string {
 	parts := make([]string, 0, len(tabs))
 	for i, tab := range tabs {
 		if configTab(i) == m.configTab {
-			parts = append(parts, styleSelected.Render("["+tab+"]"))
+			parts = append(parts, styleSelected.Render("● ["+tab+"]"))
 			continue
 		}
-		parts = append(parts, styleDim.Render(" "+tab+" "))
+		parts = append(parts, styleDim.Render("○ "+tab))
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, styleDim.Render("  ·  "))
 }
 
 func (m model) previewPage(p page) page {
@@ -1668,20 +1768,20 @@ func (m model) previewPage(p page) page {
 	case m.previewErr != nil:
 		p.body = styleBlock("✗ "+m.previewErr.Error(), width, styleError)
 		p.summary = styleError.Render("✗ Preview error")
-		p.tokens = []string{"r) Retry", "q) Back"}
+		p.tokens = []string{renderActionToken("r", "Retry", true), styleDim.Render("q) Back")}
 		p.scrollable = true
 		p.offset = m.readOffset
 	case m.previewContent == "" && m.previewLoading:
 		p.body = []string{styleDim.Render("Loading preview...")}
-		p.tokens = []string{"q) Back"}
+		p.tokens = []string{styleDim.Render("q) Back")}
 	case m.previewContent == "":
 		p.body = []string{styleDim.Render("(empty)")}
-		p.tokens = []string{"r) Refresh", "q) Back"}
+		p.tokens = []string{renderActionToken("r", "Refresh", true), styleDim.Render("q) Back")}
 	default:
 		p.body, p.origin = wrapPreview(m.previewContent, width)
 		p.offset = m.previewOffset
 		p.preview = true
-		p.tokens = []string{"r) Refresh", "q) Back"}
+		p.tokens = []string{renderActionToken("r", "Refresh", true), styleDim.Render("q) Back")}
 	}
 	return p
 }
@@ -1726,24 +1826,34 @@ func (m model) previewOffsetForWidth(previousWidth int) int {
 
 func (m model) schedulePage() page {
 	current := scheduleSummary(m.scheduleErr, m.scheduleActive, m.scheduleInterval)
+	activeIdx := -1
+	if m.scheduleErr == nil {
+		activeIdx = schedulePresetIndex(m.scheduleInterval, m.scheduleActive)
+	}
 	items := make([][]string, 0, len(schedulePresets))
 	for i, preset := range schedulePresets {
 		label := formatDuration(preset)
-		if i == m.selectedIdx {
-			items = append(items, []string{styleSelected.Render("> " + label)})
-			continue
+		if i == activeIdx {
+			label += " (current)"
 		}
-		items = append(items, []string{"  " + label})
+		switch {
+		case i == m.selectedIdx:
+			items = append(items, []string{styleSelected.Render("> " + label)})
+		case i == activeIdx:
+			items = append(items, []string{styleRunning.Render("  " + label)})
+		default:
+			items = append(items, []string{"  " + label})
+		}
 	}
 	return page{
 		title: titleSchedule,
 		list: &listSection{
-			prefix:   wrapText("current: "+current, m.viewWidth()),
+			prefix:   styleLines(wrapText("current: "+current, m.viewWidth()), styleDim),
 			items:    items,
 			selected: m.selectedIdx,
 		},
-		tokens: []string{"↑↓) select", "Enter) apply", "q) cancel"},
-		exit:   []string{"q) cancel"},
+		tokens: []string{styleDim.Render("↑↓) select"), styleAccent.Render("Enter) apply"), styleDim.Render("q) cancel")},
+		exit:   []string{styleDim.Render("q) cancel")},
 	}
 }
 
