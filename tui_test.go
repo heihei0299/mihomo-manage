@@ -1564,9 +1564,16 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 	if count := strings.Count(view, fullRule); count != 2 {
 		t.Fatalf("standard layout should render header and footer rules, saw %d:\n%s", count, view)
 	}
-	wantVertical := strings.Join([]string{
-		"1) Start (n/a)",
-		"2) Stop",
+	for _, want := range []string{
+		"STATUS / OVERVIEW",
+		"CONFIGURATION · config: applied",
+		"AUTOSTART · autostart: on",
+		"SCHEDULER · schedule: every 1h",
+		"PROCESS · process: active",
+		"SERVICE CONTROL",
+		"CONFIGURATION",
+		"MAINTENANCE",
+		"▸ 2) Stop",
 		"3) Restart",
 		"4) Reload",
 		"5) Upgrade",
@@ -1574,12 +1581,14 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 		"a) Autostart off",
 		"t) Schedule",
 		"u) Uninstall",
-	}, "\n")
-	if !strings.Contains(view, wantVertical) {
-		t.Fatalf("status commands should be rendered vertically:\n%s", view)
+		"↑↓/Tab) Focus · Enter) Run · ?) Help · r) Refresh · q) Quit",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("standard dashboard view missing %q:\n%s", want, view)
+		}
 	}
-	if !strings.Contains(view, "r) Refresh · q) Quit") {
-		t.Fatalf("footer should render refresh and quit shortcuts:\n%s", view)
+	if strings.Contains(view, "1) Start") {
+		t.Fatalf("running dashboard should hide unavailable Start action:\n%s", view)
 	}
 
 	m.width, m.height = 60, 16
@@ -1588,8 +1597,60 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 	if strings.Contains(compactView, strings.Repeat("─", 60)) {
 		t.Fatalf("compact layout should omit full-width section rules to preserve height:\n%s", compactView)
 	}
-	if !strings.Contains(compactView, wantVertical) {
-		t.Fatalf("compact layout should also render status commands vertically:\n%s", compactView)
+	for _, want := range []string{"▸ 2) Stop", "3) Restart", "c) Config", "u) Uninstall"} {
+		if !strings.Contains(compactView, want) {
+			t.Fatalf("compact layout missing %q:\n%s", want, compactView)
+		}
+	}
+}
+
+func TestTUIDashboardFocusAndHelpNavigation(t *testing.T) {
+	ctrl := &tuiMockControl{}
+	m := model{
+		ready:   true,
+		status:  &manager.Status{Installed: true, InstanceState: manager.Running, Version: "v1.19.0"},
+		control: ctrl,
+		config:  &tuiMockConfig{},
+		width:   80,
+		height:  24,
+	}
+	// Initial focus is index 0 ("2) Stop"); moving down once focuses "3) Restart".
+	updated, _ := m.Update(tuiKey("down"))
+	m = updated.(model)
+	if m.actionIdx != 1 {
+		t.Fatalf("actionIdx after down = %d, want 1", m.actionIdx)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "▸ 3) Restart") {
+		t.Fatalf("expected focus indicator on 3) Restart:\n%s", ansi.Strip(m.View()))
+	}
+
+	// Pressing right jumps to the right column (CONFIGURATION / MAINTENANCE).
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(model)
+	if !strings.Contains(ansi.Strip(m.View()), "▸ a) Autostart on") {
+		t.Fatalf("expected right column focus on a) Autostart on:\n%s", ansi.Strip(m.View()))
+	}
+
+	// Pressing left jumps back to the left column ("3) Restart") and Enter dispatches it.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(model)
+	updated, cmd := m.Update(tuiKey("enter"))
+	m = updated.(model)
+	if m.executing != actRestart || cmd == nil {
+		t.Fatalf("Enter on focused Restart should start actRestart, got %v", m.executing)
+	}
+
+	// Pressing ? toggles the Help view, and q returns to Status.
+	m.executing = actNone
+	updated, _ = m.Update(tuiKey("?"))
+	m = updated.(model)
+	if m.mode != modeHelp || !strings.Contains(ansi.Strip(m.View()), "KEYBOARD SHORTCUTS & STATUS GUIDE") {
+		t.Fatalf("? should open the Help view:\n%s", ansi.Strip(m.View()))
+	}
+	updated, _ = m.Update(tuiKey("q"))
+	m = updated.(model)
+	if m.mode != modeStatus {
+		t.Fatalf("q from Help should return to modeStatus, got %v", m.mode)
 	}
 }
 
@@ -1603,6 +1664,9 @@ func TestTUISubPagesVisualIndicators(t *testing.T) {
 	}
 	if !strings.Contains(cfgView, "╭") {
 		t.Fatalf("standard config subscription tab should render inside a card:\n%s", cfgView)
+	}
+	if !strings.Contains(cfgView, "Status: unknown (no managed subscription or override applied yet)") {
+		t.Fatalf("config subscription tab should explain unknown config state:\n%s", cfgView)
 	}
 
 	ver := model{

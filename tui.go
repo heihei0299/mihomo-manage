@@ -23,6 +23,7 @@ const (
 	modeChooseVersion
 	modeConfig
 	modeSchedule
+	modeHelp
 )
 
 type configTab int
@@ -80,23 +81,28 @@ var actionLabels = map[action]string{
 // terminal or NO_COLOR is set; adaptive colors stay readable on both light and
 // dark terminals.
 var (
-	colRunning = lipgloss.AdaptiveColor{Light: "#15803d", Dark: "#4ade80"}
-	colStopped = lipgloss.AdaptiveColor{Light: "#b45309", Dark: "#fbbf24"}
-	colError   = lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"}
-	colAccent  = lipgloss.AdaptiveColor{Light: "#1d4ed8", Dark: "#60a5fa"}
-	colDim     = lipgloss.AdaptiveColor{Light: "#6b7280", Dark: "#9ca3af"}
+	colText    = lipgloss.AdaptiveColor{Light: "#1f2937", Dark: "#D8E2E8"}
+	colRunning = lipgloss.AdaptiveColor{Light: "#15803d", Dark: "#40D99A"}
+	colStopped = lipgloss.AdaptiveColor{Light: "#b45309", Dark: "#E9B75F"}
+	colError   = lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#EF7777"}
+	colAccent  = lipgloss.AdaptiveColor{Light: "#1d4ed8", Dark: "#66A8FF"}
+	colDim     = lipgloss.AdaptiveColor{Light: "#6b7280", Dark: "#78919E"}
 )
 
 var (
+	styleText      = lipgloss.NewStyle().Foreground(colText)
 	styleRunning   = lipgloss.NewStyle().Foreground(colRunning).Bold(true)
 	styleStopped   = lipgloss.NewStyle().Foreground(colStopped).Bold(true)
+	styleWarning   = lipgloss.NewStyle().Foreground(colStopped)
 	styleUpgrading = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	styleSuccess   = lipgloss.NewStyle().Foreground(colRunning).Bold(true)
 	styleError     = lipgloss.NewStyle().Foreground(colError)
+	styleDanger    = lipgloss.NewStyle().Foreground(colError).Bold(true)
 	styleAccent    = lipgloss.NewStyle().Foreground(colAccent)
 	styleSelected  = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	styleDim       = lipgloss.NewStyle().Foreground(colDim)
-	styleTitle     = lipgloss.NewStyle().Bold(true)
+	styleSection   = lipgloss.NewStyle().Foreground(colDim).Bold(true)
+	styleTitle     = lipgloss.NewStyle().Foreground(colText).Bold(true)
 	styleCard      = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colDim).
@@ -148,6 +154,7 @@ type model struct {
 	versions       []manager.VersionInfo
 	versionsErr    error
 	selectedIdx    int
+	actionIdx      int
 	configTab      configTab
 	previewContent string
 	previewOffset  int
@@ -356,73 +363,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfigMode(msg)
 		case modeSchedule:
 			return m.updateScheduleMode(msg)
+		case modeHelp:
+			return m.updateHelpMode(msg)
+		}
+
+		if next, cmd, ok := m.dispatchMenuKey(msg.String()); ok {
+			return next, cmd
 		}
 
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "c":
-			if isInstalled(m.status) {
-				m.mode = modeConfig
-				m.configTab = configTabSubscription
-				m.previewErr = nil
-				m.resetViewOffsets()
-				m.previewLoading = true
-				return m, fetchConfigPreview(m.config, tuiContext(m.ctx))
-			}
 		case "r":
 			return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
-		case "1":
-			if isActionAllowed(m.status, actStart) {
-				return m.startAction(actStart, "latest")
+		case "?":
+			m.mode = modeHelp
+			m.resetViewOffsets()
+			return m, nil
+		case "enter":
+			if items := m.statusMenuItems(); len(items) > 0 {
+				idx := clampInt(m.actionIdx, 0, len(items)-1)
+				next, cmd, _ := m.dispatchMenuKey(items[idx].key)
+				return next, cmd
 			}
-		case "2":
-			if isActionAllowed(m.status, actStop) {
-				return m.startAction(actStop, "")
+		case "tab":
+			m.moveMenuFocus(1)
+		case "shift+tab":
+			m.moveMenuFocus(-1)
+		case "left", "h":
+			m.moveMenuColumn(-1)
+		case "right", "l":
+			m.moveMenuColumn(1)
+		case "up", "k":
+			if info := m.currentFrame(); info.valid && info.total > info.bodyHeight {
+				m.scrollBody(msg.String())
+			} else {
+				m.moveMenuFocus(-1)
 			}
-		case "3":
-			if isActionAllowed(m.status, actRestart) {
-				return m.startAction(actRestart, "")
+		case "down", "j":
+			if info := m.currentFrame(); info.valid && info.total > info.bodyHeight {
+				m.scrollBody(msg.String())
+			} else {
+				m.moveMenuFocus(1)
 			}
-		case "4":
-			if isActionAllowed(m.status, actReload) {
-				return m.startAction(actReload, "")
-			}
-		case "5":
-			if m.status != nil && m.status.Installed {
-				m.mode = modeChooseVersion
-				m.versions = nil
-				m.versionsErr = nil
-				m.selectedIdx = 0
-				m.resetViewOffsets()
-				return m, fetchVersionsCmd(m.lifecycle, tuiContext(m.ctx))
-			}
-		case "i":
-			if !isInstalled(m.status) {
-				return m.startAction(actInstall, "latest")
-			}
-		case "a":
-			if isInstalled(m.status) {
-				if m.status.AutoStartEnabled {
-					return m.startAction(actAutostartOff, "")
-				}
-				return m.startAction(actAutostartOn, "")
-			}
-		case "t":
-			if isInstalled(m.status) {
-				m.mode = modeSchedule
-				m.selectedIdx = schedulePresetIndex(m.scheduleInterval, m.scheduleActive)
-				m.resetViewOffsets()
-				return m, nil
-			}
-		case "u":
-			if isInstalled(m.status) {
-				m.mode = modeConfirmUninstall
-				m.keepBackup = false
-				m.resetViewOffsets()
-				return m, nil
-			}
-		case "up", "k", "down", "j", "pgup", "pgdown":
+		case "pgup", "pgdown":
 			m.scrollBody(msg.String())
 		}
 		return m, nil
@@ -436,6 +420,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scheduleInterval = msg.scheduleInterval
 		m.scheduleActive = msg.scheduleActive
 		m.scheduleErr = msg.scheduleErr
+		if items := m.statusMenuItems(); len(items) > 0 {
+			m.actionIdx = clampInt(m.actionIdx, 0, len(items)-1)
+		} else {
+			m.actionIdx = 0
+		}
 		// Refreshed status replaces the page content; reading starts over.
 		m.readOffset = 0
 		return m, nil
@@ -481,6 +470,122 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recordResult(actionLabels[msg.action], msg.err)
 		m.resetViewOffsets()
 		return m, fetchStatusCmd(m.control, m.config, m.schedule, tuiContext(m.ctx))
+	}
+	return m, nil
+}
+
+func (m model) dispatchMenuKey(key string) (tea.Model, tea.Cmd, bool) {
+	switch key {
+	case "c":
+		if isInstalled(m.status) {
+			m.mode = modeConfig
+			m.configTab = configTabSubscription
+			m.previewErr = nil
+			m.resetViewOffsets()
+			m.previewLoading = true
+			return m, fetchConfigPreview(m.config, tuiContext(m.ctx)), true
+		}
+	case "1":
+		if isActionAllowed(m.status, actStart) {
+			next, cmd := m.startAction(actStart, "latest")
+			return next, cmd, true
+		}
+	case "2":
+		if isActionAllowed(m.status, actStop) {
+			next, cmd := m.startAction(actStop, "")
+			return next, cmd, true
+		}
+	case "3":
+		if isActionAllowed(m.status, actRestart) {
+			next, cmd := m.startAction(actRestart, "")
+			return next, cmd, true
+		}
+	case "4":
+		if isActionAllowed(m.status, actReload) {
+			next, cmd := m.startAction(actReload, "")
+			return next, cmd, true
+		}
+	case "5":
+		if m.status != nil && m.status.Installed {
+			m.mode = modeChooseVersion
+			m.versions = nil
+			m.versionsErr = nil
+			m.selectedIdx = 0
+			m.resetViewOffsets()
+			return m, fetchVersionsCmd(m.lifecycle, tuiContext(m.ctx)), true
+		}
+	case "i":
+		if !isInstalled(m.status) {
+			next, cmd := m.startAction(actInstall, "latest")
+			return next, cmd, true
+		}
+	case "a":
+		if isInstalled(m.status) {
+			if m.status.AutoStartEnabled {
+				next, cmd := m.startAction(actAutostartOff, "")
+				return next, cmd, true
+			}
+			next, cmd := m.startAction(actAutostartOn, "")
+			return next, cmd, true
+		}
+	case "t":
+		if isInstalled(m.status) {
+			m.mode = modeSchedule
+			m.selectedIdx = schedulePresetIndex(m.scheduleInterval, m.scheduleActive)
+			m.resetViewOffsets()
+			return m, nil, true
+		}
+	case "u":
+		if isInstalled(m.status) {
+			m.mode = modeConfirmUninstall
+			m.keepBackup = false
+			m.resetViewOffsets()
+			return m, nil, true
+		}
+	}
+	return m, nil, false
+}
+
+func (m *model) moveMenuFocus(delta int) {
+	items := m.statusMenuItems()
+	if len(items) == 0 {
+		m.actionIdx = 0
+		return
+	}
+	m.actionIdx = (m.actionIdx + delta + len(items)) % len(items)
+}
+
+func (m *model) moveMenuColumn(dir int) {
+	items := m.statusMenuItems()
+	if len(items) == 0 {
+		return
+	}
+	split := 0
+	for i, item := range items {
+		if item.section != sectionService {
+			split = i
+			break
+		}
+	}
+	if split == 0 {
+		return
+	}
+	idx := clampInt(m.actionIdx, 0, len(items)-1)
+	if dir > 0 && idx < split {
+		m.actionIdx = clampInt(split+idx, split, len(items)-1)
+	} else if dir < 0 && idx >= split {
+		m.actionIdx = clampInt(idx-split, 0, split-1)
+	}
+}
+
+func (m model) updateHelpMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "?":
+		m.mode = modeStatus
+		m.resetViewOffsets()
+		return m, nil
+	case "up", "k", "down", "j", "pgup", "pgdown":
+		m.scrollBody(msg.String())
 	}
 	return m, nil
 }
@@ -711,6 +816,7 @@ const (
 	minimumLayoutHeight  = 16
 	defaultLayoutWidth   = 80
 	defaultLayoutHeight  = 24
+	maxDashboardWidth    = 88
 )
 
 const (
@@ -719,7 +825,15 @@ const (
 	titleVersions  = "mihomo-manager · Select version"
 	titleSchedule  = "mihomo-manager · Schedule subscription update"
 	titleUninstall = "mihomo-manager · Uninstall"
+	titleHelp      = "mihomo-manager · Help"
 )
+
+func panelWidth(width int) int {
+	if width > maxDashboardWidth {
+		return maxDashboardWidth
+	}
+	return width
+}
 
 type layoutMode int
 
@@ -797,10 +911,11 @@ func renderTitle(title string, width int) string {
 }
 
 func renderRule(width int) string {
-	if width <= 0 {
+	pw := panelWidth(width)
+	if pw <= 0 {
 		return ""
 	}
-	return styleDim.Render(strings.Repeat("─", width))
+	return styleDim.Render(strings.Repeat("─", pw))
 }
 
 // wrapText lays one logical line out over as many width-cell lines as needed.
@@ -1263,6 +1378,8 @@ func (m model) currentPage() page {
 		return m.configPage()
 	case modeSchedule:
 		return m.schedulePage()
+	case modeHelp:
+		return m.helpPage()
 	}
 	return m.statusPage()
 }
@@ -1344,18 +1461,18 @@ func (m model) uninstallPage() page {
 		backup = "yes"
 		backupStyle = styleRunning
 	}
-	inner := m.viewWidth() - 4
+	inner := panelWidth(m.viewWidth()) - 4
 	if inner < 1 {
 		inner = 1
 	}
-	body := styleLines(wrapText("Uninstall mihomo?", inner), styleStopped)
+	body := styleLines(wrapText("Uninstall mihomo?", inner), styleDanger)
 	body = append(body, "")
 	body = append(body, styleLines(wrapText("backup: "+backup+"  (b to toggle)", inner), backupStyle)...)
 	dialog := strings.Split(styleDialog.Render(strings.Join(body, "\n")), "\n")
 	return page{
 		title:  titleUninstall,
 		body:   dialog,
-		tokens: []string{renderActionToken("y", "Confirm", true), renderActionToken("b", "Toggle backup", true), styleDim.Render("n) Cancel")},
+		tokens: []string{styleDanger.Render("y) Confirm"), renderActionToken("b", "Toggle backup", true), styleDim.Render("n) Cancel")},
 		exit:   []string{styleDim.Render("n) Cancel")},
 	}
 }
@@ -1418,7 +1535,7 @@ func (m model) versionItems() [][]string {
 			case isCurrent:
 				lines = append(lines, styleRunning.Render(prefix+part))
 			default:
-				lines = append(lines, prefix+part)
+				lines = append(lines, styleText.Render(prefix+part))
 			}
 		}
 		items = append(items, lines)
@@ -1430,6 +1547,21 @@ func (m model) versionItems() [][]string {
 type textCell struct {
 	text  string
 	style lipgloss.Style
+}
+
+type menuSection string
+
+const (
+	sectionService     menuSection = "SERVICE CONTROL"
+	sectionConfig      menuSection = "CONFIGURATION"
+	sectionMaintenance menuSection = "MAINTENANCE"
+)
+
+type menuItem struct {
+	section menuSection
+	key     string
+	label   string
+	danger  bool
 }
 
 func (m model) statusPage() page {
@@ -1449,7 +1581,7 @@ func (m model) statusPage() page {
 	if m.layoutMode() == layoutStandard {
 		p.body = append(p.body, "")
 	}
-	p.body = append(p.body, statusActionLines(m.status)...)
+	p.body = append(p.body, m.statusMenuLines()...)
 	p.body = append(p.body, m.statusDetails(m.viewWidth())...)
 	p.tokens = statusTokens()
 	return p
@@ -1500,13 +1632,19 @@ func (m model) statusCells() []textCell {
 	state := s.InstanceState.String()
 	glyph := "●"
 	stateStyle := styleStopped
+	processState := "inactive"
+	processStyle := styleWarning
 	switch {
 	case !s.Installed:
 		state, glyph, stateStyle = "not installed", "○", styleDim
 	case s.InstanceState == manager.Running:
 		stateStyle = styleRunning
+		processState = "active"
+		processStyle = styleRunning
 	case s.InstanceState == manager.Upgrading:
 		glyph, stateStyle = "◐", styleUpgrading
+		processState = "upgrading"
+		processStyle = styleUpgrading
 	}
 	cells := []textCell{{text: glyph + " " + state, style: stateStyle}}
 	if !s.Installed {
@@ -1514,10 +1652,10 @@ func (m model) statusCells() []textCell {
 	}
 
 	version := s.Version
-	versionStyle := styleAccent
+	versionStyle := styleTitle
 	if version == "" {
 		version = "unknown"
-		versionStyle = styleDim
+		versionStyle = styleWarning
 	}
 	autostart := "off"
 	autostartStyle := styleDim
@@ -1530,7 +1668,7 @@ func (m model) statusCells() []textCell {
 	switch {
 	case configState == "" || m.configErr != nil || m.configStatus.State == manager.ConfigUnknown:
 		configState = "unknown"
-		configStyle = styleDim
+		configStyle = styleWarning
 	case m.configStatus.State == manager.ConfigApplyFailed ||
 		m.configStatus.State == manager.ConfigValidationFailed ||
 		m.configStatus.ErrorSummary != "":
@@ -1540,15 +1678,16 @@ func (m model) statusCells() []textCell {
 	scheduleStyle := styleDim
 	switch {
 	case scheduleText == "legacy" || scheduleText == "unknown":
-		scheduleStyle = styleStopped
+		scheduleStyle = styleWarning
 	case m.scheduleActive:
-		scheduleStyle = styleAccent
+		scheduleStyle = styleRunning
 	}
 	return append(cells,
 		textCell{text: "version: " + version, style: versionStyle},
 		textCell{text: "autostart: " + autostart, style: autostartStyle},
 		textCell{text: "config: " + configState, style: configStyle},
 		textCell{text: "schedule: " + scheduleText, style: scheduleStyle},
+		textCell{text: "process: " + processState, style: processStyle},
 	)
 }
 
@@ -1558,24 +1697,35 @@ func (m model) statusCard() []string {
 	width := m.viewWidth()
 	cells := m.statusCells()
 	if m.layoutMode() == layoutStandard {
-		if len(cells) == 5 {
-			left := []textCell{cells[0], cells[2], cells[4]}
-			right := []textCell{cells[1], cells[3]}
-			if lines, ok := renderTwoColumnCard(left, right, width); ok {
+		if len(cells) == 6 {
+			left := []textCell{
+				cells[0],
+				{text: "CONFIGURATION · " + cells[3].text, style: cells[3].style},
+				{text: "SCHEDULER · " + cells[4].text, style: cells[4].style},
+			}
+			right := []textCell{
+				cells[1],
+				{text: "AUTOSTART · " + cells[2].text, style: cells[2].style},
+				{text: "PROCESS · " + cells[5].text, style: cells[5].style},
+			}
+			if lines, ok := renderTwoColumnCard("STATUS / OVERVIEW", left, right, width); ok {
 				return lines
 			}
 		}
-		if lines, ok := renderCard(cells, width); ok {
+		if lines, ok := renderCard("STATUS / OVERVIEW", cells, width); ok {
 			return lines
 		}
+	}
+	if len(cells) > 5 {
+		cells = cells[:5]
 	}
 	return renderColumn(cells, width)
 }
 
-func (m model) renderSectionCells(cells []textCell) []string {
+func (m model) renderSectionCells(header string, cells []textCell) []string {
 	width := m.viewWidth()
 	if m.layoutMode() == layoutStandard {
-		if lines, ok := renderCard(cells, width); ok {
+		if lines, ok := renderCard(header, cells, width); ok {
 			return lines
 		}
 	}
@@ -1597,40 +1747,43 @@ func renderColumn(cells []textCell, width int) []string {
 	return lines
 }
 
-// renderTwoColumnCard renders a compact bordered card. Values wrap inside their
-// column so long versions or paths never break the frame.
-func renderTwoColumnCard(left, right []textCell, width int) ([]string, bool) {
-	inner := width - 4
+// renderTwoColumnCard renders a full-width dashboard card. Values wrap inside
+// their column so long versions or paths never break the frame.
+func renderTwoColumnCard(header string, left, right []textCell, width int) ([]string, bool) {
+	pw := panelWidth(width)
+	inner := pw - 4
 	if inner < 16 {
 		return nil, false
 	}
-	const gap = 3
-	leftWidth := 20
-	for _, cell := range left {
-		if w := displayWidth(cell.text); w > leftWidth {
-			leftWidth = w
-		}
-	}
-	if limit := inner * 2 / 5; leftWidth > limit {
-		leftWidth = limit
-	}
+	const gap = 4
+	leftWidth := (inner - gap) / 2
 	rightWidth := inner - leftWidth - gap
-	if rightWidth < 10 {
+	if leftWidth < 10 || rightWidth < 10 {
 		return nil, false
 	}
-	rightContentWidth := min(rightWidth, 24)
-	rows := make([]string, 0, len(left)+1)
-	dividerIdx := -1
+	rows := make([]string, 0, len(left)+2)
+	if header != "" {
+		h := styleSection.Render(truncateLine(header, inner))
+		h += strings.Repeat(" ", max(0, inner-displayWidth(h)))
+		rows = append(rows, h)
+	}
 	for i := range left {
-		leftLines := renderCell(left[i], leftWidth)
+		rowLeftWidth := leftWidth
+		rowGap := gap
+		rowRightWidth := rightWidth
+		if i == 0 && len(right) > 0 && displayWidth(right[0].text) > rightWidth {
+			minLeft := max(20, displayWidth(left[0].text))
+			if minLeft < leftWidth {
+				rowGap = 3
+				neededLeft := inner - rowGap - displayWidth(right[0].text)
+				rowLeftWidth = clampInt(neededLeft, minLeft, leftWidth)
+				rowRightWidth = inner - rowLeftWidth - rowGap
+			}
+		}
+		leftLines := renderCell(left[i], rowLeftWidth)
 		var rightLines []string
 		if i < len(right) {
-			rightLines = renderCell(right[i], rightWidth)
-			for _, line := range rightLines {
-				if w := displayWidth(line); w > rightContentWidth {
-					rightContentWidth = w
-				}
-			}
+			rightLines = renderCell(right[i], rowRightWidth)
 		}
 		height := len(leftLines)
 		if len(rightLines) > height {
@@ -1641,32 +1794,38 @@ func renderTwoColumnCard(left, right []textCell, width int) ([]string, bool) {
 			if j < len(leftLines) {
 				row = leftLines[j]
 			}
-			row += strings.Repeat(" ", max(0, leftWidth-displayWidth(row)))
+			row += strings.Repeat(" ", max(0, rowLeftWidth-displayWidth(row)))
 			if j < len(rightLines) {
-				row += strings.Repeat(" ", gap) + rightLines[j]
+				row += strings.Repeat(" ", rowGap) + rightLines[j]
 			}
 			rows = append(rows, row)
 		}
 		if i == 0 && len(left) > 1 {
-			dividerIdx = len(rows)
-			rows = append(rows, "")
+			rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
 		}
-	}
-	if dividerIdx >= 0 {
-		ruleWidth := leftWidth + gap + rightContentWidth
-		rows[dividerIdx] = styleDim.Render(strings.Repeat("─", ruleWidth))
 	}
 	return strings.Split(styleCard.Render(strings.Join(rows, "\n")), "\n"), true
 }
 
-func renderCard(cells []textCell, width int) ([]string, bool) {
-	inner := width - 4
+func renderCard(header string, cells []textCell, width int) ([]string, bool) {
+	pw := panelWidth(width)
+	inner := pw - 4
 	if inner < 8 {
 		return nil, false
 	}
-	lines := make([]string, 0, len(cells))
+	lines := make([]string, 0, len(cells)+1)
+	if header != "" {
+		h := styleSection.Render(truncateLine(header, inner))
+		h += strings.Repeat(" ", max(0, inner-displayWidth(h)))
+		lines = append(lines, h)
+	}
 	for _, cell := range cells {
-		lines = append(lines, renderCell(cell, inner)...)
+		for _, line := range renderCell(cell, inner) {
+			if len(lines) == 0 {
+				line += strings.Repeat(" ", max(0, inner-displayWidth(line)))
+			}
+			lines = append(lines, line)
+		}
 	}
 	return strings.Split(styleCard.Render(strings.Join(lines, "\n")), "\n"), true
 }
@@ -1680,29 +1839,154 @@ func renderActionToken(key, label string, enabled bool) string {
 	return styleAccent.Render(token)
 }
 
-func statusActionLines(s *manager.Status) []string {
+func (m model) statusMenuItems() []menuItem {
+	s := m.status
 	if !isInstalled(s) {
-		return []string{renderActionToken("i", "Install", true)}
+		return []menuItem{
+			{section: sectionService, key: "i", label: "Install"},
+		}
 	}
+	items := make([]menuItem, 0, 8)
+	if isActionAllowed(s, actStart) {
+		items = append(items, menuItem{section: sectionService, key: "1", label: "Start"})
+	}
+	if isActionAllowed(s, actStop) {
+		items = append(items, menuItem{section: sectionService, key: "2", label: "Stop", danger: true})
+	}
+	if isActionAllowed(s, actRestart) {
+		items = append(items, menuItem{section: sectionService, key: "3", label: "Restart"})
+	}
+	if isActionAllowed(s, actReload) {
+		items = append(items, menuItem{section: sectionService, key: "4", label: "Reload"})
+	}
+	items = append(items, menuItem{section: sectionService, key: "5", label: "Upgrade"})
+
 	autostart := "Autostart on"
 	if s.AutoStartEnabled {
 		autostart = "Autostart off"
 	}
-	return []string{
-		renderActionToken("1", "Start", isActionAllowed(s, actStart)),
-		renderActionToken("2", "Stop", isActionAllowed(s, actStop)),
-		renderActionToken("3", "Restart", isActionAllowed(s, actRestart)),
-		renderActionToken("4", "Reload", isActionAllowed(s, actReload)),
-		renderActionToken("5", "Upgrade", true),
-		renderActionToken("c", "Config", true),
-		renderActionToken("a", autostart, true),
-		renderActionToken("t", "Schedule", true),
-		renderActionToken("u", "Uninstall", true),
+	items = append(items,
+		menuItem{section: sectionConfig, key: "c", label: "Config"},
+		menuItem{section: sectionConfig, key: "a", label: autostart},
+		menuItem{section: sectionMaintenance, key: "t", label: "Schedule"},
+		menuItem{section: sectionMaintenance, key: "u", label: "Uninstall", danger: true},
+	)
+	return items
+}
+
+func renderMenuItem(item menuItem, focused bool) string {
+	token := item.key + ") " + item.label
+	if focused {
+		if item.danger {
+			return styleDanger.Render("▸ " + token)
+		}
+		return styleSelected.Render("▸ " + token)
 	}
+	if item.danger {
+		return styleError.Render("  " + token)
+	}
+	return styleText.Render("  " + token)
+}
+
+func (m model) statusMenuLines() []string {
+	items := m.statusMenuItems()
+	if len(items) == 0 {
+		return nil
+	}
+	focusedIdx := clampInt(m.actionIdx, 0, len(items)-1)
+	if m.layoutMode() != layoutStandard || !isInstalled(m.status) {
+		lines := make([]string, 0, len(items)+1)
+		if m.layoutMode() == layoutStandard {
+			lines = append(lines, "  "+styleSection.Render(string(sectionService)))
+		}
+		for i, item := range items {
+			lines = append(lines, renderMenuItem(item, i == focusedIdx))
+		}
+		return lines
+	}
+
+	pw := panelWidth(m.viewWidth())
+	inner := pw - 4
+	const gap = 4
+	leftColWidth := (inner-gap)/2 + 2
+
+	leftLines := []string{"  " + styleSection.Render(string(sectionService))}
+	rightLines := []string{}
+	var currentRightSection menuSection
+	for i, item := range items {
+		rendered := renderMenuItem(item, i == focusedIdx)
+		if item.section == sectionService {
+			leftLines = append(leftLines, rendered)
+			continue
+		}
+		if item.section != currentRightSection {
+			currentRightSection = item.section
+			rightLines = append(rightLines, "  "+styleSection.Render(string(item.section)))
+		}
+		rightLines = append(rightLines, rendered)
+	}
+
+	rowCount := max(len(leftLines), len(rightLines))
+	rows := make([]string, 0, rowCount)
+	for i := 0; i < rowCount; i++ {
+		left := ""
+		if i < len(leftLines) {
+			left = leftLines[i]
+		}
+		row := left + strings.Repeat(" ", max(0, leftColWidth-displayWidth(left)))
+		if i < len(rightLines) {
+			row += strings.Repeat(" ", gap) + rightLines[i]
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func statusTokens() []string {
-	return []string{styleDim.Render("r) Refresh"), styleDim.Render("q) Quit")}
+	return []string{
+		styleDim.Render("↑↓/Tab) Focus"),
+		styleAccent.Render("Enter) Run"),
+		styleDim.Render("?) Help"),
+		styleDim.Render("r) Refresh"),
+		styleDim.Render("q) Quit"),
+	}
+}
+
+func (m model) helpPage() page {
+	cells := []textCell{
+		{text: "↑/↓, j/k, Tab    Move focus between actions (or scroll long output)", style: styleText},
+		{text: "←/→, h/l         Switch between Service Control and Config/Maintenance", style: styleText},
+		{text: "Enter            Execute the highlighted action", style: styleAccent},
+		{text: "1-5              Start, Stop, Restart, Reload, Upgrade", style: styleText},
+		{text: "c, a, t, u       Configuration, Autostart, Schedule, Uninstall", style: styleText},
+		{text: "r                Refresh dashboard status", style: styleText},
+		{text: "? / q / Esc      Close help and return to dashboard", style: styleDim},
+		{text: "", style: styleDim},
+		{text: "config: unknown  No managed subscription/override applied yet (press c)", style: styleWarning},
+		{text: "schedule: legacy Legacy schedule detected (press t to update)", style: styleWarning},
+	}
+	return page{
+		title:      titleHelp,
+		body:       m.renderSectionCells("KEYBOARD SHORTCUTS & STATUS GUIDE", cells),
+		scrollable: true,
+		offset:     m.readOffset,
+		tokens:     []string{styleDim.Render("?/q/Esc) Back")},
+		exit:       []string{styleDim.Render("q) Back")},
+	}
+}
+
+func (m model) configStatusDiagnosticCell() textCell {
+	state := string(m.configStatus.State)
+	switch {
+	case m.configErr != nil:
+		return textCell{text: "Status: unknown (" + firstLine(m.configErr.Error()) + ")", style: styleWarning}
+	case state == "" || m.configStatus.State == manager.ConfigUnknown:
+		return textCell{text: "Status: unknown (no managed subscription or override applied yet)", style: styleWarning}
+	case m.configStatus.State == manager.ConfigApplyFailed || m.configStatus.State == manager.ConfigValidationFailed:
+		return textCell{text: "Status: " + state, style: styleError}
+	default:
+		return textCell{text: "Status: " + state, style: styleRunning}
+	}
 }
 
 func (m model) configPage() page {
@@ -1717,8 +2001,9 @@ func (m model) configPage() page {
 	width := m.viewWidth()
 	switch m.configTab {
 	case configTabSubscription:
-		p.body = m.renderSectionCells([]textCell{
+		p.body = m.renderSectionCells("SUBSCRIPTION SOURCE", []textCell{
 			{text: "Subscription source: remote or local", style: styleTitle},
+			m.configStatusDiagnosticCell(),
 			{text: "e) Edit source with $EDITOR (URL or local subscription-data)", style: styleAccent},
 			{text: "CLI: mihomo-manager subscription set <url-or-data>", style: styleDim},
 		})
@@ -1729,7 +2014,7 @@ func (m model) configPage() page {
 			styleDim.Render("q) Back"),
 		}
 	case configTabOverride:
-		p.body = m.renderSectionCells([]textCell{
+		p.body = m.renderSectionCells("OVERRIDE & ROUTING RULES", []textCell{
 			{text: "Override file: " + manager.OverrideFilePath, style: styleTitle},
 			{text: "Edit with: mihomo-manager config override edit", style: styleAccent},
 			{text: "Rules are embedded in the override file's 'rules:' field.", style: styleDim},
