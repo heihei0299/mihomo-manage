@@ -228,3 +228,16 @@ func TestConfigRulesDeprecationUsesOverrideName(t *testing.T) {
 		t.Errorf("rules deprecation message should not mention config-template, got %q", errOut)
 	}
 }
+
+func TestSudoArgsUsesResolvedExecutable(t *testing.T) {
+	got := sudoArgs("/home/user/.local/bin/mihomo-manager", nil, []string{"mihomo-manager", "status"})
+	want := []string{"/home/user/.local/bin/mihomo-manager", "status"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("sudoArgs = %v, want %v", got, want)
+	}
+
+	fallback := sudoArgs("", errors.New("unavailable"), []string{"mihomo-manager", "status"})
+	if len(fallback) != 2 || fallback[0] != "mihomo-manager" || fallback[1] != "status" {
+		t.Fatalf("sudoArgs fallback = %v, want [mihomo-manager status]", fallback)
+	}
+}
