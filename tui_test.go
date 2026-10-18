@@ -544,7 +544,7 @@ func tuiPageSamples() []struct {
 	}{
 		{"status", model{ready: true, status: running}, []string{"● running", "r) Refresh", "q) Quit"}},
 		{"config-subscription", model{ready: true, status: running, mode: modeConfig, configTab: configTabSubscription}, []string{"Subscription source", "e) Edit", "q) Back"}},
-		{"config-override", model{ready: true, status: running, mode: modeConfig, configTab: configTabOverride}, []string{"/opt/mihomo/etc/override.yaml", "q) Back"}},
+		{"config-override", model{ready: true, status: running, mode: modeConfig, configTab: configTabOverride}, []string{manager.OverrideFilePath, "q) Back"}},
 		{"config-preview", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview, previewContent: strings.Repeat("    key: value\n", 40)}, []string{"key: value", "q) Back"}},
 		{"config-preview-loading", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview, previewLoading: true}, []string{"Loading preview...", "q) Back"}},
 		{"config-preview-empty", model{ready: true, status: running, mode: modeConfig, configTab: configTabPreview}, []string{"(empty)", "r) Refresh", "q) Back"}},
