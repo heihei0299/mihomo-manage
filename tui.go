@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -313,7 +312,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		previousWidth := m.viewWidth()
 		m.width = msg.Width
 		m.height = msg.Height
-		if previousWidth != m.viewWidth() && m.previewTabActive() && m.previewOffset > 0 {
+		if previousWidth != m.viewWidth() && m.previewOffset > 0 && m.currentPage().preview {
 			// Re-wrap the preview around the source line that was at the top.
 			m.previewOffset = m.previewOffsetForWidth(previousWidth)
 		}
@@ -509,6 +508,14 @@ func (m model) updateConfirmUninstall(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateChooseVersion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.versionsErr != nil {
+		// The version list is replaced by a scrollable error report.
+		switch msg.String() {
+		case "up", "k", "down", "j", "pgup", "pgdown":
+			m.scrollBody(msg.String())
+			return m, nil
+		}
+	}
 	switch msg.String() {
 	case "down", "j":
 		if m.selectedIdx < len(m.versions)-1 {
@@ -767,54 +774,46 @@ func truncateLine(line string, width int) string {
 }
 
 // wrapText lays one logical line out over as many width-cell lines as needed.
-// Leading indentation is kept and repeated on continuation lines so YAML blocks
-// stay readable, tabs are expanded for display only, and widths are measured in
-// terminal cells (wide runes, combining marks and ANSI styles included). The
+// It is a hard wrap: every character survives, including leading indentation,
+// runs of spaces and trailing spaces, so configuration text can be rebuilt from
+// the screen lines. Tabs are expanded for display only and widths are measured
+// in terminal cells (wide runes, combining marks and ANSI styles included). The
 // source text itself is never modified.
 func wrapText(line string, width int) []string {
-	line = strings.ReplaceAll(line, "\t", "    ")
-	if width <= 0 {
-		return []string{""}
+	if width < 1 {
+		width = 1
 	}
+	line = strings.ReplaceAll(line, "\t", "    ")
 	if displayWidth(line) <= width {
 		return []string{line}
 	}
-	indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
-	indentWidth := displayWidth(indent)
-	if indentWidth >= width {
-		indent, indentWidth = "", 0
+	parts := strings.Split(ansi.Hardwrap(line, width, true), "\n")
+	if len(parts) == 0 {
+		return []string{""}
 	}
-	parts := strings.Split(ansi.Wrap(line[len(indent):], width-indentWidth, " "), "\n")
-	if indent != "" {
-		// The wrap above ran on the de-indented text, so the indentation is put
-		// back on every screen line to keep YAML blocks aligned.
-		for i := 0; i < len(parts); i++ {
-			if parts[i] != "" {
-				parts[i] = indent + parts[i]
-			}
-		}
-	}
-	// ansi.Wrap keeps escape sequences and wide runes intact, but a width
-	// smaller than one grapheme can still overflow: hard-wrap as a last resort.
-	wrapped := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if displayWidth(part) <= width {
-			wrapped = append(wrapped, part)
-			continue
-		}
-		wrapped = append(wrapped, strings.Split(ansi.Hardwrap(part, width, true), "\n")...)
-	}
-	return wrapped
+	return parts
 }
 
-// wrapLines wraps every logical line of text.
-func wrapLines(text string, width int) []string {
+// styleBlock wraps every logical line before styling it line by line, so each
+// rendered screen line opens and closes its own escape sequences and clipping
+// a line cannot lose a colour reset.
+func styleBlock(text string, width int, style lipgloss.Style) []string {
 	logical := strings.Split(text, "\n")
 	lines := make([]string, 0, len(logical))
 	for _, line := range logical {
-		lines = append(lines, wrapText(line, width)...)
+		for _, part := range wrapText(line, width) {
+			lines = append(lines, style.Render(part))
+		}
 	}
 	return lines
+}
+
+// firstLine returns the first line of text, for the one-line hint area.
+func firstLine(text string) string {
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		return text[:i]
+	}
+	return text
 }
 
 // layoutTokens arranges complete "key) action" tokens into as many lines as the
@@ -866,7 +865,7 @@ func shrinkHelp(lines []string, limit int, exit string, width int) []string {
 	return append(kept, truncateLine(exit, width))
 }
 
-// clipLines trims feedback to limit lines and marks the omitted remainder.
+// clipLines trims text to limit lines and marks the omitted remainder.
 func clipLines(lines []string, limit, width int) []string {
 	if limit <= 0 {
 		return nil
@@ -904,14 +903,16 @@ func joinLines(lines []string, width int) string {
 type page struct {
 	title      string
 	tabs       string
-	feedback   []string
+	summary    string
 	body       []string
+	tail       []string
 	list       *listSection
 	tokens     []string
 	exit       []string
 	scrollable bool
 	offset     int
 	origin     []int
+	preview    bool
 }
 
 // listSection is a selectable list whose window follows the selection so the
@@ -923,22 +924,28 @@ type listSection struct {
 }
 
 // frameInfo reports the body window that was rendered so the update path can
-// clamp reading offsets against the same budget.
+// clamp reading offsets against the same budget. preview marks a body that is
+// the wrapped configuration, which is the only body scrolled by previewOffset.
 type frameInfo struct {
 	valid      bool
 	bodyHeight int
 	offset     int
 	total      int
+	preview    bool
+	list       bool
 }
 
 // frameParts is the page content after the height budget has been applied.
 type frameParts struct {
 	header   []string
-	feedback []string
 	body     []string
+	tail     []string
+	position string
+	summary  []string
 	help     []string
 	offset   int
 	total    int
+	preview  bool
 }
 
 var scrollTokens = []string{"↑↓/jk) scroll", "PgUp/PgDn) page"}
@@ -957,16 +964,20 @@ func (m model) renderPage(p page) (string, frameInfo) {
 		return renderResizeHint(p, width, height), frameInfo{}
 	}
 	parts := m.layoutPage(p, width, height)
-	lines := make([]string, 0, len(parts.header)+len(parts.body)+len(parts.feedback)+len(parts.help))
+	lines := make([]string, 0, len(parts.header)+len(parts.body)+len(parts.tail)+len(parts.summary)+len(parts.help)+1)
 	lines = append(lines, parts.header...)
 	lines = append(lines, parts.body...)
-	bodyEnd := len(lines)
-	if bodyEnd > len(parts.header) && !p.scrollable && p.list == nil && parts.total > len(parts.body) {
+	if len(parts.body) > 0 && len(parts.body) < parts.total && !p.scrollable && p.list == nil {
 		// A clipped body on a non-scrollable page (the progress view) ends with
 		// an ellipsis instead of silently disappearing.
-		lines[bodyEnd-1] = truncateLine(lines[bodyEnd-1]+"…", width)
+		lines[len(lines)-1] = truncateLine(lines[len(lines)-1]+"…", width)
 	}
-	lines = append(lines, parts.feedback...)
+	bodyEnd := len(lines)
+	if parts.position != "" {
+		lines = append(lines, parts.position)
+	}
+	lines = append(lines, parts.tail...)
+	lines = append(lines, parts.summary...)
 	lines = append(lines, parts.help...)
 	if overflow := len(lines) - height; overflow > 0 {
 		// Defensive: the height budget above should already fit, but never paint
@@ -985,74 +996,92 @@ func (m model) renderPage(p page) (string, frameInfo) {
 		bodyHeight: len(parts.body),
 		offset:     parts.offset,
 		total:      parts.total,
+		preview:    parts.preview,
+		list:       p.list != nil,
 	}
 }
 
-// layoutPage resolves the height budget: the header, the feedback area and the
-// shortcut lines are measured first and the body receives the remainder.
+// layoutPage resolves the height budget. The header, the pinned tail, the
+// one-line summary and the source-range line are measured first and the body
+// receives the remainder; the shortcut block is measured once more when a
+// scrolling hint is needed. There is no retry loop, so the body window, the
+// reading offset and the footer always come from the same budget.
 func (m model) layoutPage(p page, width, height int) frameParts {
-	parts := frameParts{}
+	parts := frameParts{preview: p.preview, total: contentTotal(p)}
 	if p.title != "" {
 		parts.header = append(parts.header, truncateLine(styleTitle.Render(p.title), width))
 	}
 	if p.tabs != "" {
 		parts.header = append(parts.header, truncateLine(p.tabs, width))
 	}
-	feedback := []string{}
-	if len(p.feedback) > 0 {
-		feedback = wrapLines(strings.Join(p.feedback, "\n"), width)
+
+	pinned := len(p.tail)
+	summaryLines := 0
+	if p.summary != "" {
+		summaryLines = 1
+	}
+	positionLines := 0
+	if p.preview {
+		positionLines = 1
 	}
 
-	tokens := append([]string{}, p.tokens...)
-	for attempt := 0; attempt < 4; attempt++ {
-		help := layoutTokens(tokens, width)
-		available := height - len(parts.header) - len(help)
-		if available < 1 {
-			limit := height - len(parts.header) - 1
-			if limit < 1 {
-				limit = 1
-			}
-			help = shrinkHelp(help, limit, firstToken(p.exit), width)
-			available = height - len(parts.header) - len(help)
-			if available < 0 {
-				available = 0
-			}
+	base := append([]string{}, p.tokens...)
+	help := layoutTokens(base, width)
+	budget := func(helpLines []string) int {
+		return height - len(parts.header) - len(helpLines) - summaryLines - positionLines - pinned
+	}
+	bodyHeight := budget(help)
+	if p.scrollable && parts.total > bodyHeight {
+		help = layoutTokens(append(base, scrollTokens...), width)
+		bodyHeight = budget(help)
+	}
+	if bodyHeight < 0 {
+		// Extremely small frames keep the exit shortcut and drop the summary
+		// and the source-range line rather than the body.
+		limit := height - len(parts.header) - summaryLines - positionLines - pinned
+		if limit < 1 {
+			limit = 1
 		}
-		shownFeedback := feedback
-		// The hint area never crowds out the body: it may use at most half of
-		// the space that is left after the header and the shortcuts.
-		feedbackLimit := 0
-		if available > 1 {
-			feedbackLimit = max(1, available/2)
+		help = shrinkHelp(help, limit, firstToken(p.exit), width)
+		bodyHeight = budget(help)
+		if bodyHeight < 0 && summaryLines > 0 {
+			summaryLines = 0
+			bodyHeight = budget(help)
 		}
-		if len(shownFeedback) > feedbackLimit {
-			shownFeedback = clipLines(shownFeedback, feedbackLimit, width)
+		if bodyHeight < 0 && positionLines > 0 {
+			positionLines = 0
+			bodyHeight = budget(help)
 		}
-		bodyHeight := available - len(shownFeedback)
 		if bodyHeight < 0 {
 			bodyHeight = 0
 		}
-		body, offset, total := m.bodyWindow(p, bodyHeight)
+	}
 
-		next := append([]string{}, p.tokens...)
-		if p.scrollable && total > bodyHeight {
-			next = append(next, scrollTokens...)
-		}
-		if p.origin != nil && len(body) > 0 {
-			next = append([]string{m.previewPosition(p.origin, offset, len(body))}, next...)
-		}
-
-		parts.help = help
-		parts.feedback = shownFeedback
-		parts.body = body
-		parts.offset = offset
-		parts.total = total
-		if slices.Equal(next, tokens) {
-			break
-		}
-		tokens = next
+	body, offset, total := m.bodyWindow(p, bodyHeight)
+	parts.body = body
+	parts.offset = offset
+	parts.total = total
+	parts.help = help
+	parts.tail = append([]string{}, p.tail...)
+	if summaryLines > 0 {
+		parts.summary = []string{truncateLine(p.summary, width)}
+	}
+	if positionLines > 0 && len(body) > 0 {
+		parts.position = m.previewPosition(p.origin, offset, len(body))
 	}
 	return parts
+}
+
+// contentTotal is the number of body lines before windowing.
+func contentTotal(p page) int {
+	if p.list != nil {
+		total := len(p.list.prefix)
+		for _, item := range p.list.items {
+			total += len(item)
+		}
+		return total
+	}
+	return len(p.body)
 }
 
 // bodyWindow returns the body lines that fit in height cells.
@@ -1071,27 +1100,29 @@ func (m model) bodyWindow(p page, height int) ([]string, int, int) {
 	return lines, offset, len(p.body)
 }
 
-// listWindow windows a selectable list so the selected entry stays visible.
+// listWindow windows a selectable list so the selected entry stays visible. At
+// least one list row always wins over the installed summary.
 func listWindow(l *listSection, height int) ([]string, int, int) {
 	total := len(l.prefix)
 	for _, item := range l.items {
 		total += len(item)
 	}
-	if height <= len(l.prefix) {
+	if len(l.items) == 0 {
 		lines, _ := windowLines(l.prefix, 0, height)
 		return lines, 0, total
 	}
-	if len(l.items) == 0 {
-		return append([]string{}, l.prefix...), 0, total
-	}
 	selected := clampInt(l.selected, 0, len(l.items)-1)
+	lines := make([]string, 0, height)
+	if len(l.prefix) < height {
+		lines = append(lines, l.prefix...)
+	}
+	room := height - len(lines)
 	start := selected
 	needed := len(l.items[selected])
-	for start > 0 && needed+len(l.items[start-1]) <= height-len(l.prefix) {
+	for start > 0 && needed+len(l.items[start-1]) <= room {
 		start--
 		needed += len(l.items[start])
 	}
-	lines := append([]string{}, l.prefix...)
 	for i := start; i < len(l.items) && len(lines) < height; i++ {
 		lines = append(lines, l.items[i]...)
 	}
@@ -1113,22 +1144,31 @@ func (m model) previewPosition(origin []int, offset, visible int) string {
 	return fmt.Sprintf("lines %d-%d / %d", origin[start]+1, origin[end-1]+1, total)
 }
 
-// renderResizeHint replaces every page below the minimum layout size. Only the
-// exit shortcut of the current page stays available at that size.
+// renderResizeHint replaces every page below the minimum layout size. The exit
+// shortcut of the current page is reserved first; the explanation and the title
+// use whatever remains, and the title is dropped before the explanation.
 func renderResizeHint(p page, width, height int) string {
-	lines := make([]string, 0, 4)
-	if p.title != "" && height >= 3 {
-		lines = append(lines, truncateLine(styleTitle.Render(p.title), width))
-	}
-	message := fmt.Sprintf("Terminal too small (%dx%d). Resize to at least %dx%d.",
-		width, height, minimumLayoutWidth, minimumLayoutHeight)
-	lines = append(lines, wrapText(message, width)...)
-	if len(lines) >= height {
-		return joinLines(lines[:max(0, height)], width)
+	if height <= 0 {
+		return ""
 	}
 	help := layoutTokens(p.exit, width)
-	if room := height - len(lines); len(help) > room {
-		help = help[len(help)-room:]
+	if len(help) > height {
+		help = help[:height]
+	}
+	lines := make([]string, 0, height)
+	remaining := height - len(help)
+	if remaining > 0 {
+		message := fmt.Sprintf("Terminal too small (%dx%d). Resize to at least %dx%d.",
+			width, height, minimumLayoutWidth, minimumLayoutHeight)
+		messageLines := wrapText(message, width)
+		if p.title != "" && remaining >= len(messageLines)+1 {
+			lines = append(lines, truncateLine(styleTitle.Render(p.title), width))
+		}
+		room := remaining - len(lines)
+		if len(messageLines) > room {
+			messageLines = clipLines(messageLines, room, width)
+		}
+		lines = append(lines, messageLines...)
 	}
 	lines = append(lines, help...)
 	return joinLines(lines, width)
@@ -1150,10 +1190,13 @@ func (m model) currentPage() page {
 		}
 	case m.statusErr != nil:
 		return page{
-			title:    titleStatus,
-			feedback: []string{styleError.Render("Error: " + m.statusErr.Error())},
-			tokens:   []string{"r) Retry", "q) Quit"},
-			exit:     []string{"q) Quit"},
+			title:      titleStatus,
+			summary:    styleError.Render("✗ Error: " + firstLine(m.statusErr.Error())),
+			body:       styleBlock("Error: "+m.statusErr.Error(), m.viewWidth(), styleError),
+			scrollable: true,
+			offset:     m.readOffset,
+			tokens:     []string{"r) Retry", "q) Quit"},
+			exit:       []string{"q) Quit"},
 		}
 	case m.executing != actNone:
 		return m.executingPage()
@@ -1232,17 +1275,13 @@ func (m model) executingPage() page {
 	frame := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 	body := []string{styleAccent.Render(label + " " + frame)}
 	if m.phaseMsg != "" {
-		for _, line := range wrapText(fmt.Sprintf("[%s] %s", m.phaseLabel, m.phaseMsg), width) {
-			body = append(body, styleDim.Render(line))
-		}
+		body = append(body, styleBlock(fmt.Sprintf("[%s] %s", m.phaseLabel, m.phaseMsg), width, styleDim)...)
 	}
+	tail := []string{}
 	if !m.startedAt.IsZero() {
-		elapsed := "elapsed " + time.Since(m.startedAt).Round(time.Second).String()
-		for _, line := range wrapText(elapsed, width) {
-			body = append(body, styleDim.Render(line))
-		}
+		tail = append(tail, styleDim.Render("elapsed "+time.Since(m.startedAt).Round(time.Second).String()))
 	}
-	return page{title: titleStatus, body: body}
+	return page{title: titleStatus, body: body, tail: tail}
 }
 
 func (m model) uninstallPage() page {
@@ -1267,22 +1306,29 @@ func (m model) uninstallPage() page {
 }
 
 func (m model) versionChoicePage() page {
+	width := m.viewWidth()
 	p := page{
-		title:  titleVersions,
-		tokens: []string{"↑↓) select", "Enter) confirm", "q) cancel"},
-		exit:   []string{"q) cancel"},
+		title:      titleVersions,
+		scrollable: true,
+		offset:     m.readOffset,
+		tokens:     []string{"↑↓) select", "Enter) confirm", "q) cancel"},
+		exit:       []string{"q) cancel"},
 	}
 	prefix := []string{}
 	if m.status != nil && m.status.Version != "" {
-		prefix = wrapText("installed: "+m.status.Version, m.viewWidth())
+		prefix = []string{truncateLine("installed: "+m.status.Version, width)}
 	}
 	switch {
 	case m.versionsErr != nil:
-		p.feedback = []string{styleError.Render("Error loading versions: " + m.versionsErr.Error())}
-		p.body = prefix
+		p.body = append(prefix, "")
+		p.body = append(p.body, styleBlock("Error loading versions: "+m.versionsErr.Error(), width, styleError)...)
+		p.summary = styleError.Render("✗ Version list unavailable")
 	case len(m.versions) == 0:
 		p.body = append(prefix, "No releases available.")
 	default:
+		// The list itself is navigated by the selection keys, so it must not
+		// advertise the body scrolling shortcuts.
+		p.scrollable = false
 		p.list = &listSection{prefix: prefix, items: m.versionItems(), selected: m.selectedIdx}
 	}
 	return p
@@ -1332,23 +1378,38 @@ func (m model) statusPage() page {
 		return p
 	}
 	p.body = m.statusCard()
-	p.feedback = m.statusFeedback()
+	p.body = append(p.body, m.statusDetails(m.viewWidth())...)
+	p.summary = m.statusSummary()
 	p.tokens = statusTokens(m.status)
 	return p
 }
 
-func (m model) statusFeedback() []string {
-	feedback := make([]string, 0, 2)
+// statusDetails keeps the complete error text in the scrollable body so it can
+// be read instead of being dropped by the hint area.
+func (m model) statusDetails(width int) []string {
+	details := []string{}
 	if m.configStatus.ErrorSummary != "" {
-		feedback = append(feedback, styleError.Render("Config error: "+m.configStatus.ErrorSummary))
+		details = append(details, "")
+		details = append(details, styleBlock("Config error: "+m.configStatus.ErrorSummary, width, styleError)...)
 	}
-	switch m.execResult {
-	case "success":
-		feedback = append(feedback, styleSuccess.Render("✓ Operation succeeded"))
-	case "failed":
-		feedback = append(feedback, styleError.Render(fmt.Sprintf("✗ %v", m.actionErr)))
+	if m.execResult == "failed" && m.actionErr != nil {
+		details = append(details, "")
+		details = append(details, styleBlock("✗ "+m.actionErr.Error(), width, styleError)...)
 	}
-	return feedback
+	return details
+}
+
+// statusSummary is the single line shown in the fixed hint area.
+func (m model) statusSummary() string {
+	switch {
+	case m.execResult == "success":
+		return styleSuccess.Render("✓ Operation succeeded")
+	case m.execResult == "failed" && m.actionErr != nil:
+		return styleError.Render("✗ " + firstLine(m.actionErr.Error()))
+	case m.configStatus.ErrorSummary != "":
+		return styleError.Render("✗ Config error: " + firstLine(m.configStatus.ErrorSummary))
+	}
+	return ""
 }
 
 func (m model) statusCells() []textCell {
@@ -1535,7 +1596,7 @@ func (m model) configPage() page {
 		offset:     m.readOffset,
 		exit:       []string{"q) Back"},
 	}
-	p.feedback = m.configFeedback()
+	p.summary = m.configSummary()
 	width := m.viewWidth()
 	switch m.configTab {
 	case configTabSubscription:
@@ -1552,17 +1613,24 @@ func (m model) configPage() page {
 	case configTabPreview:
 		p = m.previewPage(p)
 	}
+	if m.execResult == "failed" && m.actionErr != nil {
+		p.body = append(p.body, "")
+		p.body = append(p.body, styleBlock("✗ "+m.actionErr.Error(), width, styleError)...)
+	}
 	return p
 }
 
-func (m model) configFeedback() []string {
+func (m model) configSummary() string {
 	switch m.execResult {
 	case "success":
-		return []string{styleSuccess.Render("✓ Configuration updated")}
+		return styleSuccess.Render("✓ Configuration updated")
 	case "failed":
-		return []string{styleError.Render(fmt.Sprintf("✗ %v", m.actionErr))}
+		if m.actionErr != nil {
+			return styleError.Render("✗ " + firstLine(m.actionErr.Error()))
+		}
+		return styleError.Render("✗ Configuration update failed")
 	}
-	return nil
+	return ""
 }
 
 func (m model) configTabsLine() string {
@@ -1579,10 +1647,14 @@ func (m model) configTabsLine() string {
 }
 
 func (m model) previewPage(p page) page {
+	width := m.viewWidth()
 	switch {
 	case m.previewErr != nil:
-		p.feedback = append(p.feedback, styleError.Render("✗ "+m.previewErr.Error()))
+		p.body = styleBlock("✗ "+m.previewErr.Error(), width, styleError)
+		p.summary = styleError.Render("✗ Preview error")
 		p.tokens = []string{"r) Retry", "q) Back"}
+		p.scrollable = true
+		p.offset = m.readOffset
 	case m.previewContent == "" && m.previewLoading:
 		p.body = []string{styleDim.Render("Loading preview...")}
 		p.tokens = []string{"q) Back"}
@@ -1590,8 +1662,9 @@ func (m model) previewPage(p page) page {
 		p.body = []string{styleDim.Render("(empty)")}
 		p.tokens = []string{"r) Refresh", "q) Back"}
 	default:
-		p.body, p.origin = wrapPreview(m.previewContent, m.viewWidth())
+		p.body, p.origin = wrapPreview(m.previewContent, width)
 		p.offset = m.previewOffset
+		p.preview = true
 		p.tokens = []string{"r) Refresh", "q) Back"}
 	}
 	return p
@@ -1685,10 +1758,6 @@ func windowLines(lines []string, offset, height int) ([]string, int) {
 	return lines[offset:end], offset
 }
 
-func (m model) previewTabActive() bool {
-	return m.mode == modeConfig && m.configTab == configTabPreview
-}
-
 func (m *model) resetViewOffsets() {
 	m.readOffset = 0
 	m.previewOffset = 0
@@ -1701,13 +1770,14 @@ func (m model) currentFrame() frameInfo {
 }
 
 // clampViewOffset keeps the stored reading offset inside the current window,
-// which is what a terminal resize changes.
+// which is what a terminal resize changes. The offset used by the last frame is
+// authoritative, so the stored value always matches what is on screen.
 func (m *model) clampViewOffset() {
 	info := m.currentFrame()
-	if !info.valid {
+	if !info.valid || info.list {
 		return
 	}
-	if m.previewTabActive() {
+	if info.preview {
 		m.previewOffset = info.offset
 		return
 	}
@@ -1715,6 +1785,8 @@ func (m *model) clampViewOffset() {
 }
 
 // scrollBody moves the reading offset of the page body by one line or one page.
+// The preview body (and only the preview body) scrolls with previewOffset, so an
+// error page shown inside the Preview tab still scrolls normally.
 func (m *model) scrollBody(key string) {
 	info := m.currentFrame()
 	if !info.valid || info.total <= info.bodyHeight {
@@ -1727,13 +1799,13 @@ func (m *model) scrollBody(key string) {
 	case "down", "j":
 		step = 1
 	case "pgup":
-		step = -info.bodyHeight
+		step = -max(1, info.bodyHeight)
 	case "pgdown":
-		step = info.bodyHeight
+		step = max(1, info.bodyHeight)
 	default:
 		return
 	}
-	if m.previewTabActive() {
+	if info.preview {
 		m.previewOffset += step
 	} else {
 		m.readOffset += step

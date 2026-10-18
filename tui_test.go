@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/heihei0299/mihomo-manage/internal/manager"
 )
@@ -714,9 +718,7 @@ func TestTUIPreviewWrapsAndMapsSourceLines(t *testing.T) {
 			t.Fatalf("source line mapping is not monotonic: %v", origin)
 		}
 	}
-	got := strings.Join(strings.Fields(ansi.Strip(strings.Join(screen, "\n"))), "")
-	want := strings.Join(strings.Fields(content), "")
-	if got != want {
+	if got, want := rebuildPreviewSource(screen, origin), content; got != want {
 		t.Fatalf("preview content changed\n got %q\nwant %q", got, want)
 	}
 	if content != before {
@@ -985,25 +987,36 @@ func TestTUIKeysStillNavigate(t *testing.T) {
 	}
 }
 
-func TestTUIExecutingMessageEndsWithEllipsis(t *testing.T) {
+func TestTUIProgressKeepsPhaseAndElapsed(t *testing.T) {
 	m := model{
 		ready:      true,
 		executing:  actUpgrade,
 		phaseLabel: "fetch",
 		phaseMsg:   strings.Repeat("downloading mihomo ", 100),
-		startedAt:  time.Now(),
+		startedAt:  time.Now().Add(-3 * time.Second),
 		width:      60,
 		height:     16,
 	}
 	view := m.View()
 	assertFrame(t, view, 60, 16)
-	if !strings.Contains(view, "[fetch]") {
-		t.Fatalf("progress view should keep the phase label:\n%s", view)
+	for _, want := range []string{"upgrading...", "[fetch]", "elapsed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("progress view should show %q:\n%s", want, view)
+		}
 	}
 	lines := strings.Split(view, "\n")
 	last := strings.TrimRight(ansi.Strip(lines[len(lines)-1]), " ")
-	if !strings.HasSuffix(last, "…") {
-		t.Fatalf("clipped progress message should end with an ellipsis, got %q\n%s", last, view)
+	if !strings.Contains(last, "elapsed") {
+		t.Fatalf("elapsed time must stay on the last line, got %q:\n%s", last, view)
+	}
+	clipped := false
+	for _, line := range lines {
+		if strings.HasSuffix(strings.TrimRight(ansi.Strip(line), " "), "…") {
+			clipped = true
+		}
+	}
+	if !clipped {
+		t.Fatalf("clipped phase message should end with an ellipsis:\n%s", view)
 	}
 }
 
@@ -1046,28 +1059,91 @@ func TestTUIViewHasNoColourEscapeByDefault(t *testing.T) {
 	}
 }
 
-func TestTUIStatusFeedbackClipsWithoutBreakingFrame(t *testing.T) {
-	summary := strings.Repeat("config validation failed at line 4; ", 12)
-	m := model{
-		ready:        true,
-		status:       &manager.Status{Installed: true, InstanceState: manager.Running},
-		configStatus: manager.ConfigApplyStatus{State: manager.ConfigValidationFailed, ErrorSummary: summary},
-		width:        60,
-		height:       16,
+func TestTUILongErrorsStayReadable(t *testing.T) {
+	const marker = "ZZ-END-OF-ERROR-ZZ"
+	details := strings.Repeat("upstream returned an unexpected response at line 4; ", 40) + marker
+	running := &manager.Status{Installed: true, InstanceState: manager.Running}
+	cases := []struct {
+		name  string
+		m     model
+		check func(*testing.T, model)
+	}{
+		{
+			name: "status-config",
+			m: model{ready: true, status: running,
+				configStatus: manager.ConfigApplyStatus{State: manager.ConfigValidationFailed, ErrorSummary: details}},
+			check: func(t *testing.T, m model) {
+				if m.readOffset == 0 {
+					t.Fatalf("status details should scroll with the reading offset")
+				}
+			},
+		},
+		{
+			name: "status-action",
+			m: model{ready: true, status: running,
+				execResult: "failed", actionErr: errors.New(details)},
+			check: func(t *testing.T, m model) {
+				if m.readOffset == 0 {
+					t.Fatalf("action details should scroll with the reading offset")
+				}
+			},
+		},
+		{
+			name: "config",
+			m: model{ready: true, mode: modeConfig, configTab: configTabSubscription,
+				execResult: "failed", actionErr: errors.New(details)},
+			check: func(t *testing.T, m model) {
+				if m.readOffset == 0 {
+					t.Fatalf("config error details should scroll with the reading offset")
+				}
+			},
+		},
+		{
+			name: "preview",
+			m: model{ready: true, mode: modeConfig, configTab: configTabPreview,
+				previewErr: errors.New(details)},
+			check: func(t *testing.T, m model) {
+				if m.readOffset == 0 {
+					t.Fatalf("a preview error should scroll with the reading offset")
+				}
+				if m.previewOffset != 0 {
+					t.Fatalf("previewOffset = %d, want 0 for an error page", m.previewOffset)
+				}
+			},
+		},
+		{
+			name: "versions",
+			m: model{ready: true, mode: modeChooseVersion, status: running,
+				versionsErr: errors.New(details)},
+			check: func(t *testing.T, m model) {
+				if m.readOffset == 0 {
+					t.Fatalf("version error details should scroll with the reading offset")
+				}
+			},
+		},
 	}
-	view := m.View()
-	assertFrame(t, view, 60, 16)
-	if !strings.Contains(view, "Config error:") {
-		t.Fatalf("multi-line feedback should keep its label:\n%s", view)
-	}
-	clipped := false
-	for _, line := range strings.Split(view, "\n") {
-		if strings.HasSuffix(strings.TrimRight(ansi.Strip(line), " "), "…") {
-			clipped = true
-		}
-	}
-	if !clipped {
-		t.Fatalf("feedback taller than the hint area should be marked as clipped:\n%s", view)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.m
+			m.width, m.height = 60, 16
+			view := m.View()
+			assertFrame(t, view, 60, 16)
+			if strings.Contains(strings.ReplaceAll(ansi.Strip(view), "\n", ""), marker) {
+				t.Fatalf("long error should start at the top:\n%s", view)
+			}
+			for i := 0; i < 200; i++ {
+				updated, _ := m.Update(tuiKey("pgdown"))
+				m = updated.(model)
+			}
+			view = m.View()
+			assertFrame(t, view, 60, 16)
+			if !strings.Contains(strings.ReplaceAll(ansi.Strip(view), "\n", ""), marker) {
+				t.Fatalf("scrolling should reach the end of the error:\n%s", view)
+			}
+			if tc.check != nil {
+				tc.check(t, m)
+			}
+		})
 	}
 }
 
@@ -1082,5 +1158,285 @@ func TestUITruncateLineKeepsStyleWidth(t *testing.T) {
 	}
 	if short := "\x1b[32mok\x1b[0m"; truncateLine(short, 10) != short {
 		t.Fatalf("short styled line should be left untouched: %q", truncateLine(short, 10))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Second-round regressions
+// ---------------------------------------------------------------------------
+
+// rebuildPreviewSource joins the wrapped screen lines back into source lines so
+// a preview can be compared byte for byte with its input.
+func rebuildPreviewSource(screen []string, origin []int) string {
+	var b strings.Builder
+	previous := -1
+	for i, line := range screen {
+		if origin[i] != previous {
+			if previous >= 0 {
+				b.WriteByte('\n')
+			}
+			previous = origin[i]
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func TestTUIPreviewKeepsWhitespaceExactly(t *testing.T) {
+	content := strings.Join([]string{
+		`    key: "a  value   with   runs"`,
+		`      - name: "x  y"   # trailing comment`,
+		"\tindented\tby\ttabs",
+		"",
+		"    ",
+		`  long: "` + strings.Repeat("space filled ", 40) + `"`,
+	}, "\n")
+	before := content
+	screen, origin := wrapPreview(content, 60)
+	if got, want := rebuildPreviewSource(screen, origin), strings.ReplaceAll(content, "\t", "    "); got != want {
+		t.Fatalf("preview lost whitespace\n got %q\nwant %q", got, want)
+	}
+	if content != before {
+		t.Fatalf("preview source was modified: %q", content)
+	}
+	if len(origin) <= len(strings.Split(content, "\n")) {
+		t.Fatalf("long line did not wrap: %d screen lines", len(origin))
+	}
+}
+
+func TestTUIPreviewFooterMatchesVisibleLines(t *testing.T) {
+	source := make([]string, 100)
+	for i := range source {
+		source[i] = fmt.Sprintf("line-%03d", i+1)
+	}
+	linePattern := regexp.MustCompile(`^line-(\d{3})$`)
+	cases := []struct{ width, height, offset int }{
+		{74, 23, 80},
+		{74, 23, 0},
+		{100, 40, 9},
+		{60, 16, 95},
+		{80, 24, 50},
+	}
+	for _, tc := range cases {
+		m := model{
+			ready:          true,
+			mode:           modeConfig,
+			configTab:      configTabPreview,
+			previewContent: strings.Join(source, "\n"),
+			previewOffset:  tc.offset,
+			width:          tc.width,
+			height:         tc.height,
+		}
+		view := m.View()
+		assertFrame(t, view, tc.width, tc.height)
+
+		var footer string
+		var visible []int
+		for _, raw := range strings.Split(view, "\n") {
+			line := ansi.Strip(raw)
+			if strings.HasPrefix(line, "lines ") {
+				footer = line
+			}
+			if match := linePattern.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
+				var number int
+				fmt.Sscanf(match[1], "%d", &number)
+				visible = append(visible, number)
+			}
+		}
+		if footer == "" {
+			t.Fatalf("%dx%d offset %d should show a source range footer:\n%s", tc.width, tc.height, tc.offset, view)
+		}
+		var start, end, total int
+		if _, err := fmt.Sscanf(footer, "lines %d-%d / %d", &start, &end, &total); err != nil {
+			t.Fatalf("unparsable footer %q: %v", footer, err)
+		}
+		if total != len(source) {
+			t.Fatalf("footer total = %d, want %d", total, len(source))
+		}
+		if len(visible) != end-start+1 {
+			t.Fatalf("footer says %d-%d but %d content lines are visible:\n%s", start, end, len(visible), view)
+		}
+		for i, number := range visible {
+			if number != start+i {
+				t.Fatalf("visible lines are not contiguous from %d: %v", start, visible)
+			}
+		}
+	}
+}
+
+func TestTUIVersionListKeepsSelectionWithLongVersion(t *testing.T) {
+	versions := make([]manager.VersionInfo, 30)
+	for i := range versions {
+		versions[i] = manager.VersionInfo{Tag: fmt.Sprintf("v0.%d.0", i+1)}
+	}
+	m := model{
+		ready:       true,
+		status:      &manager.Status{Installed: true, InstanceState: manager.Running, Version: strings.Repeat("v-long-", 40)},
+		mode:        modeChooseVersion,
+		versions:    versions,
+		selectedIdx: 0,
+		width:       60,
+		height:      16,
+	}
+	view := m.View()
+	assertFrame(t, view, 60, 16)
+	if !strings.Contains(view, "> v0.1.0") {
+		t.Fatalf("first version should stay visible:\n%s", view)
+	}
+	installedLines := 0
+	for _, line := range strings.Split(ansi.Strip(view), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "installed:") {
+			installedLines++
+		}
+	}
+	if installedLines != 1 {
+		t.Fatalf("installed summary should stay on one line, saw %d:\n%s", installedLines, view)
+	}
+	m.selectedIdx = 29
+	view = m.View()
+	if !strings.Contains(view, "> v0.30.0") {
+		t.Fatalf("last version should stay visible:\n%s", view)
+	}
+	m.selectedIdx = 15
+	view = m.View()
+	if !strings.Contains(view, "> v0.16.0") {
+		t.Fatalf("middle selection should stay visible:\n%s", view)
+	}
+}
+
+func TestTUIResizeHintKeepsExitShortcut(t *testing.T) {
+	cases := []struct {
+		width, height int
+		m             model
+		exit          string
+	}{
+		{40, 2, model{ready: true, status: &manager.Status{Installed: true, InstanceState: manager.Running}}, "q)"},
+		{20, 3, model{ready: true, mode: modeConfirmUninstall, status: &manager.Status{Installed: true}}, "n)"},
+		{10, 3, model{ready: true, mode: modeConfig, configTab: configTabPreview}, "q)"},
+		{5, 1, model{ready: true, status: &manager.Status{Installed: true, InstanceState: manager.Running}}, "q"},
+	}
+	for _, tc := range cases {
+		m := tc.m
+		m.width, m.height = tc.width, tc.height
+		view := m.View()
+		assertFrame(t, view, tc.width, tc.height)
+		flat := strings.ReplaceAll(ansi.Strip(view), "\n", " ")
+		if !strings.Contains(flat, tc.exit) {
+			t.Fatalf("%dx%d should keep the exit shortcut %q:\n%s", tc.width, tc.height, tc.exit, view)
+		}
+		if !strings.Contains(flat, "Terminal too small") && tc.width > 10 {
+			t.Fatalf("%dx%d should explain the required size:\n%s", tc.width, tc.height, view)
+		}
+	}
+}
+
+// styleClosed reports whether a rendered line resets every style it opened, so
+// no colour can leak into the next line of the frame.
+func styleClosed(line string) bool {
+	lastOpen, lastReset := -1, -1
+	for i := 0; i+1 < len(line); {
+		if line[i] == 0x1b && line[i+1] == '[' {
+			end := strings.IndexByte(line[i+2:], 'm')
+			if end < 0 {
+				return false
+			}
+			params := line[i+2 : i+2+end]
+			if params == "0" || params == "" {
+				lastReset = i
+			} else {
+				lastOpen = i
+			}
+			i += 2 + end + 1
+			continue
+		}
+		i++
+	}
+	return lastOpen <= lastReset
+}
+
+func assertStylesClosed(t *testing.T, view string) {
+	t.Helper()
+	for i, line := range strings.Split(view, "\n") {
+		if !styleClosed(line) {
+			t.Fatalf("line %d leaves a style open, colours would leak: %q", i, line)
+		}
+	}
+}
+
+func TestTUIStylesCloseOnEveryLine(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+
+	details := strings.Repeat("upstream returned an unexpected response at line 4; ", 40) + "ZZ-END-ZZ"
+	m := model{
+		ready:        true,
+		status:       &manager.Status{Installed: true, InstanceState: manager.Running},
+		configStatus: manager.ConfigApplyStatus{State: manager.ConfigValidationFailed, ErrorSummary: details},
+		width:        60,
+		height:       16,
+	}
+	view := m.View()
+	if !strings.Contains(view, "\x1b[") {
+		t.Fatalf("truecolor profile should emit escapes:\n%q", view)
+	}
+	assertStylesClosed(t, view)
+	for i := 0; i < 40; i++ {
+		updated, _ := m.Update(tuiKey("pgdown"))
+		m = updated.(model)
+	}
+	assertStylesClosed(t, m.View())
+
+	updated, _ := m.Update(tuiKey("c"))
+	assertStylesClosed(t, updated.(model).View())
+
+	uninstall := model{ready: true, status: m.status, mode: modeConfirmUninstall, keepBackup: true, width: 60, height: 16}
+	assertStylesClosed(t, uninstall.View())
+
+	versions := model{ready: true, status: m.status, mode: modeChooseVersion,
+		versions: []manager.VersionInfo{{Tag: "v1.19.0"}, {Tag: "v1.19.1"}}, selectedIdx: 1, width: 60, height: 16}
+	assertStylesClosed(t, versions.View())
+
+	schedule := model{ready: true, status: m.status, mode: modeSchedule, scheduleInterval: time.Hour, scheduleActive: true, selectedIdx: 1, width: 60, height: 16}
+	assertStylesClosed(t, schedule.View())
+
+	progress := model{ready: true, executing: actUpgrade, phaseLabel: "fetch",
+		phaseMsg: strings.Repeat("downloading mihomo ", 50), startedAt: time.Now(), width: 60, height: 16}
+	assertStylesClosed(t, progress.View())
+}
+
+func envWithOverrides(extra map[string]string) []string {
+	out := make([]string, 0, len(os.Environ())+len(extra))
+	for _, kv := range os.Environ() {
+		key := strings.SplitN(kv, "=", 2)[0]
+		if _, replaced := extra[key]; !replaced {
+			out = append(out, kv)
+		}
+	}
+	for key, value := range extra {
+		out = append(out, key+"="+value)
+	}
+	return out
+}
+
+func TestTUINoColorEnvironment(t *testing.T) {
+	if os.Getenv("TUI_NO_COLOR_CHILD") == "1" {
+		m := model{ready: true, status: &manager.Status{Installed: true, InstanceState: manager.Running}, width: 80, height: 24}
+		view := m.View()
+		if strings.Contains(view, "\x1b[") {
+			t.Fatalf("NO_COLOR should suppress styling, got %q", view)
+		}
+		return
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestTUINoColorEnvironment$")
+	command.Env = envWithOverrides(map[string]string{
+		"TUI_NO_COLOR_CHILD": "1",
+		"NO_COLOR":           "1",
+		"CLICOLOR_FORCE":     "1",
+		"TERM":               "xterm-256color",
+		"COLORTERM":          "truecolor",
+	})
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("NO_COLOR child process failed: %v\n%s", err, output)
 	}
 }
