@@ -679,6 +679,7 @@ Jul 02 10:00:00 host mihomo[12345]: [INFO] ...
 ### Executing 视图
 
 - 触发操作后显示 spinner、操作名称、当前阶段进度消息和已耗时
+- 按 <kbd>4</kbd> 执行 Reload 后显示独立的 `Reload` 页面和 `Reloading mihomo configuration...`；加载页至少可见 600ms，快速成功或失败也不会跳过；业务调用立即执行，耗时超过 600ms 时不再额外延迟结果
 - spinner、操作名称与耗时始终可见；只有阶段消息被裁切，过长的阶段消息在剩余空间内折行并以省略号收尾
 - 完成后自动返回 Status 视图
 - 完成后在固定结果区显示具体命令名称与成功／失败，例如 `✓ Reload succeeded` 或 `✗ Reload failed: <原因>`；完整错误可在正文滚动阅读

@@ -115,7 +115,11 @@ var (
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-const spinnerInterval = 80 * time.Millisecond
+const (
+	spinnerInterval = 80 * time.Millisecond
+	// Keep fast Reload operations visible without delaying the service call.
+	reloadFeedbackMinDuration = 600 * time.Millisecond
+)
 
 type tickMsg struct{}
 
@@ -465,6 +469,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, msg.nextCmd
 
 	case actionDoneMsg:
+		if msg.action == actReload && m.executing == actReload {
+			if remaining := reloadFeedbackMinDuration - time.Since(m.startedAt); remaining > 0 {
+				return m, tea.Tick(remaining, func(time.Time) tea.Msg { return msg })
+			}
+		}
 		m.executing = actNone
 		m.mode = modeStatus
 		m.recordResult(actionLabels[msg.action], msg.err)
@@ -821,6 +830,7 @@ const (
 
 const (
 	titleStatus    = "mihomo-manager · Status"
+	titleReload    = "mihomo-manager · Reload"
 	titleConfig    = "mihomo-manager · Configuration"
 	titleVersions  = "mihomo-manager · Select version"
 	titleSchedule  = "mihomo-manager · Schedule subscription update"
@@ -1420,6 +1430,7 @@ func (m model) executingView() string {
 }
 
 func (m model) executingPage() page {
+	title := titleStatus
 	label := "working..."
 	switch m.executing {
 	case actStart:
@@ -1429,7 +1440,8 @@ func (m model) executingPage() page {
 	case actRestart:
 		label = "restarting..."
 	case actReload:
-		label = "reloading..."
+		title = titleReload
+		label = "Reloading mihomo configuration..."
 	case actInstall:
 		label = "installing..."
 	case actUpgrade:
@@ -1451,7 +1463,7 @@ func (m model) executingPage() page {
 	if !m.startedAt.IsZero() {
 		tail = append(tail, styleDim.Render("elapsed "+time.Since(m.startedAt).Round(time.Second).String()))
 	}
-	return page{title: titleStatus, body: body, tail: tail}
+	return page{title: title, body: body, tail: tail}
 }
 
 func (m model) uninstallPage() page {

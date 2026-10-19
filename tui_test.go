@@ -347,6 +347,76 @@ func TestTUIRestartCallsServiceControl(t *testing.T) {
 	}
 }
 
+func TestTUIReloadLoadingFeedback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"success", nil, "✓ Reload succeeded"},
+		{"failure", errors.New("reload rejected"), "✗ Reload failed: reload rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := &tuiMockControl{reloadErr: tc.err}
+			m := model{
+				ready: true, width: 80, height: 24,
+				status:  &manager.Status{Installed: true, InstanceState: manager.Running},
+				control: ctrl, config: &tuiMockConfig{},
+			}
+			updated, dispatch := m.Update(tuiKey("4"))
+			m = updated.(model)
+			if dispatch == nil || m.executing != actReload {
+				t.Fatal("4 should start Reload")
+			}
+			if view := ansi.Strip(m.View()); !strings.Contains(view, "mihomo-manager · Reload") || !strings.Contains(view, "Reloading mihomo configuration...") {
+				t.Errorf("Reload should show a concrete loading page:\n%s", view)
+			}
+
+			// An immediately completed service call must not erase the loading page
+			// before the renderer can paint it. The business operation is not delayed.
+			done := execActionCmd(ctrl, nil, actReload, nil, "", false)()
+			updated, finishFeedback := m.Update(done)
+			m = updated.(model)
+			if !ctrl.reloadCalled || m.executing != actReload || m.execResult != "" || finishFeedback == nil {
+				t.Fatal("fast Reload completion should keep loading feedback visible, not immediately return to Status")
+			}
+			updated, next := m.Update(tickMsg{})
+			m = updated.(model)
+			if m.executing != actReload || next == nil {
+				t.Fatal("loading feedback should keep animating until its display interval elapses")
+			}
+			for _, size := range [][2]int{{80, 24}, {60, 16}} {
+				m.width, m.height = size[0], size[1]
+				view := ansi.Strip(m.View())
+				assertFrame(t, view, size[0], size[1])
+				if !strings.Contains(view, "Reloading mihomo configuration...") {
+					t.Fatalf("loading description missing at %dx%d:\n%s", size[0], size[1], view)
+				}
+			}
+
+			completion := finishFeedback()
+			if _, ok := completion.(actionDoneMsg); !ok {
+				t.Fatalf("loading feedback should defer the original completion, got %T", completion)
+			}
+			if time.Since(m.startedAt) < reloadFeedbackMinDuration {
+				t.Fatal("Reload loading page disappeared before its minimum display interval")
+			}
+			updated, refresh := m.Update(completion)
+			m = updated.(model)
+			if m.executing != actNone || refresh == nil {
+				t.Fatal("completed Reload should leave the loading page and refresh status after its display interval")
+			}
+			if view := ansi.Strip(m.View()); !strings.Contains(view, tc.want) {
+				t.Fatalf("loading completion lost the command result:\n%s", view)
+			}
+			updated, _ = m.Update(refresh())
+			if view := ansi.Strip(updated.View()); !strings.Contains(view, tc.want) {
+				t.Fatalf("status refresh lost the Reload result:\n%s", view)
+			}
+		})
+	}
+}
+
 func TestTUIReloadFeedback(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -368,6 +438,8 @@ func TestTUIReloadFeedback(t *testing.T) {
 			if m.executing != actReload || dispatch == nil {
 				t.Fatal("4 should dispatch Reload")
 			}
+			// Exercise an operation that has already outlasted the loading interval.
+			m.startedAt = time.Now().Add(-time.Second)
 			done := execActionCmd(ctrl, nil, actReload, nil, "", false)()
 			updated, refresh := m.Update(done)
 			m = updated.(model)
