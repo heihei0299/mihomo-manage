@@ -133,7 +133,7 @@ func TestTUIStatusShowsConfigApplyFailure(t *testing.T) {
 		},
 	}
 
-	if got := m.statusView(); !strings.Contains(got, "config: apply-failed") {
+	if got := m.statusView(); !strings.Contains(got, "Config: apply-failed") {
 		t.Fatalf("status view = %q, want apply-failed status", got)
 	}
 }
@@ -164,7 +164,7 @@ func TestTUIScheduleStatusShowsLegacy(t *testing.T) {
 		scheduleErr: fmt.Errorf("schedule lookup: %w", manager.LegacyScheduleError{Interval: time.Hour}),
 	}
 
-	if got := m.statusView(); !strings.Contains(got, "schedule: legacy") {
+	if got := m.statusView(); !strings.Contains(got, "Schedule: legacy") {
 		t.Fatalf("status view = %q, want legacy schedule status", got)
 	}
 }
@@ -647,7 +647,7 @@ func TestTUIStatusNotInstalledShowsInstallOnly(t *testing.T) {
 	if !strings.Contains(view, "not installed") {
 		t.Fatalf("status view = %q, want not-installed state", view)
 	}
-	if strings.Contains(view, "version:") {
+	if strings.Contains(view, "Core:") {
 		t.Fatalf("not-installed card should hide version, got %q", view)
 	}
 	if !strings.Contains(view, "i) Install") {
@@ -655,26 +655,16 @@ func TestTUIStatusNotInstalledShowsInstallOnly(t *testing.T) {
 	}
 }
 
-func TestTUIStatusCardStaysAlignedWithLongVersion(t *testing.T) {
+func TestTUIStatusOverviewPreservesLongVersion(t *testing.T) {
 	long := "v1.19.13-custom-build-20260101-abcdef123456"
 	m := model{status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: long}}
 	view := m.statusView()
 	if !strings.Contains(view, long) {
 		t.Fatalf("status view should show the full version, got %q", view)
 	}
-	var widths []int
-	for _, line := range strings.Split(view, "\n") {
-		if strings.ContainsAny(line, "╭│╰") {
-			widths = append(widths, lipgloss.Width(line))
-		}
-	}
-	if len(widths) < 3 {
-		t.Fatalf("expected a bordered card in %q", view)
-	}
-	for _, w := range widths {
-		if w != widths[0] {
-			t.Fatalf("card lines misaligned: %v", widths)
-		}
+	assertFrame(t, view, 80, 24)
+	if strings.ContainsAny(view, "╭│╰") {
+		t.Fatalf("status overview should not draw a large border:\n%s", view)
 	}
 }
 
@@ -865,44 +855,22 @@ func TestTUIWrapTextHandlesANSI(t *testing.T) {
 	}
 }
 
-var cardBorderReplacer = strings.NewReplacer("│", "", "╭", "", "╮", "", "╰", "", "╯", "", "─", "")
-
-func TestTUIStatusCardWrapsLongVersions(t *testing.T) {
+func TestTUIStatusOverviewWrapsLongVersions(t *testing.T) {
 	long := "v1.19.13-" + strings.Repeat("segment-", 20) + "end"
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 16}} {
 		m := model{
 			ready:  true,
 			status: &manager.Status{Installed: true, InstanceState: manager.Running, Version: long},
-			width:  size[0],
-			height: size[1],
+			width:  size[0], height: size[1],
 		}
 		view := m.View()
 		assertFrame(t, view, size[0], size[1])
-		// Card borders sit between wrapped fragments, so drop them before
-		// checking that no part of the version went missing.
-		compact := strings.Join(strings.Fields(cardBorderReplacer.Replace(view)), "")
+		compact := strings.Join(strings.Fields(ansi.Strip(view)), "")
 		if !strings.Contains(compact, long) {
 			t.Fatalf("%dx%d: status view lost part of the version:\n%s", size[0], size[1], view)
 		}
-		cardWidths := []int{}
-		for _, line := range strings.Split(view, "\n") {
-			if strings.ContainsAny(line, "╭│╰") {
-				cardWidths = append(cardWidths, ansi.StringWidth(line))
-			}
-		}
-		if size[0] >= 80 {
-			if len(cardWidths) < 3 {
-				t.Fatalf("%dx%d: expected a bordered card:\n%s", size[0], size[1], view)
-			}
-			for _, width := range cardWidths {
-				if width != cardWidths[0] {
-					t.Fatalf("%dx%d: card lines misaligned: %v\n%s", size[0], size[1], cardWidths, view)
-				}
-			}
-			continue
-		}
-		if len(cardWidths) != 0 {
-			t.Fatalf("%dx%d: compact layout should not draw a border:\n%s", size[0], size[1], view)
+		if strings.ContainsAny(view, "╭│╰") {
+			t.Fatalf("%dx%d: overview should not draw a border:\n%s", size[0], size[1], view)
 		}
 	}
 }
@@ -1637,20 +1605,20 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 		t.Fatalf("standard layout should render header and footer rules, saw %d:\n%s", count, view)
 	}
 	for _, want := range []string{
-		"STATUS / OVERVIEW",
-		"CONFIGURATION · config: applied",
-		"AUTOSTART · autostart: on",
-		"SCHEDULER · schedule: every 1h",
-		"PROCESS · process: active",
+		"● running",
+		"Core: v1.19.0",
+		"Config: applied",
+		"Autostart: on",
+		"Schedule: every 1h",
 		"SERVICE CONTROL",
 		"CONFIGURATION",
 		"MAINTENANCE",
-		"▸ 2) Stop",
+		"2) Stop",
 		"3) Restart",
 		"4) Reload",
 		"5) Upgrade",
-		"c) Config",
-		"a) Autostart off",
+		"▸ c) Config",
+		"a) Disable autostart",
 		"t) Schedule",
 		"u) Uninstall",
 		"↑↓/Tab) Focus · Enter) Run · ?) Help · r) Refresh · q) Quit",
@@ -1669,7 +1637,7 @@ func TestTUIStandardLayoutSeparatorsAndGrouping(t *testing.T) {
 	if strings.Contains(compactView, strings.Repeat("─", 60)) {
 		t.Fatalf("compact layout should omit full-width section rules to preserve height:\n%s", compactView)
 	}
-	for _, want := range []string{"▸ 2) Stop", "3) Restart", "c) Config", "u) Uninstall"} {
+	for _, want := range []string{"2) Stop", "3) Restart", "▸ c) Config", "u) Uninstall"} {
 		if !strings.Contains(compactView, want) {
 			t.Fatalf("compact layout missing %q:\n%s", want, compactView)
 		}
@@ -1686,11 +1654,15 @@ func TestTUIDashboardFocusAndHelpNavigation(t *testing.T) {
 		width:   80,
 		height:  24,
 	}
-	// Initial focus is index 0 ("2) Stop"); moving down once focuses "3) Restart".
-	updated, _ := m.Update(tuiKey("down"))
+	if !strings.Contains(ansi.Strip(m.View()), "▸ c) Config") {
+		t.Fatalf("initial focus should be on Config:\n%s", ansi.Strip(m.View()))
+	}
+	// Deliberately enter the service column, then move from Stop to Restart.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	updated, _ = updated.(model).Update(tuiKey("down"))
 	m = updated.(model)
-	if m.actionIdx != 1 {
-		t.Fatalf("actionIdx after down = %d, want 1", m.actionIdx)
+	if m.actionKey != "3" {
+		t.Fatalf("focused key after down = %q, want 3", m.actionKey)
 	}
 	if !strings.Contains(ansi.Strip(m.View()), "▸ 3) Restart") {
 		t.Fatalf("expected focus indicator on 3) Restart:\n%s", ansi.Strip(m.View()))
@@ -1699,8 +1671,8 @@ func TestTUIDashboardFocusAndHelpNavigation(t *testing.T) {
 	// Pressing right jumps to the right column (CONFIGURATION / MAINTENANCE).
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = updated.(model)
-	if !strings.Contains(ansi.Strip(m.View()), "▸ a) Autostart on") {
-		t.Fatalf("expected right column focus on a) Autostart on:\n%s", ansi.Strip(m.View()))
+	if !strings.Contains(ansi.Strip(m.View()), "▸ a) Enable autostart") {
+		t.Fatalf("expected right column focus on a) Enable autostart:\n%s", ansi.Strip(m.View()))
 	}
 
 	// Pressing left jumps back to the left column ("3) Restart") and Enter dispatches it.

@@ -158,7 +158,7 @@ type model struct {
 	versions       []manager.VersionInfo
 	versionsErr    error
 	selectedIdx    int
-	actionIdx      int
+	actionKey      string
 	configTab      configTab
 	previewContent string
 	previewOffset  int
@@ -386,7 +386,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			if items := m.statusMenuItems(); len(items) > 0 {
-				idx := clampInt(m.actionIdx, 0, len(items)-1)
+				idx := m.menuFocusIndex(items)
 				next, cmd, _ := m.dispatchMenuKey(items[idx].key)
 				return next, cmd
 			}
@@ -425,9 +425,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scheduleActive = msg.scheduleActive
 		m.scheduleErr = msg.scheduleErr
 		if items := m.statusMenuItems(); len(items) > 0 {
-			m.actionIdx = clampInt(m.actionIdx, 0, len(items)-1)
+			m.actionKey = items[m.menuFocusIndex(items)].key
 		} else {
-			m.actionIdx = 0
+			m.actionKey = ""
 		}
 		// Refreshed status replaces the page content; reading starts over.
 		m.readOffset = 0
@@ -484,6 +484,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) dispatchMenuKey(key string) (tea.Model, tea.Cmd, bool) {
+	for _, item := range m.statusMenuItems() {
+		if item.key == key {
+			m.actionKey = key
+			break
+		}
+	}
 	switch key {
 	case "c":
 		if isInstalled(m.status) {
@@ -555,13 +561,30 @@ func (m model) dispatchMenuKey(key string) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
+// Menu keys keep focus stable when service state changes the available actions.
+// Installed instances initially focus Config rather than service control.
+func (m model) menuFocusIndex(items []menuItem) int {
+	for i, item := range items {
+		if item.key == m.actionKey {
+			return i
+		}
+	}
+	for i, item := range items {
+		if item.key == "c" {
+			return i
+		}
+	}
+	return 0
+}
+
 func (m *model) moveMenuFocus(delta int) {
 	items := m.statusMenuItems()
 	if len(items) == 0 {
-		m.actionIdx = 0
+		m.actionKey = ""
 		return
 	}
-	m.actionIdx = (m.actionIdx + delta + len(items)) % len(items)
+	idx := (m.menuFocusIndex(items) + delta + len(items)) % len(items)
+	m.actionKey = items[idx].key
 }
 
 func (m *model) moveMenuColumn(dir int) {
@@ -579,12 +602,13 @@ func (m *model) moveMenuColumn(dir int) {
 	if split == 0 {
 		return
 	}
-	idx := clampInt(m.actionIdx, 0, len(items)-1)
+	idx := m.menuFocusIndex(items)
 	if dir > 0 && idx < split {
-		m.actionIdx = clampInt(split+idx, split, len(items)-1)
+		idx = clampInt(split+idx, split, len(items)-1)
 	} else if dir < 0 && idx >= split {
-		m.actionIdx = clampInt(idx-split, 0, split-1)
+		idx = clampInt(idx-split, 0, split-1)
 	}
+	m.actionKey = items[idx].key
 }
 
 func (m model) updateHelpMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1129,6 +1153,17 @@ func (m model) renderPage(p page) (string, frameInfo) {
 		// an ellipsis instead of silently disappearing.
 		lines[len(lines)-1] = truncateLine(lines[len(lines)-1]+"…", width)
 	}
+	footerHeight := len(parts.tail) + len(parts.summary) + len(parts.help)
+	if parts.divider != "" {
+		footerHeight++
+	}
+	if parts.position != "" {
+		footerHeight++
+	}
+	// Only the body absorbs spare rows; feedback and shortcuts stay anchored.
+	for len(lines) < height-footerHeight {
+		lines = append(lines, "")
+	}
 	bodyEnd := len(lines)
 	if parts.divider != "" {
 		lines = append(lines, parts.divider)
@@ -1590,9 +1625,7 @@ func (m model) statusPage() page {
 		return p
 	}
 	p.body = m.statusCard()
-	if m.layoutMode() == layoutStandard {
-		p.body = append(p.body, "")
-	}
+	p.body = append(p.body, "")
 	p.body = append(p.body, m.statusMenuLines()...)
 	p.body = append(p.body, m.statusDetails(m.viewWidth())...)
 	p.tokens = statusTokens()
@@ -1644,19 +1677,13 @@ func (m model) statusCells() []textCell {
 	state := s.InstanceState.String()
 	glyph := "●"
 	stateStyle := styleStopped
-	processState := "inactive"
-	processStyle := styleWarning
 	switch {
 	case !s.Installed:
 		state, glyph, stateStyle = "not installed", "○", styleDim
 	case s.InstanceState == manager.Running:
 		stateStyle = styleRunning
-		processState = "active"
-		processStyle = styleRunning
 	case s.InstanceState == manager.Upgrading:
 		glyph, stateStyle = "◐", styleUpgrading
-		processState = "upgrading"
-		processStyle = styleUpgrading
 	}
 	cells := []textCell{{text: glyph + " " + state, style: stateStyle}}
 	if !s.Installed {
@@ -1664,7 +1691,7 @@ func (m model) statusCells() []textCell {
 	}
 
 	version := s.Version
-	versionStyle := styleTitle
+	versionStyle := styleText
 	if version == "" {
 		version = "unknown"
 		versionStyle = styleWarning
@@ -1673,10 +1700,10 @@ func (m model) statusCells() []textCell {
 	autostartStyle := styleDim
 	if s.AutoStartEnabled {
 		autostart = "on"
-		autostartStyle = styleRunning
+		autostartStyle = styleText
 	}
 	configState := string(m.configStatus.State)
-	configStyle := styleRunning
+	configStyle := styleText
 	switch {
 	case configState == "" || m.configErr != nil || m.configStatus.State == manager.ConfigUnknown:
 		configState = "unknown"
@@ -1692,46 +1719,26 @@ func (m model) statusCells() []textCell {
 	case scheduleText == "legacy" || scheduleText == "unknown":
 		scheduleStyle = styleWarning
 	case m.scheduleActive:
-		scheduleStyle = styleRunning
+		scheduleStyle = styleText
 	}
 	return append(cells,
-		textCell{text: "version: " + version, style: versionStyle},
-		textCell{text: "autostart: " + autostart, style: autostartStyle},
-		textCell{text: "config: " + configState, style: configStyle},
-		textCell{text: "schedule: " + scheduleText, style: scheduleStyle},
-		textCell{text: "process: " + processState, style: processStyle},
+		textCell{text: "Core: " + version, style: versionStyle},
+		textCell{text: "Autostart: " + autostart, style: autostartStyle},
+		textCell{text: "Config: " + configState, style: configStyle},
+		textCell{text: "Schedule: " + scheduleText, style: scheduleStyle},
 	)
 }
 
-// statusCard keeps the compact two-column card on the standard layout and
-// drops to a borderless single column when space is tight.
+// statusCard uses two compact rows for ordinary values. Long values still wrap
+// without truncation, and extra rows remain part of the scrollable body.
 func (m model) statusCard() []string {
-	width := m.viewWidth()
 	cells := m.statusCells()
-	if m.layoutMode() == layoutStandard {
-		if len(cells) == 6 {
-			left := []textCell{
-				cells[0],
-				{text: "CONFIGURATION · " + cells[3].text, style: cells[3].style},
-				{text: "SCHEDULER · " + cells[4].text, style: cells[4].style},
-			}
-			right := []textCell{
-				cells[1],
-				{text: "AUTOSTART · " + cells[2].text, style: cells[2].style},
-				{text: "PROCESS · " + cells[5].text, style: cells[5].style},
-			}
-			if lines, ok := renderTwoColumnCard("STATUS / OVERVIEW", left, right, width); ok {
-				return lines
-			}
-		}
-		if lines, ok := renderCard("STATUS / OVERVIEW", cells, width); ok {
-			return lines
-		}
+	width := m.viewWidth()
+	if len(cells) == 1 {
+		return renderColumn(cells, width)
 	}
-	if len(cells) > 5 {
-		cells = cells[:5]
-	}
-	return renderColumn(cells, width)
+	lines := renderInlineCells(cells[:2], width)
+	return append(lines, renderInlineCells([]textCell{cells[3], cells[2], cells[4]}, width)...)
 }
 
 func (m model) renderSectionCells(header string, cells []textCell) []string {
@@ -1759,64 +1766,27 @@ func renderColumn(cells []textCell, width int) []string {
 	return lines
 }
 
-// renderTwoColumnCard renders a full-width dashboard card. Values wrap inside
-// their column so long versions or paths never break the frame.
-func renderTwoColumnCard(header string, left, right []textCell, width int) ([]string, bool) {
-	pw := panelWidth(width)
-	inner := pw - 4
-	if inner < 16 {
-		return nil, false
-	}
-	const gap = 4
-	leftWidth := (inner - gap) / 2
-	rightWidth := inner - leftWidth - gap
-	if leftWidth < 10 || rightWidth < 10 {
-		return nil, false
-	}
-	rows := make([]string, 0, len(left)+2)
-	if header != "" {
-		h := styleSection.Render(truncateLine(header, inner))
-		h += strings.Repeat(" ", max(0, inner-displayWidth(h)))
-		rows = append(rows, h)
-	}
-	for i := range left {
-		rowLeftWidth := leftWidth
-		rowGap := gap
-		rowRightWidth := rightWidth
-		if i == 0 && len(right) > 0 && displayWidth(right[0].text) > rightWidth {
-			minLeft := max(20, displayWidth(left[0].text))
-			if minLeft < leftWidth {
-				rowGap = 3
-				neededLeft := inner - rowGap - displayWidth(right[0].text)
-				rowLeftWidth = clampInt(neededLeft, minLeft, leftWidth)
-				rowRightWidth = inner - rowLeftWidth - rowGap
+// renderInlineCells packs short values together while preserving long values
+// and closing styles on every wrapped screen line.
+func renderInlineCells(cells []textCell, width int) []string {
+	var lines []string
+	current := ""
+	for _, cell := range cells {
+		for i, part := range renderCell(cell, width) {
+			if current != "" && i == 0 && displayWidth(current)+3+displayWidth(part) <= width {
+				current += styleDim.Render(" · ") + part
+				continue
 			}
-		}
-		leftLines := renderCell(left[i], rowLeftWidth)
-		var rightLines []string
-		if i < len(right) {
-			rightLines = renderCell(right[i], rowRightWidth)
-		}
-		height := len(leftLines)
-		if len(rightLines) > height {
-			height = len(rightLines)
-		}
-		for j := 0; j < height; j++ {
-			row := ""
-			if j < len(leftLines) {
-				row = leftLines[j]
+			if current != "" {
+				lines = append(lines, current)
 			}
-			row += strings.Repeat(" ", max(0, rowLeftWidth-displayWidth(row)))
-			if j < len(rightLines) {
-				row += strings.Repeat(" ", rowGap) + rightLines[j]
-			}
-			rows = append(rows, row)
-		}
-		if i == 0 && len(left) > 1 {
-			rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
+			current = part
 		}
 	}
-	return strings.Split(styleCard.Render(strings.Join(rows, "\n")), "\n"), true
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
 }
 
 func renderCard(header string, cells []textCell, width int) ([]string, bool) {
@@ -1873,9 +1843,9 @@ func (m model) statusMenuItems() []menuItem {
 	}
 	items = append(items, menuItem{section: sectionService, key: "5", label: "Upgrade"})
 
-	autostart := "Autostart on"
+	autostart := "Enable autostart"
 	if s.AutoStartEnabled {
-		autostart = "Autostart off"
+		autostart = "Disable autostart"
 	}
 	items = append(items,
 		menuItem{section: sectionConfig, key: "c", label: "Config"},
@@ -1890,7 +1860,7 @@ func renderMenuItem(item menuItem, focused bool) string {
 	token := item.key + ") " + item.label
 	if focused {
 		if item.danger {
-			return styleDanger.Render("▸ " + token)
+			return styleSelected.Render("▸ ") + styleError.Render(token)
 		}
 		return styleSelected.Render("▸ " + token)
 	}
@@ -1905,7 +1875,7 @@ func (m model) statusMenuLines() []string {
 	if len(items) == 0 {
 		return nil
 	}
-	focusedIdx := clampInt(m.actionIdx, 0, len(items)-1)
+	focusedIdx := m.menuFocusIndex(items)
 	if m.layoutMode() != layoutStandard || !isInstalled(m.status) {
 		lines := make([]string, 0, len(items)+1)
 		if m.layoutMode() == layoutStandard {
