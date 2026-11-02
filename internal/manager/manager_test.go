@@ -354,6 +354,7 @@ func (noopScheduleManager) StopSchedule(context.Context) error               { r
 func (noopScheduleManager) ScheduleStatus(context.Context) (time.Duration, bool, error) {
 	return 0, false, nil
 }
+func (noopScheduleManager) ScheduleAdvice(context.Context) (string, error) { return "", nil }
 
 func TestCriticalManagerDependenciesAreRequired(t *testing.T) {
 	fs := &fakeFileSystem{}

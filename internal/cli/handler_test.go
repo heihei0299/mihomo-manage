@@ -95,12 +95,14 @@ func (m *mockLifecycle) ListVersions(ctx context.Context) ([]manager.VersionInfo
 }
 
 type mockConfig struct {
-	previewFn         func() (string, error)
-	setSubscriptionFn func(url string) error
-	updateConfigFn    func() error
-	adoptConfigFn     func(force bool) (manager.AdoptReport, error)
-	lastConfig        manager.ConfigApplyStatus
-	lastConfigErr     error
+	previewFn           func() (string, error)
+	setSubscriptionFn   func(url string) error
+	updateConfigFn      func() error
+	fetchSubscriptionFn func() (bool, error)
+	applyConfigFn       func() error
+	adoptConfigFn       func(force bool) (manager.AdoptReport, error)
+	lastConfig          manager.ConfigApplyStatus
+	lastConfigErr       error
 }
 
 func (m *mockConfig) AdoptConfig(ctx context.Context, force bool) (manager.AdoptReport, error) {
@@ -131,6 +133,20 @@ func (m *mockConfig) UpdateConfig(ctx context.Context) error {
 	return nil
 }
 
+func (m *mockConfig) FetchSubscription(ctx context.Context) (bool, error) {
+	if m.fetchSubscriptionFn != nil {
+		return m.fetchSubscriptionFn()
+	}
+	return true, nil
+}
+
+func (m *mockConfig) ApplyConfig(ctx context.Context) error {
+	if m.applyConfigFn != nil {
+		return m.applyConfigFn()
+	}
+	return nil
+}
+
 func (m *mockConfig) ValidateConfig(ctx context.Context) error { return nil }
 
 func (m *mockConfig) LastConfigApply(ctx context.Context) (manager.ConfigApplyStatus, error) {
@@ -144,6 +160,14 @@ type mockSchedule struct {
 	setScheduleFn    func(interval time.Duration) error
 	stopScheduleFn   func() error
 	scheduleStatusFn func() (time.Duration, bool, error)
+	scheduleAdviceFn func() (string, error)
+}
+
+func (m *mockSchedule) ScheduleAdvice(ctx context.Context) (string, error) {
+	if m.scheduleAdviceFn != nil {
+		return m.scheduleAdviceFn()
+	}
+	return "", nil
 }
 
 func (m *mockSchedule) SetSchedule(ctx context.Context, interval time.Duration) error {
@@ -495,5 +519,78 @@ func TestHandlerAdoptConfigAdopts(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "proxies") {
 		t.Errorf("stdout should list skipped arrays, got %q", stdout.String())
+	}
+}
+
+func TestFetchSubscriptionPrintsApplyHint(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		fetchSubscriptionFn: func() (bool, error) { return true, nil },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.FetchSubscription(context.Background()); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "config apply") {
+		t.Errorf("stdout should point at 'config apply', got %q", stdout.String())
+	}
+}
+
+func TestFetchSubscriptionReportsLocalSource(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		fetchSubscriptionFn: func() (bool, error) { return false, nil },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.FetchSubscription(context.Background()); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "local") {
+		t.Errorf("stdout should explain the local source no-op, got %q", stdout.String())
+	}
+}
+
+func TestApplyConfigReportsApplied(t *testing.T) {
+	var stdout, stderr strings.Builder
+	applied := false
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		applyConfigFn: func() error { applied = true; return nil },
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	if code := h.ApplyConfig(context.Background()); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !applied {
+		t.Fatal("ApplyConfig should call the config apply")
+	}
+	if !strings.Contains(stdout.String(), "config applied") {
+		t.Errorf("stdout = %q, want apply confirmation", stdout.String())
+	}
+}
+
+func TestStatusReportsStaleSubscription(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{
+		lastConfig: manager.ConfigApplyStatus{State: manager.ConfigApplied, SubscriptionStale: true},
+	}, &mockSchedule{}, &stdout, &stderr)
+
+	h.Status(context.Background())
+	if !strings.Contains(stdout.String(), "newer than the applied config") {
+		t.Errorf("stdout = %q, want stale subscription hint", stdout.String())
+	}
+}
+
+func TestScheduleStatusWarnsAboutLegacyCommand(t *testing.T) {
+	var stdout, stderr strings.Builder
+	h := New(&mockControl{}, &mockLifecycle{}, &mockConfig{}, &mockSchedule{
+		scheduleStatusFn: func() (time.Duration, bool, error) { return time.Hour, true, nil },
+		scheduleAdviceFn: func() (string, error) { return "re-run subscription schedule", nil },
+	}, &stdout, &stderr)
+
+	if code := h.ScheduleStatus(context.Background()); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "re-run subscription schedule") {
+		t.Errorf("stderr = %q, want schedule advice", stderr.String())
 	}
 }

@@ -40,7 +40,7 @@ func (s *windowsPlatform) Set(ctx context.Context, interval time.Duration, comma
   <Triggers><TimeTrigger><Repetition><Interval>PT%dS</Interval></Repetition><StartBoundary>%s</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>
   <Principals><Principal id="System"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings>
-  <Actions Context="System"><Exec><Command>%s</Command><Arguments>subscription update --quiet</Arguments></Exec></Actions>
+  <Actions Context="System"><Exec><Command>%s</Command><Arguments>subscription sync --quiet</Arguments></Exec></Actions>
 </Task>
 `, int64(interval/time.Second), time.Now().Add(time.Second).Format(time.RFC3339), escapeTaskXML(commandPath))
 	if err := s.fs.WriteFile(s.xmlPath, []byte(task), 0600); err != nil {
@@ -67,6 +67,16 @@ func (s *windowsPlatform) taskXML(ctx context.Context) (string, bool, error) {
 		return "", false, fmt.Errorf("Windows scheduled task query returned no definition")
 	}
 	return out, true, nil
+}
+
+// UsesLegacyUpdateCommand reports a registered task that still runs the old
+// "subscription update" arguments, which no longer apply config.
+func (s *windowsPlatform) UsesLegacyUpdateCommand(ctx context.Context) (bool, error) {
+	definition, exists, err := s.taskXML(ctx)
+	if err != nil || !exists {
+		return false, err
+	}
+	return strings.Contains(definition, "subscription update"), nil
 }
 
 func (s *windowsPlatform) Stop(ctx context.Context) error {

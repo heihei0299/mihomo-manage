@@ -47,6 +47,7 @@ const (
 	actUninstall
 	actAutostartOn
 	actAutostartOff
+	actApplyConfig
 )
 
 type actionDef struct {
@@ -75,6 +76,7 @@ var actionLabels = map[action]string{
 	actUninstall:    "Uninstall",
 	actAutostartOn:  "Enable autostart",
 	actAutostartOff: "Disable autostart",
+	actApplyConfig:  "Apply config",
 }
 
 // The TUI palette. Lipgloss downgrades to plain text when the output is not a
@@ -140,6 +142,7 @@ type model struct {
 	scheduleInterval time.Duration
 	scheduleActive   bool
 	scheduleErr      error
+	scheduleAdvice   string
 	ready            bool
 	executing        action
 	execResult       string
@@ -175,6 +178,7 @@ type statusMsg struct {
 	scheduleInterval time.Duration
 	scheduleActive   bool
 	scheduleErr      error
+	scheduleAdvice   string
 }
 
 type actionDoneMsg struct {
@@ -245,6 +249,14 @@ func editSubscriptionCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd
 	})
 }
 
+// applyConfigCmd applies already fetched subscription data. Fetching is a
+// separate action, so this never touches the network.
+func applyConfigCmd(cfg manager.ConfigManager, ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		return actionDoneMsg{action: actApplyConfig, err: cfg.ApplyConfig(ctx)}
+	}
+}
+
 func tuiContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
@@ -263,10 +275,14 @@ func fetchStatusCmd(ctrl manager.ServiceControl, cfg manager.ConfigManager, sche
 		var interval time.Duration
 		var active bool
 		var scheduleErr error
+		var scheduleAdvice string
 		if schedule != nil {
 			interval, active, scheduleErr = schedule.ScheduleStatus(ctx)
+			if advice, adviceErr := schedule.ScheduleAdvice(ctx); adviceErr == nil {
+				scheduleAdvice = advice
+			}
 		}
-		return statusMsg{status: s, err: err, configStatus: configStatus, configErr: configErr, scheduleInterval: interval, scheduleActive: active, scheduleErr: scheduleErr}
+		return statusMsg{status: s, err: err, configStatus: configStatus, configErr: configErr, scheduleInterval: interval, scheduleActive: active, scheduleErr: scheduleErr, scheduleAdvice: scheduleAdvice}
 	}
 }
 
@@ -424,6 +440,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scheduleInterval = msg.scheduleInterval
 		m.scheduleActive = msg.scheduleActive
 		m.scheduleErr = msg.scheduleErr
+		m.scheduleAdvice = msg.scheduleAdvice
 		if items := m.statusMenuItems(); len(items) > 0 {
 			m.actionKey = items[m.menuFocusIndex(items)].key
 		} else {
@@ -740,10 +757,23 @@ func (m model) updateConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearResult()
 			return m, editSubscriptionCmd(m.config, tuiContext(m.ctx))
 		}
+	case "a":
+		return m.startConfigApply()
 	case "up", "k", "down", "j", "pgup", "pgdown":
 		m.scrollBody(msg.String())
 	}
 	return m, nil
+}
+
+func (m model) startConfigApply() (tea.Model, tea.Cmd) {
+	m.clearResult()
+	m.executing = actApplyConfig
+	m.mode = modeStatus
+	m.startedAt = time.Now()
+	m.spinnerFrame = 0
+	m.phaseLabel = ""
+	m.phaseMsg = ""
+	return m, tea.Batch(tickCmd(), applyConfigCmd(m.config, tuiContext(m.ctx)))
 }
 
 func (m model) startAction(a action, version string) (tea.Model, tea.Cmd) {
@@ -1640,6 +1670,14 @@ func (m model) statusDetails(width int) []string {
 		details = append(details, "")
 		details = append(details, styleBlock("Config error: "+m.configStatus.ErrorSummary, width, styleError)...)
 	}
+	if m.configStatus.SubscriptionStale {
+		details = append(details, "")
+		details = append(details, styleBlock("Subscription is newer than the applied config. Press c, then a, to apply it.", width, styleWarning)...)
+	}
+	if m.scheduleAdvice != "" {
+		details = append(details, "")
+		details = append(details, styleBlock("Schedule warning: "+m.scheduleAdvice, width, styleWarning)...)
+	}
 	if m.execResult == "failed" && m.actionErr != nil {
 		details = append(details, "")
 		details = append(details, styleBlock("✗ "+m.actionErr.Error(), width, styleError)...)
@@ -2004,6 +2042,10 @@ func (m model) configPage() page {
 		p.tokens = []string{styleDim.Render("Tab/← →) switch tab"), styleDim.Render("q) Back")}
 	case configTabPreview:
 		p = m.previewPage(p)
+	}
+	// Applying stored subscription data is available on every tab.
+	if n := len(p.tokens); n > 0 {
+		p.tokens = append(p.tokens[:n-1], renderActionToken("a", "Apply", true), p.tokens[n-1])
 	}
 	if m.execResult == "failed" && m.actionErr != nil {
 		p.body = append(p.body, "")

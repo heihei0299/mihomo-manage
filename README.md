@@ -41,7 +41,7 @@ Copy-Item .\mihomo-manager-windows-amd64.exe "$env:ProgramFiles\mihomo-manager\m
 & "$env:ProgramFiles\mihomo-manager\mihomo-manager.exe" install
 $manager = "$env:ProgramFiles\mihomo-manager\mihomo-manager.exe"
 & $manager subscription set '订阅 URL 或配置内容'
-& $manager subscription update
+& $manager subscription sync
 ```
 
 arm64 请使用 `mihomo-manager-windows-arm64.exe`。安装后服务会使用该程序路径，请保留文件；管理命令和 TUI 请在管理员终端运行。
@@ -54,7 +54,7 @@ sudo mihomo-manager install
 
 # 设置订阅并应用配置
 sudo mihomo-manager subscription set '订阅 URL 或配置内容'
-sudo mihomo-manager subscription update
+sudo mihomo-manager subscription sync
 
 # 查看状态；不带命令启动 TUI
 mihomo-manager status
@@ -70,6 +70,9 @@ mihomo-manager restart
 mihomo-manager reload
 mihomo-manager logs [--tail=N] [--follow]
 mihomo-manager upgrade [版本]
+mihomo-manager subscription update
+mihomo-manager subscription sync
+mihomo-manager config apply
 mihomo-manager subscription schedule --interval <时长>
 mihomo-manager subscription schedule --off
 mihomo-manager config preview

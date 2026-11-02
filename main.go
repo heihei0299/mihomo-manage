@@ -242,6 +242,8 @@ func handleConfigCommand(h *cli.Handler, cfg manager.ConfigManager, ctx context.
 	switch args[0] {
 	case "preview":
 		return h.PreviewConfig(ctx)
+	case "apply":
+		return h.ApplyConfig(ctx)
 	case "adopt":
 		force := false
 		for _, a := range args[1:] {
@@ -281,7 +283,9 @@ func handleSubscription(h *cli.Handler, ctx context.Context, args []string) int 
 		}
 		return h.SetSubscription(ctx, strings.Join(args[1:], " "))
 	case "update":
-		return h.UpdateConfig(ctx)
+		return h.FetchSubscription(ctx)
+	case "sync":
+		return h.Sync(ctx)
 	case "schedule":
 		return handleSchedule(h, ctx, args[1:])
 	default:
@@ -425,7 +429,7 @@ Flags:
   -q, --quiet     Suppress non-error output
   -s <url>        Set subscription source
   -t [opt]        View/configure auto-refresh (--interval|--off)
-  -u              Refresh and apply subscription
+  -u              Refresh subscription data (does not touch config)
   -v, --version   Show version
 
 Basic operations:
@@ -438,11 +442,13 @@ Basic operations:
 
 Subscription:
   subscription set <s>        Set subscription source
-  subscription update         Refresh and apply subscription
+  subscription update         Refresh subscription data only (does not touch config)
+  subscription sync           Refresh subscription data and apply it
   subscription schedule [opt] View/configure auto-refresh (--interval|--off)
 
 Config:
   config preview              Preview generated config
+  config apply                Generate and apply config from stored subscription data
   config adopt [--force]      Adopt manual config.yaml changes into override
   config override edit        Edit override file ($EDITOR)
 

@@ -26,7 +26,7 @@ func TestWindowsScheduleRunsSystemTaskWithEscapedExecutable(t *testing.T) {
 	if err := xml.Unmarshal(fs.written["task.xml"], &task); err != nil {
 		t.Fatal(err)
 	}
-	if task.User != "S-1-5-18" || task.Command != commandPath || task.Interval != "PT5400S" || task.Args != "subscription update --quiet" {
+	if task.User != "S-1-5-18" || task.Command != commandPath || task.Interval != "PT5400S" || task.Args != "subscription sync --quiet" {
 		t.Fatalf("task = %+v", task)
 	}
 	if len(cmd.captured) != 1 || cmd.captured[0].name != "schtasks.exe" {

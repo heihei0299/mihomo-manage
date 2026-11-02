@@ -129,6 +129,25 @@ func (m *nativeScheduleManager) ScheduleStatus(ctx context.Context) (time.Durati
 	return 0, false, nil
 }
 
+// legacyCommandInspector is an optional platform capability. Platforms that can
+// read their registered definition report whether it still invokes the command
+// whose behavior changed when subscription update stopped applying config.
+type legacyCommandInspector interface {
+	UsesLegacyUpdateCommand(ctx context.Context) (bool, error)
+}
+
+func (m *nativeScheduleManager) ScheduleAdvice(ctx context.Context) (string, error) {
+	inspector, ok := m.platform.(legacyCommandInspector)
+	if !ok {
+		return "", nil
+	}
+	legacy, err := inspector.UsesLegacyUpdateCommand(ctx)
+	if err != nil || !legacy {
+		return "", err
+	}
+	return "the scheduled update still runs 'subscription update', which now only refreshes subscription data; re-run 'subscription schedule --interval <duration>' to apply updates again", nil
+}
+
 type unsupportedPlatformScheduler struct{ os string }
 
 func (s unsupportedPlatformScheduler) Set(context.Context, time.Duration, string) error {

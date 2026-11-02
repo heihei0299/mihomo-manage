@@ -90,7 +90,7 @@ func TestScheduleUsesPackageAndReleaseInstallationPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			unit := string(fs.written["/etc/systemd/system/mihomo-manager-subscription-update.service"])
-			if !strings.Contains(unit, "ExecStart="+path+" subscription update --quiet") {
+			if !strings.Contains(unit, "ExecStart="+path+" subscription sync --quiet") {
 				t.Fatalf("unit=%s", unit)
 			}
 		})

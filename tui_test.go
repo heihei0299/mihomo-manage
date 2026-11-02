@@ -89,6 +89,13 @@ func (m *tuiMockConfig) UpdateConfig(ctx context.Context) error {
 	return nil
 }
 
+func (m *tuiMockConfig) FetchSubscription(ctx context.Context) (bool, error) { return true, nil }
+
+func (m *tuiMockConfig) ApplyConfig(ctx context.Context) error {
+	m.updateCalled = true
+	return nil
+}
+
 func (m *tuiMockConfig) ValidateConfig(ctx context.Context) error { return nil }
 
 func (m *tuiMockConfig) LastConfigApply(ctx context.Context) (manager.ConfigApplyStatus, error) {

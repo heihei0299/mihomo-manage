@@ -271,13 +271,13 @@ func TestAcceptanceSubscriptionSet(t *testing.T) {
 	}
 }
 
-func TestAcceptanceSubscriptionUpdate(t *testing.T) {
+func TestAcceptanceSubscriptionSync(t *testing.T) {
 	binary := buildBinaryAndPreflight(t)
 	ensureInstalled(t, binary)
 
 	runMihomo(t, binary, "subscription", "set", testURL)
 
-	r := runMihomo(t, binary, "subscription", "update")
+	r := runMihomo(t, binary, "subscription", "sync")
 	assertExitCode(t, r, 0)
 
 	config := readFileSudo(t, configYAML)
@@ -308,7 +308,7 @@ func TestAcceptanceConfigPreview(t *testing.T) {
 	ensureInstalled(t, binary)
 
 	runMihomo(t, binary, "subscription", "set", "proxies:\n  - name: test\n    type: ss\n    server: example.com\n    port: 8388")
-	runMihomo(t, binary, "subscription", "update")
+	runMihomo(t, binary, "subscription", "sync")
 	ensureRunning(t, binary)
 
 	r := runMihomo(t, binary, "config", "preview")
@@ -446,7 +446,7 @@ func TestAcceptanceSchedule(t *testing.T) {
 	assertStdoutContains(t, enabled, "enabled")
 	unit := runSudo(t, "systemctl", "cat", "mihomo-manager-subscription-update.service")
 	assertExitCode(t, unit, 0)
-	assertStdoutContains(t, unit, "ExecStart=/usr/local/bin/mihomo-manager subscription update --quiet")
+	assertStdoutContains(t, unit, "ExecStart=/usr/local/bin/mihomo-manager subscription sync --quiet")
 
 	r = runMihomo(t, binary, "subscription", "schedule", "--off")
 	assertExitCode(t, r, 0)
@@ -562,7 +562,7 @@ func TestAcceptanceUninstallKeepBackup(t *testing.T) {
 	ensureRunning(t, binary)
 
 	runMihomo(t, binary, "subscription", "set", "proxies:\n  - name: test\n    type: ss")
-	runMihomo(t, binary, "subscription", "update")
+	runMihomo(t, binary, "subscription", "sync")
 	ensureRunning(t, binary)
 
 	r = runMihomo(t, binary, "uninstall", "--keep-backup")

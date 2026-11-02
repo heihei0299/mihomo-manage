@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ func (s *linuxPlatform) Set(ctx context.Context, interval time.Duration, command
 	if interval < time.Hour {
 		return fmt.Errorf("minimum interval is 1h, got %v", interval)
 	}
-	service := fmt.Sprintf("[Unit]\nDescription=mihomo subscription update\n\n[Service]\nType=oneshot\nExecStart=%s subscription update --quiet\n", commandPath)
+	service := fmt.Sprintf("[Unit]\nDescription=mihomo subscription update\n\n[Service]\nType=oneshot\nExecStart=%s subscription sync --quiet\n", commandPath)
 	timer := fmt.Sprintf("[Unit]\nDescription=Scheduled mihomo subscription update\n\n[Timer]\nOnActiveSec=1s\nOnUnitActiveSec=%ds\nPersistent=false\nUnit=%s\n\n[Install]\nWantedBy=timers.target\n", int64(interval.Seconds()), strings.TrimSuffix(systemdScheduleName, ".timer")+".service")
 	if err := s.fs.WriteFile(systemdScheduleService, []byte(service), filePermUserRW); err != nil {
 		return fmt.Errorf("writing systemd schedule service: %w", err)
@@ -64,6 +65,22 @@ func (s *linuxPlatform) Stop(ctx context.Context) error {
 		return fmt.Errorf("systemd daemon-reload: %w", err)
 	}
 	return nil
+}
+
+// UsesLegacyUpdateCommand reports a registered unit that still runs the old
+// "subscription update" command line, which no longer applies config.
+func (s *linuxPlatform) UsesLegacyUpdateCommand(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	data, err := s.fs.ReadFile(systemdScheduleService)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.Contains(string(data), "subscription update"), nil
 }
 
 type systemdTimerState struct {

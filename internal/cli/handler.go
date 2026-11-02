@@ -60,6 +60,9 @@ func (h *Handler) Status(ctx context.Context) int {
 	} else {
 		h.printf("config: %s\n", configStatus.State)
 	}
+	if configErr == nil && configStatus.SubscriptionStale {
+		h.println("subscription: newer than the applied config (run 'mihomo-manager config apply')")
+	}
 
 	switch status.InstanceState {
 	case manager.Running:
@@ -207,12 +210,38 @@ func (h *Handler) SetSubscription(ctx context.Context, data string) int {
 	return 0
 }
 
-func (h *Handler) UpdateConfig(ctx context.Context) int {
+// Sync refreshes the subscription and applies it, backing `subscription sync`.
+func (h *Handler) Sync(ctx context.Context) int {
 	if err := h.config.UpdateConfig(ctx); err != nil {
 		h.errorf("error: %v\n", err)
 		return 1
 	}
-	h.println("config updated")
+	h.println("subscription updated and config applied")
+	return 0
+}
+
+// FetchSubscription refreshes subscription data only, backing `subscription update`.
+func (h *Handler) FetchSubscription(ctx context.Context) int {
+	fetched, err := h.config.FetchSubscription(ctx)
+	if err != nil {
+		h.errorf("error: %v\n", err)
+		return 1
+	}
+	if !fetched {
+		h.println("subscription source is local; nothing to fetch")
+		return 0
+	}
+	h.println("subscription updated; run 'mihomo-manager config apply' to apply it")
+	return 0
+}
+
+// ApplyConfig applies already fetched subscription data, backing `config apply`.
+func (h *Handler) ApplyConfig(ctx context.Context) int {
+	if err := h.config.ApplyConfig(ctx); err != nil {
+		h.errorf("error: %v\n", err)
+		return 1
+	}
+	h.println("config applied")
 	return 0
 }
 
@@ -255,6 +284,9 @@ func (h *Handler) ScheduleStatus(ctx context.Context) int {
 		h.printf("schedule: every %v\n", interval)
 	} else {
 		h.println("schedule: off")
+	}
+	if advice, adviceErr := h.schedule.ScheduleAdvice(ctx); adviceErr == nil && advice != "" {
+		h.errorf("warning: %s\n", advice)
 	}
 	return 0
 }

@@ -750,21 +750,95 @@ func (p *configPipeline) cleanupTransactionBeforeCommit(staged stagedConfig, can
 	return errors.Join(failure, errors.Join(cleanupErrs...))
 }
 
-func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
+// UpdateConfig refreshes the subscription and applies it in one transaction.
+// It backs `subscription sync` and the scheduled subscription update task.
+func (p *configPipeline) UpdateConfig(ctx context.Context) error {
 	release, err := p.acquireConfigUpdate(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
 
+	if err := p.prepareLocked(); err != nil {
+		return err
+	}
+	candidate, err := p.refreshSubscription(ctx)
+	if err != nil {
+		// A combined refresh-and-apply failed before reaching apply, so record
+		// the attempt as an apply failure rather than leaving a stale status.
+		return errors.Join(err, p.recordConfigApply(ConfigApplyFailed, "", err, nil))
+	}
+	if err := ctx.Err(); err != nil {
+		failure := p.cleanupStagedSubscription(candidate, err)
+		return errors.Join(failure, p.recordConfigApply(ConfigApplyFailed, "", failure, nil))
+	}
+	return p.applyLocked(ctx, candidate)
+}
+
+// FetchSubscription refreshes the stored subscription data without generating or
+// applying config. A local source has nothing to fetch, so it is a no-op.
+func (p *configPipeline) FetchSubscription(ctx context.Context) (bool, error) {
+	release, err := p.acquireConfigUpdate(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+
+	if err := p.prepareLocked(); err != nil {
+		return false, err
+	}
+	candidate, err := p.refreshSubscription(ctx)
+	if err != nil {
+		return false, err
+	}
+	if candidate == nil {
+		return false, nil
+	}
+	if err := p.fs.Chmod(candidate.path, filePermPrivateRW); err != nil {
+		return false, p.cleanupStagedSubscription(candidate, fmt.Errorf("preparing subscription data: %w", err))
+	}
+	if err := p.fs.Rename(candidate.path, subscriptionDataFile); err != nil {
+		return false, p.cleanupStagedSubscription(candidate, fmt.Errorf("committing subscription data: %w", err))
+	}
+	return true, nil
+}
+
+// ApplyConfig renders the stored subscription data with the override file and
+// applies it. It never downloads subscription data.
+func (p *configPipeline) ApplyConfig(ctx context.Context) error {
+	release, err := p.acquireConfigUpdate(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	if err := p.prepareLocked(); err != nil {
+		return err
+	}
+	source, err := p.subscriptionSource()
+	if err != nil {
+		return err
+	}
+	if source == "" {
+		return ErrSubscriptionSourceNotConfigured
+	}
+	return p.applyLocked(ctx, nil)
+}
+
+func (p *configPipeline) applyLocked(ctx context.Context, candidate *stagedSubscription) (applyErr error) {
 	preview := ""
-	var candidate *stagedSubscription
 	statusRecorded := false
+	// Record the subscription data that produced this render: the freshly
+	// fetched candidate when present, otherwise the stored subscription data.
 	candidateData := func() []byte {
-		if candidate == nil {
+		if candidate != nil {
+			return candidate.data
+		}
+		data, err := p.fs.ReadFile(subscriptionDataFile)
+		if err != nil {
 			return nil
 		}
-		return candidate.data
+		return data
 	}
 	defer func() {
 		if applyErr != nil && !statusRecorded {
@@ -776,16 +850,7 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 		}
 	}()
 
-	if err := p.prepareLocked(); err != nil {
-		return err
-	}
-	candidate, err = p.refreshSubscription(ctx)
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return p.cleanupStagedSubscription(candidate, err)
-	}
+	var err error
 	preview, err = p.buildApplyPreview(ctx, candidate)
 	if err != nil {
 		return p.cleanupStagedSubscription(candidate, err)
@@ -847,6 +912,32 @@ func (p *configPipeline) UpdateConfig(ctx context.Context) (applyErr error) {
 }
 
 func (p *configPipeline) LastConfigApply(ctx context.Context) (ConfigApplyStatus, error) {
+	status, err := p.lastConfigApply(ctx)
+	if err != nil {
+		return status, err
+	}
+	p.markSubscriptionStale(&status)
+	return status, nil
+}
+
+// markSubscriptionStale compares the stored subscription data with the data the
+// last apply rendered. A fetch-only update changes the stored data without
+// touching config, which is exactly the state this flag reports.
+func (p *configPipeline) markSubscriptionStale(status *ConfigApplyStatus) {
+	if status.SubscriptionHash == "" {
+		return
+	}
+	if status.State != ConfigApplied && status.State != ConfigPendingReload {
+		return
+	}
+	data, err := p.fs.ReadFile(subscriptionDataFile)
+	if err != nil {
+		return
+	}
+	status.SubscriptionStale = configContentHash(string(data)) != status.SubscriptionHash
+}
+
+func (p *configPipeline) lastConfigApply(ctx context.Context) (ConfigApplyStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return ConfigApplyStatus{State: ConfigUnknown}, err
 	}

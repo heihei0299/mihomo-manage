@@ -18,7 +18,7 @@ func TestLinuxPlatformWritesNativeUnits(t *testing.T) {
 	}
 	service := string(fs.written[systemdScheduleService])
 	timer := string(fs.written[systemdScheduleTimer])
-	if !strings.Contains(service, "ExecStart=/opt/mihomo-manager/bin/mihomo-manager subscription update --quiet") {
+	if !strings.Contains(service, "ExecStart=/opt/mihomo-manager/bin/mihomo-manager subscription sync --quiet") {
 		t.Fatalf("service = %q, missing scheduled command", service)
 	}
 	if !strings.Contains(timer, "OnUnitActiveSec=7200s") || !strings.Contains(timer, "Persistent=false") {
