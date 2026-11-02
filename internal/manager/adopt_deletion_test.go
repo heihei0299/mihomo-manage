@@ -17,10 +17,11 @@ func TestAdoptConfigDeletionsArePreservedAndIdempotent(t *testing.T) {
 	}{
 		{"top-level-scalar", "port: 7890\nmode: rule\n", "port: 9999\n", "mode: rule\n", "port: !delete", []string{"port"}},
 		{"top-level-map", "mode: rule\ndns:\n  enable: true\n", "dns: !replace\n  enable: false\n", "mode: rule\n", "dns: !delete", []string{"dns"}},
-		{"nested-key", "dns:\n  enable: true\n  ipv6: true\n", "dns:\n  ipv6: false\n", "dns:\n  enable: true\n", "dns: !replace", []string{"dns"}},
-		{"deep-nested-key", "dns:\n  enable: true\n  nameserver-policy:\n    example.com: 1.1.1.1\n    example.org: 8.8.8.8\n", "", "dns:\n  enable: true\n  nameserver-policy:\n    example.com: 1.1.1.1\n", "dns: !replace", []string{"dns"}},
-		{"empty-map", "dns:\n  enable: true\n", "", "dns: {}\n", "dns: !replace", []string{"dns"}},
-		{"override-only-field", "mode: rule\n", "external-controller: 127.0.0.1:9090\n", "mode: rule\n", "external-controller: !delete", []string{"external-controller"}},
+		{"nested-key", "dns:\n  enable: true\n  ipv6: true\n", "dns:\n  ipv6: false\n", "dns:\n  enable: true\n", "ipv6: !delete", []string{"dns"}},
+		{"nested-key-under-replace", "dns:\n  enable: true\n  ipv6: true\n", "dns: !replace\n  enable: false\n", "dns:\n  enable: true\n", "ipv6: !delete", []string{"dns"}},
+		{"deep-nested-key", "dns:\n  enable: true\n  nameserver-policy:\n    example.com: 1.1.1.1\n    example.org: 8.8.8.8\n", "", "dns:\n  enable: true\n  nameserver-policy:\n    example.com: 1.1.1.1\n", "example.org: !delete", []string{"dns"}},
+		{"empty-map", "dns:\n  enable: true\n", "", "dns: {}\n", "enable: !delete", []string{"dns"}},
+		{"override-only-field", "mode: rule\n", "external-controller: 127.0.0.1:9090\n", "mode: rule\n", "", []string{"external-controller"}},
 		{"delete-last-field", "port: 7890\n", "", "{}\n", "port: !delete", []string{"port"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,6 +38,12 @@ func TestAdoptConfigDeletionsArePreservedAndIdempotent(t *testing.T) {
 			}
 			if !strings.Contains(string(fs.written[OverrideFilePath]), tc.directive) {
 				t.Fatalf("override missing %s: %s", tc.directive, fs.written[OverrideFilePath])
+			}
+			if tc.name == "override-only-field" && strings.Contains(string(fs.written[OverrideFilePath]), "external-controller") {
+				t.Fatalf("override-only field should be removed, not deleted by directive: %s", fs.written[OverrideFilePath])
+			}
+			if strings.Contains(string(fs.written[OverrideFilePath]), "!replace") {
+				t.Fatalf("adopted deletions must be pointed, not block replacements: %s", fs.written[OverrideFilePath])
 			}
 			preview, err := m.PreviewConfig(context.Background())
 			if err != nil {

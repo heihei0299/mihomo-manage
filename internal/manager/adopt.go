@@ -7,7 +7,6 @@ import (
 	"os"
 	"reflect"
 	"sort"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,10 +21,10 @@ type AdoptReport struct {
 }
 
 // Adopt compares the current config.yaml with the rendered config and moves
-// top-level scalar/map differences into the override file, preserving its
-// existing content. Array differences are reported but never adopted. A large
-// diff (>= 5 fields) requires force. Idempotent: a second run reports no
-// changes once the differences have been adopted.
+// scalar/map differences into the override file, preserving its existing
+// content. Array differences are reported but never adopted. A large diff
+// (>= 5 fields) requires force. Idempotent: a second run reports no changes
+// once the differences have been adopted.
 func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptReport, error) {
 	report := AdoptReport{}
 	release, err := p.acquireConfigUpdate(ctx)
@@ -50,6 +49,11 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 		return report, err
 	}
 
+	baseMap, err := p.subscriptionBaseMap()
+	if err != nil {
+		return report, err
+	}
+
 	var curMap, rendMap map[string]any
 	if err := yaml.Unmarshal(cur, &curMap); err != nil {
 		return report, fmt.Errorf("parsing config.yaml: %w", err)
@@ -58,7 +62,6 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 		return report, fmt.Errorf("parsing rendered config: %w", err)
 	}
 
-	replaceFields := map[string]bool{}
 	for k, v := range curMap {
 		rv, ok := rendMap[k]
 		if ok && reflect.DeepEqual(v, rv) {
@@ -73,9 +76,6 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 			continue
 		}
 		report.Fields = append(report.Fields, k)
-		if hasMapDeletion(v, rv) {
-			replaceFields[k] = true
-		}
 	}
 	for k, rv := range rendMap {
 		if _, exists := curMap[k]; exists {
@@ -104,32 +104,55 @@ func (p *configPipeline) AdoptConfig(ctx context.Context, force bool) (AdoptRepo
 		return report, ErrAdoptNeedsConfirmation
 	}
 
-	if err := p.writeOverrideFields(report.Fields, curMap, replaceFields); err != nil {
+	if err := p.writeOverrideFields(report.Fields, curMap, baseMap); err != nil {
 		return report, err
 	}
 	return report, nil
 }
 
-// A partial map cannot express deletions through deep merge. Adopt the whole
-// top-level map with !replace if any nested mapping key was removed.
-func hasMapDeletion(current, rendered any) bool {
-	curMap, curOK := current.(map[string]any)
-	rendMap, rendOK := rendered.(map[string]any)
-	if !curOK || !rendOK {
-		return false
-	}
-	for k, rv := range rendMap {
-		cv, exists := curMap[k]
-		if !exists || hasMapDeletion(cv, rv) {
-			return true
+// subscriptionBaseMap reads the subscription data used as the merge base.
+func (p *configPipeline) subscriptionBaseMap() (map[string]any, error) {
+	data, err := p.fs.ReadFile(subscriptionDataFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
 		}
+		return nil, err
 	}
-	return false
+	var base any
+	if err := yaml.Unmarshal(data, &base); err != nil {
+		return nil, fmt.Errorf("parsing subscription data: %w", err)
+	}
+	if mapping, ok := base.(map[string]any); ok {
+		return mapping, nil
+	}
+	return map[string]any{}, nil
 }
 
 // writeOverrideFields merges the given fields (values from curMap) into the
-// override file, preserving any content already present.
-func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]any, replaceFields map[string]bool) error {
+// override file, preserving any content already present. Deleted keys become
+// pointed !delete directives when the subscription still provides them; keys
+// that only existed in the override file are removed outright.
+func (p *configPipeline) writeOverrideFields(fields []string, curMap, baseMap map[string]any) error {
+	values := make(map[string]*yaml.Node, len(fields))
+	removals := make(map[string]bool)
+	for _, k := range fields {
+		current, exists := curMap[k]
+		if exists {
+			node, err := adoptValueNode(current, baseMap[k], k)
+			if err != nil {
+				return err
+			}
+			values[k] = node
+			continue
+		}
+		if _, inBase := baseMap[k]; inBase {
+			values[k] = deleteDirectiveNode()
+			continue
+		}
+		removals[k] = true
+	}
+
 	override := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	if data, err := p.fs.ReadFile(OverrideFilePath); err == nil {
 		if len(data) > 0 {
@@ -149,33 +172,23 @@ func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]
 	}
 	mapping := override.Content[0]
 	for _, k := range fields {
-		var value yaml.Node
-		if err := value.Encode(curMap[k]); err != nil {
-			return fmt.Errorf("encoding adopted field %s: %w", k, err)
-		}
-		if _, exists := curMap[k]; !exists {
-			value.Tag = "!delete"
-		} else if replaceFields[k] {
-			value.Tag = "!replace"
-		}
-		found := false
-		for i := 0; i+1 < len(mapping.Content); i += 2 {
-			if mapping.Content[i].Value != k {
-				continue
+		if removals[k] {
+			index := findMappingEntry(mapping, k)
+			if index >= 0 {
+				mapping.Content = append(mapping.Content[:index], mapping.Content[index+2:]...)
 			}
-			previous := mapping.Content[i+1]
-			if strings.HasPrefix(value.Tag, "!!") && strings.HasPrefix(previous.Tag, "!") && !strings.HasPrefix(previous.Tag, "!!") && previous.Tag != "!delete" {
-				value.Tag = previous.Tag
-			}
+			continue
+		}
+		value := values[k]
+		index := findMappingEntry(mapping, k)
+		if index >= 0 {
+			previous := mapping.Content[index+1]
 			value.HeadComment, value.LineComment, value.FootComment = previous.HeadComment, previous.LineComment, previous.FootComment
 			value.Anchor = previous.Anchor
-			*previous = value
-			found = true
-			break
+			mapping.Content[index+1] = value
+			continue
 		}
-		if !found {
-			mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k}, &value)
-		}
+		mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k}, value)
 	}
 
 	out, err := yaml.Marshal(&override)
@@ -193,4 +206,54 @@ func (p *configPipeline) writeOverrideFields(fields []string, curMap map[string]
 		return errors.Join(fmt.Errorf("committing override file: %w", err), p.fs.RemoveAll(tmpPath))
 	}
 	return nil
+}
+
+// adoptValueNode renders current as an overlay value that reproduces it on top
+// of base. Nested keys missing from current but present in base become pointed
+// !delete directives, so the adopted block keeps following subscription
+// updates for fields it does not mention.
+func adoptValueNode(current, base any, path string) (*yaml.Node, error) {
+	curMap, curIsMap := current.(map[string]any)
+	if !curIsMap {
+		var node yaml.Node
+		if err := node.Encode(current); err != nil {
+			return nil, fmt.Errorf("encoding adopted field %s: %w", path, err)
+		}
+		return &node, nil
+	}
+
+	baseMap, _ := base.(map[string]any)
+	node := newMappingNode()
+	keys := make([]string, 0, len(curMap))
+	for key := range curMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		child, err := adoptValueNode(curMap[key], baseMap[key], path+"."+key)
+		if err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, stringNode(key), child)
+	}
+
+	missing := make([]string, 0, len(baseMap))
+	for key := range baseMap {
+		if _, exists := curMap[key]; !exists {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	for _, key := range missing {
+		node.Content = append(node.Content, stringNode(key), deleteDirectiveNode())
+	}
+	return node, nil
+}
+
+func deleteDirectiveNode() *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: deleteDirective, Value: "null"}
+}
+
+func stringNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 }
