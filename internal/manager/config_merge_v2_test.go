@@ -457,6 +457,19 @@ func TestMergeConfigSyntaxTable(t *testing.T) {
 			},
 		},
 		{
+			name:    "whole array deletion via key",
+			base:    "proxies:\n  - name: node1\n    type: ss\nrules:\n  - MATCH,DIRECT\n",
+			overlay: "rules: !delete null\n",
+			check: func(t *testing.T, got map[string]any) {
+				if _, exists := got["rules"]; exists {
+					t.Fatalf("rules = %v, want the key removed", got["rules"])
+				}
+				if names := proxyNames(t, got["proxies"]); len(names) != 1 || names[0] != "node1" {
+					t.Fatalf("proxies = %v", names)
+				}
+			},
+		},
+		{
 			name:    "non identity array is replaced",
 			base:    "listen:\n  - 0.0.0.0:9090\n",
 			overlay: "listen:\n  - 0.0.0.0:8080\n",
@@ -477,20 +490,6 @@ func TestMergeConfigSyntaxTable(t *testing.T) {
 				}
 				if names := proxyNames(t, got["Proxies"]); len(names) != 1 || names[0] != "node2" {
 					t.Fatalf("Proxies = %v", names)
-				}
-			},
-		},
-		{
-			name:    "duplicate overlay names keep the last value",
-			base:    "proxies:\n  - name: node1\n    type: ss\n",
-			overlay: "proxies:\n  - name: node1\n    type: ss\n    port: 1\n  - name: node1\n    type: ss\n    port: 2\n",
-			check: func(t *testing.T, got map[string]any) {
-				items := got["proxies"].([]any)
-				if len(items) != 1 {
-					t.Fatalf("duplicate overlay names must not duplicate output: %v", items)
-				}
-				if items[0].(map[string]any)["port"] != 2 {
-					t.Fatalf("last duplicate should win: %#v", items[0])
 				}
 			},
 		},
@@ -578,5 +577,130 @@ func TestUpdateConfigRejectsInvalidOverrideWithPath(t *testing.T) {
 	err := m.UpdateConfig(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "dns.fallback") {
 		t.Fatalf("UpdateConfig error = %v, want path dns.fallback", err)
+	}
+}
+
+func TestIsTerminalRule(t *testing.T) {
+	for _, tc := range []struct {
+		rule string
+		want bool
+	}{
+		{"MATCH,DIRECT", true},
+		{"match,DIRECT", true},
+		{"Match,Proxy", true},
+		{"mAtCh,DIRECT", true},
+		{"MATCH", true},
+		{"GEOIP,CN,DIRECT", false},
+		{"DOMAIN-MATCH,match.example.com,DIRECT", false},
+		{"", false},
+	} {
+		if got := isTerminalRule(tc.rule); got != tc.want {
+			t.Errorf("isTerminalRule(%q) = %v, want %v", tc.rule, got, tc.want)
+		}
+	}
+}
+
+func TestPreviewTerminalRuleIsCaseInsensitive(t *testing.T) {
+	for _, terminal := range []string{"MATCH,DIRECT", "match,DIRECT", "Match,Proxy"} {
+		t.Run(terminal, func(t *testing.T) {
+			got := mustPreviewYAML(t, "rules:\n  - GEOIP,CN,DIRECT\n  - "+terminal+"\n", "rules:\n  - DOMAIN-SUFFIX,local.example.com,DIRECT\n")
+			rules := ruleTexts(t, got["rules"])
+			want := []string{"GEOIP,CN,DIRECT", "DOMAIN-SUFFIX,local.example.com,DIRECT", terminal}
+			if len(rules) != len(want) {
+				t.Fatalf("rules = %v, want %v", rules, want)
+			}
+			for i := range want {
+				if rules[i] != want[i] {
+					t.Fatalf("rules = %v, want %v", rules, want)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeConfigRejectsRootDirectivesWithDocumentPath(t *testing.T) {
+	for _, tc := range []struct{ name, base, overlay string }{
+		{"delete", "port: 7890\n", "!delete null\n"},
+		{"replace mapping", "port: 7890\n", "!replace {port: 8888}\n"},
+		{"replace without base", "", "!replace {port: 8888}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mergeConfig(tc.base, tc.overlay)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), "document") {
+				t.Fatalf("error %q does not name the document path", err)
+			}
+		})
+	}
+}
+
+func TestMergeConfigRejectsDirectiveTagsOnMappingKeys(t *testing.T) {
+	base := "port: 7890\ndns:\n  enable: true\n"
+	for _, tc := range []struct{ name, base, overlay, path string }{
+		{"delete on root key", base, "!delete port: null\n", "port"},
+		{"replace on root key", base, "!replace port: 8888\n", "port"},
+		{"delete on root key without base", "", "!delete port: null\n", "port"},
+		{"delete on nested key", base, "dns:\n  !delete enable: null\n", "dns.enable"},
+		{"key inside replace", base, "dns: !replace\n  !delete enable: null\n", "dns.enable"},
+		{"key inside identity item", base, "proxies:\n  - name: node1\n    !delete type: null\n", "proxies.node1.type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mergeConfig(tc.base, tc.overlay)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q does not contain path %q", err, tc.path)
+			}
+			if !strings.Contains(err.Error(), "mapping key") {
+				t.Fatalf("error %q does not explain the key placement", err)
+			}
+		})
+	}
+}
+
+func TestPreviewRejectsDuplicateIdentityEntries(t *testing.T) {
+	base := "proxies:\n  - name: node1\n    type: ss\nproxy-providers:\n  remote:\n    type: http\n"
+	for _, tc := range []struct{ name, overlay, path string }{
+		{"identity array", "proxies:\n  - name: node1\n    type: ss\n  - name: node1\n    type: ss\n", "proxies.node1"},
+		{"identity map", "proxy-providers:\n  remote:\n    type: http\n  remote:\n    type: file\n", "proxy-providers.remote"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mergeConfig(base, tc.overlay)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q does not contain path %q", err, tc.path)
+			}
+			if !strings.Contains(err.Error(), "duplicate") {
+				t.Fatalf("error %q does not report a duplicate", err)
+			}
+		})
+	}
+}
+
+func TestPreviewDeleteOnFieldHintsAtCorrectSyntax(t *testing.T) {
+	base := "rules:\n  - MATCH,DIRECT\nproxies:\n  - name: node1\n    type: ss\nproxy-providers:\n  remote:\n    type: http\ndns:\n  enable: true\n"
+	for _, tc := range []struct{ name, overlay, hint, path string }{
+		{"rules", "rules: !delete [MATCH,DIRECT]\n", "- !delete <rule text>", "rules"},
+		{"identity array", "proxies: !delete [node1]\n", "- !delete <name>", "proxies"},
+		{"identity map", "proxy-providers: !delete {remote: null}\n", "<name>: !delete null", "proxy-providers"},
+		{"mapping", "dns: !delete {enable: false}\n", "<key>: !delete null", "dns"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mergeConfig(base, tc.overlay)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.hint) {
+				t.Fatalf("error %q does not hint %q", err, tc.hint)
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q does not contain path %q", err, tc.path)
+			}
+		})
 	}
 }

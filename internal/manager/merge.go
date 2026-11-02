@@ -12,6 +12,17 @@ const (
 	deleteDirective  = "!delete"
 )
 
+func isDirectiveTag(tag string) bool {
+	return tag == replaceDirective || tag == deleteDirective
+}
+
+// isTerminalRule reports whether rule is mihomo's fallback rule. mihomo
+// accepts any casing of MATCH, so the prefix check is case-insensitive.
+func isTerminalRule(rule string) bool {
+	const terminal = "MATCH"
+	return len(rule) >= len(terminal) && strings.EqualFold(rule[:len(terminal)], terminal)
+}
+
 // mergeConfig renders base YAML with overlay YAML. Overlay directives are
 // honoured at every level and never reach the rendered output.
 func mergeConfig(baseYAML, overlayYAML string) (string, error) {
@@ -32,8 +43,11 @@ func mergeConfig(baseYAML, overlayYAML string) (string, error) {
 		return "", fmt.Errorf("parsing overlay YAML: %w", err)
 	}
 
-	if overlayRoot.Tag == deleteDirective {
+	switch overlayRoot.Tag {
+	case deleteDirective:
 		return "", fmt.Errorf("document: !delete cannot be applied to the whole document")
+	case replaceDirective:
+		return "", fmt.Errorf("document: !replace cannot be applied to the whole document")
 	}
 
 	if strings.TrimSpace(baseYAML) == "" {
@@ -113,7 +127,7 @@ func containsDirective(node *yaml.Node) bool {
 	if node == nil {
 		return false
 	}
-	if node.Tag == replaceDirective || node.Tag == deleteDirective {
+	if isDirectiveTag(node.Tag) {
 		return true
 	}
 	for _, child := range node.Content {
@@ -186,6 +200,9 @@ func stripDirectives(node *yaml.Node, path []string, explicitReplace bool) error
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key := node.Content[i]
+			if err := rejectDirectiveKey(key, path); err != nil {
+				return err
+			}
 			if err := stripDirectives(node.Content[i+1], joinPath(path, key.Value), explicitReplace); err != nil {
 				return err
 			}
@@ -209,9 +226,12 @@ func mergeMapping(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
 		valueNode := overlay.Content[i+1]
 		key := keyNode.Value
 		fieldPath := joinPath(path, key)
+		if err := rejectDirectiveKey(keyNode, path); err != nil {
+			return nil, err
+		}
 
 		if valueNode.Tag == deleteDirective {
-			if err := requireNullDirectiveValue(valueNode, fieldPath); err != nil {
+			if err := validateDeleteValue(valueNode, fieldPath); err != nil {
 				return nil, err
 			}
 			if added[key] {
@@ -260,9 +280,12 @@ func mergeProviderMap(base, overlay *yaml.Node, path []string) (*yaml.Node, erro
 		valueNode := overlay.Content[i+1]
 		key := keyNode.Value
 		fieldPath := joinPath(path, key)
+		if err := rejectDirectiveKey(keyNode, path); err != nil {
+			return nil, err
+		}
 
 		if valueNode.Tag == deleteDirective {
-			if err := requireNullDirectiveValue(valueNode, fieldPath); err != nil {
+			if err := validateDeleteValue(valueNode, fieldPath); err != nil {
 				return nil, err
 			}
 			if added[key] {
@@ -278,6 +301,9 @@ func mergeProviderMap(base, overlay *yaml.Node, path []string) (*yaml.Node, erro
 		}
 		if deleted[key] {
 			return nil, fmt.Errorf("%s: both deleted and added", pathString(fieldPath))
+		}
+		if added[key] {
+			return nil, fmt.Errorf("%s: duplicate entry in override", pathString(fieldPath))
 		}
 		added[key] = true
 
@@ -320,6 +346,9 @@ func mergeIdentityArray(base, overlay *yaml.Node, path []string) (*yaml.Node, er
 		itemNamePath := joinPath(path, name)
 		if deleted[name] {
 			return nil, fmt.Errorf("%s: both deleted and added", pathString(itemNamePath))
+		}
+		if added[name] {
+			return nil, fmt.Errorf("%s: duplicate entry in override", pathString(itemNamePath))
 		}
 		added[name] = true
 
@@ -372,7 +401,7 @@ func mergeRules(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
 
 	insertAt := len(base.Content)
 	for i, item := range base.Content {
-		if item.Kind == yaml.ScalarNode && strings.HasPrefix(item.Value, "MATCH") {
+		if item.Kind == yaml.ScalarNode && isTerminalRule(item.Value) {
 			insertAt = i
 			break
 		}
@@ -385,11 +414,35 @@ func mergeRules(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
 	return base, nil
 }
 
-func requireNullDirectiveValue(node *yaml.Node, path []string) error {
-	if node.Kind != yaml.ScalarNode || !isNullScalar(node) {
-		return fmt.Errorf("%s: !delete requires a null value", pathString(path))
+func rejectDirectiveKey(key *yaml.Node, path []string) error {
+	if !isDirectiveTag(key.Tag) {
+		return nil
 	}
-	return nil
+	example := key.Value + ": " + key.Tag + " null"
+	if key.Tag == replaceDirective {
+		example = key.Value + ": !replace <value>"
+	}
+	fieldPath := pathString(joinPath(path, key.Value))
+	return fmt.Errorf("%s: %s must be attached to a value (e.g. %q), not to a mapping key", fieldPath, key.Tag, example)
+}
+
+func validateDeleteValue(node *yaml.Node, path []string) error {
+	if node.Kind == yaml.ScalarNode && isNullScalar(node) {
+		return nil
+	}
+	field := pathString(path)
+	switch {
+	case node.Kind == yaml.SequenceNode && isRulesPath(path):
+		return fmt.Errorf("%s: !delete removes a single rule; write %q as a rules item", field, "- !delete <rule text>")
+	case node.Kind == yaml.SequenceNode && isIdentityArrayPath(path):
+		return fmt.Errorf("%s: !delete removes a single entry; write %q as an array item", field, "- !delete <name>")
+	case node.Kind == yaml.MappingNode && isProviderMap(path):
+		return fmt.Errorf("%s: !delete removes a single provider; write %q under %s", field, "<name>: !delete null", pathString(path))
+	case node.Kind == yaml.MappingNode:
+		return fmt.Errorf("%s: !delete requires a null value; to remove a nested key, write %q inside the mapping", field, "<key>: !delete null")
+	default:
+		return fmt.Errorf("%s: !delete requires a null value", field)
+	}
 }
 
 func isNullScalar(node *yaml.Node) bool {
