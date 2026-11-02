@@ -590,6 +590,9 @@ func TestIsTerminalRule(t *testing.T) {
 		{"Match,Proxy", true},
 		{"mAtCh,DIRECT", true},
 		{"MATCH", true},
+		{"match", true},
+		{"MATCHING,x,DIRECT", false},
+		{"MatchX", false},
 		{"GEOIP,CN,DIRECT", false},
 		{"DOMAIN-MATCH,match.example.com,DIRECT", false},
 		{"", false},
@@ -601,7 +604,7 @@ func TestIsTerminalRule(t *testing.T) {
 }
 
 func TestPreviewTerminalRuleIsCaseInsensitive(t *testing.T) {
-	for _, terminal := range []string{"MATCH,DIRECT", "match,DIRECT", "Match,Proxy"} {
+	for _, terminal := range []string{"MATCH,DIRECT", "match,DIRECT", "Match,Proxy", "MATCH"} {
 		t.Run(terminal, func(t *testing.T) {
 			got := mustPreviewYAML(t, "rules:\n  - GEOIP,CN,DIRECT\n  - "+terminal+"\n", "rules:\n  - DOMAIN-SUFFIX,local.example.com,DIRECT\n")
 			rules := ruleTexts(t, got["rules"])
@@ -661,7 +664,39 @@ func TestMergeConfigRejectsDirectiveTagsOnMappingKeys(t *testing.T) {
 	}
 }
 
-func TestPreviewRejectsDuplicateIdentityEntries(t *testing.T) {
+func TestMergeConfigRejectsDuplicateMappingKeys(t *testing.T) {
+	base := "port: 7890\ndns:\n  enable: true\n"
+	for _, tc := range []struct{ name, base, overlay, path string }{
+		{"root level", base, "port: 8080\nport: 9090\n", "port"},
+		{"nested mapping", base, "dns:\n  enable: false\n  enable: true\n", "dns.enable"},
+		{"inside replace", base, "dns: !replace\n  enable: false\n  enable: true\n", "dns.enable"},
+		{"without base", "", "port: 8080\nport: 9090\n", "port"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mergeConfig(tc.base, tc.overlay)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q does not contain path %q", err, tc.path)
+			}
+			if !strings.Contains(err.Error(), "duplicate") {
+				t.Fatalf("error %q does not report a duplicate", err)
+			}
+		})
+	}
+}
+
+func TestPreviewNonTerminalMatchPrefixRule(t *testing.T) {
+	got := mustPreviewYAML(t, "rules:\n  - MATCHING,x,DIRECT\n", "rules:\n  - DOMAIN-SUFFIX,local.example.com,DIRECT\n")
+	rules := ruleTexts(t, got["rules"])
+	want := []string{"MATCHING,x,DIRECT", "DOMAIN-SUFFIX,local.example.com,DIRECT"}
+	if len(rules) != len(want) || rules[0] != want[0] || rules[1] != want[1] {
+		t.Fatalf("rules = %v, want user rule appended after a non-terminal MATCHING rule", rules)
+	}
+}
+
+func TestMergeConfigRejectsDuplicateIdentityEntries(t *testing.T) {
 	base := "proxies:\n  - name: node1\n    type: ss\nproxy-providers:\n  remote:\n    type: http\n"
 	for _, tc := range []struct{ name, overlay, path string }{
 		{"identity array", "proxies:\n  - name: node1\n    type: ss\n  - name: node1\n    type: ss\n", "proxies.node1"},

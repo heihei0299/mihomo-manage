@@ -16,11 +16,15 @@ func isDirectiveTag(tag string) bool {
 	return tag == replaceDirective || tag == deleteDirective
 }
 
-// isTerminalRule reports whether rule is mihomo's fallback rule. mihomo
-// accepts any casing of MATCH, so the prefix check is case-insensitive.
+// isTerminalRule reports whether rule is mihomo's fallback rule: MATCH alone
+// or MATCH followed by a rule argument. mihomo accepts any casing, but a rule
+// like MATCHING must not be mistaken for the fallback.
 func isTerminalRule(rule string) bool {
 	const terminal = "MATCH"
-	return len(rule) >= len(terminal) && strings.EqualFold(rule[:len(terminal)], terminal)
+	if len(rule) < len(terminal) || !strings.EqualFold(rule[:len(terminal)], terminal) {
+		return false
+	}
+	return len(rule) == len(terminal) || rule[len(terminal)] == ','
 }
 
 // mergeConfig renders base YAML with overlay YAML. Overlay directives are
@@ -41,6 +45,10 @@ func mergeConfig(baseYAML, overlayYAML string) (string, error) {
 			return overlayYAML, nil
 		}
 		return "", fmt.Errorf("parsing overlay YAML: %w", err)
+	}
+
+	if err := rejectDuplicateOverlayKeys(overlayRoot, nil); err != nil {
+		return "", err
 	}
 
 	switch overlayRoot.Tag {
@@ -136,6 +144,37 @@ func containsDirective(node *yaml.Node) bool {
 		}
 	}
 	return false
+}
+
+// rejectDuplicateOverlayKeys fails on repeated mapping keys anywhere in the
+// overlay. YAML node parsing keeps both entries; silently keeping the last one
+// would contradict the identity-set rules that reject duplicates.
+func rejectDuplicateOverlayKeys(node *yaml.Node, path []string) error {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.MappingNode:
+		seen := make(map[string]bool, len(node.Content)/2)
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i]
+			keyPath := joinPath(path, key.Value)
+			if seen[key.Value] {
+				return fmt.Errorf("%s: duplicate entry in override", pathString(keyPath))
+			}
+			seen[key.Value] = true
+			if err := rejectDuplicateOverlayKeys(node.Content[i+1], keyPath); err != nil {
+				return err
+			}
+		}
+	case yaml.SequenceNode:
+		for i, item := range node.Content {
+			if err := rejectDuplicateOverlayKeys(item, itemPath(path, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 var identityArrayKeys = map[string]bool{
@@ -301,9 +340,6 @@ func mergeProviderMap(base, overlay *yaml.Node, path []string) (*yaml.Node, erro
 		}
 		if deleted[key] {
 			return nil, fmt.Errorf("%s: both deleted and added", pathString(fieldPath))
-		}
-		if added[key] {
-			return nil, fmt.Errorf("%s: duplicate entry in override", pathString(fieldPath))
 		}
 		added[key] = true
 
