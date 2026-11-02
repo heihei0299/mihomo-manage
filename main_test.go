@@ -66,6 +66,14 @@ func TestConfigOverrideEditOpensOverrideFile(t *testing.T) {
 	t.Setenv("EDITOR", script)
 	t.Setenv("EDITOR_LOG", logPath)
 
+	// The command opens the real override path. When that path exists but is not
+	// readable (for example root-owned 0600 from an installation), the command
+	// refuses before the editor runs, so this scenario needs a path that is
+	// absent or readable.
+	if _, err := os.ReadFile(manager.OverrideFilePath); err != nil && !os.IsNotExist(err) {
+		t.Skipf("real override path is not readable: %v", err)
+	}
+
 	cfg := &tuiMockConfig{}
 	code := handleConfigCommand(&cli.Handler{}, cfg, context.Background(), []string{"override", "edit"})
 
