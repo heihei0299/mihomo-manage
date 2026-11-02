@@ -90,7 +90,7 @@ mihomo-manager uninstall [--keep-backup]
 - `!replace` 在任意层级整体替换该节点；`!delete` 在任意层级删除该键（挂在集合字段上表示整块移除，如 `proxies: !delete null`），值必须为 `null`。
 - `proxies`、`proxy-groups` 按 `name` 对齐，`proxy-providers`、`rule-providers` 按映射键对齐：同名整条替换并保持订阅中的位置，新名字追加到末尾；同名替换不继承订阅字段。
 - 数组减项写在数组项上：`- !delete 香港01`（identity-array 按 `name`，identity-map 按键）或 `- !delete DOMAIN-SUFFIX,ads.example.com,DIRECT`（`rules` 按完整规则文本精确匹配）。
-- 覆写文件中的 `rules` 插入订阅首个兜底规则（`MATCH` 或 `MATCH,` 前缀，大小写不敏感）之前；订阅没有兜底规则时追加到末尾。
+- 覆写文件中的 `rules` 插入订阅首个兜底规则（规则类型字段为 `MATCH`，大小写不敏感、忽略两侧空白，如 `MATCH`、`match,DIRECT`、`MATCH ,DIRECT`）之前；订阅没有兜底规则时追加到末尾。
 - 删除不存在的键/名字/规则、同一名字既删又增、同一份覆写里重复的映射键或身份条目、`!replace` 子树内再出现 `!delete`、把指令挂在键名上、把指令挂在整个文档上，都会报错，错误信息包含路径（如 `dns.fallback`）。
 - 指令标签只在合并期生效，不会写入生成的 `config.yaml`。
 

@@ -16,15 +16,15 @@ func isDirectiveTag(tag string) bool {
 	return tag == replaceDirective || tag == deleteDirective
 }
 
-// isTerminalRule reports whether rule is mihomo's fallback rule: MATCH alone
-// or MATCH followed by a rule argument. mihomo accepts any casing, but a rule
-// like MATCHING must not be mistaken for the fallback.
+// isTerminalRule reports whether rule is mihomo's fallback rule. mihomo
+// trims the rule type, so any casing and stray spaces around the type field
+// still count; a rule like MATCHING must not be mistaken for the fallback.
 func isTerminalRule(rule string) bool {
-	const terminal = "MATCH"
-	if len(rule) < len(terminal) || !strings.EqualFold(rule[:len(terminal)], terminal) {
-		return false
+	ruleType := rule
+	if comma := strings.IndexByte(rule, ','); comma >= 0 {
+		ruleType = rule[:comma]
 	}
-	return len(rule) == len(terminal) || rule[len(terminal)] == ','
+	return strings.EqualFold(strings.TrimSpace(ruleType), "MATCH")
 }
 
 // mergeConfig renders base YAML with overlay YAML. Overlay directives are
@@ -148,22 +148,29 @@ func containsDirective(node *yaml.Node) bool {
 
 // rejectDuplicateOverlayKeys fails on repeated mapping keys anywhere in the
 // overlay. YAML node parsing keeps both entries; silently keeping the last one
-// would contradict the identity-set rules that reject duplicates.
+// would contradict the identity-set rules that reject duplicates. A delete and
+// an add for the same key report the more specific conflict.
 func rejectDuplicateOverlayKeys(node *yaml.Node, path []string) error {
 	if node == nil {
 		return nil
 	}
 	switch node.Kind {
 	case yaml.MappingNode:
-		seen := make(map[string]bool, len(node.Content)/2)
+		seen := make(map[string]*yaml.Node, len(node.Content)/2)
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key := node.Content[i]
+			value := node.Content[i+1]
 			keyPath := joinPath(path, key.Value)
-			if seen[key.Value] {
+			if previous, exists := seen[key.Value]; exists {
+				previousDeleted := previous.Tag == deleteDirective
+				currentDeleted := value.Tag == deleteDirective
+				if previousDeleted != currentDeleted {
+					return fmt.Errorf("%s: both deleted and added", pathString(keyPath))
+				}
 				return fmt.Errorf("%s: duplicate entry in override", pathString(keyPath))
 			}
-			seen[key.Value] = true
-			if err := rejectDuplicateOverlayKeys(node.Content[i+1], keyPath); err != nil {
+			seen[key.Value] = value
+			if err := rejectDuplicateOverlayKeys(value, keyPath); err != nil {
 				return err
 			}
 		}
@@ -257,9 +264,6 @@ func stripDirectives(node *yaml.Node, path []string, explicitReplace bool) error
 }
 
 func mergeMapping(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
-	deleted := map[string]bool{}
-	added := map[string]bool{}
-
 	for i := 0; i+1 < len(overlay.Content); i += 2 {
 		keyNode := overlay.Content[i]
 		valueNode := overlay.Content[i+1]
@@ -273,21 +277,13 @@ func mergeMapping(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
 			if err := validateDeleteValue(valueNode, fieldPath); err != nil {
 				return nil, err
 			}
-			if added[key] {
-				return nil, fmt.Errorf("%s: both deleted and added", pathString(fieldPath))
-			}
 			index := findMappingEntry(base, key)
 			if index < 0 {
 				return nil, fmt.Errorf("%s: !delete target not found", pathString(fieldPath))
 			}
 			base.Content = append(base.Content[:index], base.Content[index+2:]...)
-			deleted[key] = true
 			continue
 		}
-		if deleted[key] {
-			return nil, fmt.Errorf("%s: both deleted and added", pathString(fieldPath))
-		}
-		added[key] = true
 
 		if valueNode.Tag == replaceDirective {
 			replacement, err := mergeReplacement(valueNode, fieldPath)
@@ -311,9 +307,6 @@ func mergeMapping(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
 // the mapping key rather than a name field. A same-named provider is replaced
 // whole; new providers are appended.
 func mergeProviderMap(base, overlay *yaml.Node, path []string) (*yaml.Node, error) {
-	deleted := map[string]bool{}
-	added := map[string]bool{}
-
 	for i := 0; i+1 < len(overlay.Content); i += 2 {
 		keyNode := overlay.Content[i]
 		valueNode := overlay.Content[i+1]
@@ -327,21 +320,13 @@ func mergeProviderMap(base, overlay *yaml.Node, path []string) (*yaml.Node, erro
 			if err := validateDeleteValue(valueNode, fieldPath); err != nil {
 				return nil, err
 			}
-			if added[key] {
-				return nil, fmt.Errorf("%s: both deleted and added", pathString(fieldPath))
-			}
 			index := findMappingEntry(base, key)
 			if index < 0 {
 				return nil, fmt.Errorf("%s: !delete target not found", pathString(fieldPath))
 			}
 			base.Content = append(base.Content[:index], base.Content[index+2:]...)
-			deleted[key] = true
 			continue
 		}
-		if deleted[key] {
-			return nil, fmt.Errorf("%s: both deleted and added", pathString(fieldPath))
-		}
-		added[key] = true
 
 		replacement, err := mergeReplacement(valueNode, fieldPath)
 		if err != nil {

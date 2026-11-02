@@ -22,7 +22,7 @@ var defaultOverride = []byte(`# 本地覆写文件（override-file）—— 覆�
 # - provider 减项写在映射键上，例如：
 #     proxy-providers:
 #       remote: !delete null
-# - 指令标签必须挂在值或数组项上，不能挂在键名上
+# - 指令标签必须挂在值或数组项上，不能挂在键名上，也不能挂在整个文档上
 # - 删除不存在的键/名字/规则、同一名字既删又增、覆写里重名条目、
 #   !replace 子树内再出现 !delete 都会报错，错误信息包含路径
 #

@@ -591,7 +591,11 @@ func TestIsTerminalRule(t *testing.T) {
 		{"mAtCh,DIRECT", true},
 		{"MATCH", true},
 		{"match", true},
+		{"MATCH ,DIRECT", true},
+		{"match , DIRECT", true},
+		{"  MATCH,DIRECT", true},
 		{"MATCHING,x,DIRECT", false},
+		{"MATCHING ,DIRECT", false},
 		{"MatchX", false},
 		{"GEOIP,CN,DIRECT", false},
 		{"DOMAIN-MATCH,match.example.com,DIRECT", false},
@@ -604,7 +608,7 @@ func TestIsTerminalRule(t *testing.T) {
 }
 
 func TestPreviewTerminalRuleIsCaseInsensitive(t *testing.T) {
-	for _, terminal := range []string{"MATCH,DIRECT", "match,DIRECT", "Match,Proxy", "MATCH"} {
+	for _, terminal := range []string{"MATCH,DIRECT", "match,DIRECT", "Match,Proxy", "MATCH", "MATCH ,DIRECT"} {
 		t.Run(terminal, func(t *testing.T) {
 			got := mustPreviewYAML(t, "rules:\n  - GEOIP,CN,DIRECT\n  - "+terminal+"\n", "rules:\n  - DOMAIN-SUFFIX,local.example.com,DIRECT\n")
 			rules := ruleTexts(t, got["rules"])
@@ -664,6 +668,28 @@ func TestMergeConfigRejectsDirectiveTagsOnMappingKeys(t *testing.T) {
 	}
 }
 
+func TestMergeConfigReportsDeleteAndAddConflict(t *testing.T) {
+	base := "port: 7890\nproxy-providers:\n  remote:\n    type: http\n"
+	for _, tc := range []struct{ name, overlay, path string }{
+		{"delete first", "port: !delete null\nport: 9999\n", "port"},
+		{"add first", "port: 9999\nport: !delete null\n", "port"},
+		{"provider", "proxy-providers:\n  remote: !delete null\n  remote:\n    type: http\n", "proxy-providers.remote"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mergeConfig(base, tc.overlay)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("error %q does not contain path %q", err, tc.path)
+			}
+			if !strings.Contains(err.Error(), "both deleted and added") {
+				t.Fatalf("error %q does not report the delete/add conflict", err)
+			}
+		})
+	}
+}
+
 func TestMergeConfigRejectsDuplicateMappingKeys(t *testing.T) {
 	base := "port: 7890\ndns:\n  enable: true\n"
 	for _, tc := range []struct{ name, base, overlay, path string }{
@@ -671,6 +697,7 @@ func TestMergeConfigRejectsDuplicateMappingKeys(t *testing.T) {
 		{"nested mapping", base, "dns:\n  enable: false\n  enable: true\n", "dns.enable"},
 		{"inside replace", base, "dns: !replace\n  enable: false\n  enable: true\n", "dns.enable"},
 		{"without base", "", "port: 8080\nport: 9090\n", "port"},
+		{"two deletes", base, "port: !delete null\nport: !delete null\n", "port"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := mergeConfig(tc.base, tc.overlay)
