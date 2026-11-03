@@ -292,11 +292,32 @@ func (OSSystem) ListVersions(ctx context.Context, owner, repo string, limit int)
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, fmt.Errorf("decoding releases: %w", err)
 	}
-	versions := make([]VersionInfo, 0, len(releases))
+	tags := make([]string, 0, len(releases))
 	for _, r := range releases {
-		versions = append(versions, VersionInfo{Tag: r.TagName})
+		tags = append(tags, r.TagName)
 	}
-	return versions, nil
+	return versionTags(tags, limit), nil
+}
+
+// versionTags keeps release tags that can be used as upgrade targets. GitHub's
+// releases endpoint also exposes rolling tags such as "Prerelease-Alpha", which
+// are not version numbers and must not be offered by the versions command.
+func versionTags(tags []string, limit int) []VersionInfo {
+	versions := make([]VersionInfo, 0, len(tags))
+	for _, tag := range tags {
+		if !isVersionTag(tag) {
+			continue
+		}
+		versions = append(versions, VersionInfo{Tag: tag})
+		if limit > 0 && len(versions) >= limit {
+			break
+		}
+	}
+	return versions
+}
+
+func isVersionTag(tag string) bool {
+	return len(tag) >= 2 && tag[0] == 'v' && tag[1] >= '0' && tag[1] <= '9'
 }
 
 func (OSSystem) LatestVersion(ctx context.Context, owner, repo string) (string, error) {

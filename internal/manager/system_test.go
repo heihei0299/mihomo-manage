@@ -123,3 +123,22 @@ func TestOSSystemDownloadKeepsArtifactsPrivate(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionTagsFiltersNonVersionReleases(t *testing.T) {
+	tags := []string{"Prerelease-Alpha", "v1.19.33", "Alpha", "1.19.32", "v1.19.31", "v1.19.30"}
+	got := versionTags(tags, 2)
+	if len(got) != 2 {
+		t.Fatalf("versionTags returned %d entries, want 2: %v", len(got), got)
+	}
+	if got[0].Tag != "v1.19.33" || got[1].Tag != "v1.19.31" {
+		t.Fatalf("versionTags = %v, want [v1.19.33 v1.19.31]", got)
+	}
+}
+
+func TestVersionTagsRejectsNonVersionTags(t *testing.T) {
+	for _, tag := range []string{"", "v", "1.19.33", "Alpha", "Prerelease-Alpha", "vv1.0.0"} {
+		if got := versionTags([]string{tag}, 5); len(got) != 0 {
+			t.Errorf("versionTags(%q) = %v, want empty", tag, got)
+		}
+	}
+}
