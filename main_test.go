@@ -66,22 +66,27 @@ func TestConfigOverrideEditOpensOverrideFile(t *testing.T) {
 	t.Setenv("EDITOR", script)
 	t.Setenv("EDITOR_LOG", logPath)
 
-	// The command opens the real override path. When that path exists but is not
-	// readable (for example root-owned 0600 from an installation), the command
-	// refuses before the editor runs, so this scenario needs a path that is
-	// absent or readable.
-	if _, err := os.ReadFile(manager.OverrideFilePath); err != nil && !os.IsNotExist(err) {
-		t.Skipf("real override path is not readable: %v", err)
+	// The command opens the real override path. A non-root run cannot read a
+	// root-owned 0600 file, so skip that unreachable case; otherwise the fake
+	// editor is a no-op and the result depends on whether the file exists and
+	// has content.
+	before, readErr := os.ReadFile(manager.OverrideFilePath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Skipf("real override path is not readable: %v", readErr)
 	}
 
 	cfg := &tuiMockConfig{}
 	code := handleConfigCommand(&cli.Handler{}, cfg, context.Background(), []string{"override", "edit"})
 
-	if code != 1 {
-		t.Errorf("expected unreadable editor result to fail, got %d", code)
+	want := 1 // absent or empty file cannot produce an editor result
+	if readErr == nil && strings.TrimSpace(string(before)) != "" {
+		want = 0 // an unchanged readable file is a successful no-op
+	}
+	if code != want {
+		t.Errorf("exit code = %d, want %d", code, want)
 	}
 	if cfg.updateCalled {
-		t.Error("UpdateConfig must not be called when editor output cannot be read")
+		t.Error("UpdateConfig must not be called for an unchanged editor result")
 	}
 	data, err := os.ReadFile(logPath)
 	if err != nil {
