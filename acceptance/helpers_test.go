@@ -31,24 +31,15 @@ func buildBinary(t *testing.T) string {
 
 func runMihomo(t *testing.T, binary string, args ...string) RunResult {
 	t.Helper()
-	cmd := exec.Command("sudo", append([]string{binary}, args...)...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			t.Fatalf("failed to run %s %v: %v", binary, args, err)
-		}
-	}
-	return RunResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
-	}
+	return runSudo(t, binary, args...)
+}
+
+func runMihomoEnv(t *testing.T, env []string, binary string, args ...string) RunResult {
+	t.Helper()
+	cmdArgs := append([]string{"env"}, env...)
+	cmdArgs = append(cmdArgs, binary)
+	cmdArgs = append(cmdArgs, args...)
+	return runSudo(t, cmdArgs[0], cmdArgs[1:]...)
 }
 
 func runMihomoNoSudo(t *testing.T, binary string, args ...string) RunResult {
@@ -233,31 +224,13 @@ func getPID(t *testing.T) string {
 	return pid
 }
 
-func writeFile(t *testing.T, path, content string) {
+func writeFileSudo(t *testing.T, path, content string) {
 	t.Helper()
 	cmd := exec.Command("sudo", "tee", path)
 	cmd.Stdin = strings.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("writeFile %s failed: %v\n%s", path, err, out)
-	}
-}
-
-func removeFile(t *testing.T, path string) {
-	t.Helper()
-	cmd := exec.Command("sudo", "rm", "-rf", path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("removeFile %s failed: %v\n%s", path, err, out)
-	}
-}
-
-func chmodFile(t *testing.T, path, mode string) {
-	t.Helper()
-	cmd := exec.Command("sudo", "chmod", mode, path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("chmodFile %s %s failed: %v\n%s", path, mode, err, out)
+		t.Fatalf("writeFileSudo %s failed: %v\n%s", path, err, out)
 	}
 }
 
@@ -289,28 +262,6 @@ func dirExists(t *testing.T, path string) bool {
 	t.Helper()
 	cmd := exec.Command("sudo", "test", "-d", path)
 	return cmd.Run() == nil
-}
-
-func ensureBackToRunning(t *testing.T, binary string) {
-	t.Helper()
-	r := runMihomo(t, binary, "status")
-	if r.ExitCode == 0 && strings.Contains(r.Stdout, "running") {
-		return
-	}
-	if r.ExitCode == 1 && strings.Contains(r.Stdout, "stopped") {
-		r = runMihomo(t, binary, "start")
-		if r.ExitCode != 0 {
-			t.Fatalf("ensureRunning: start failed: %s %s", r.Stdout, r.Stderr)
-		}
-		return
-	}
-
-	t.Logf("ensureRunning: status unexpected (%d), reinstalling", r.ExitCode)
-	ensureUninstalled(t, binary)
-	r = runMihomo(t, binary, "install")
-	if r.ExitCode != 0 {
-		t.Fatalf("ensureRunning: reinstall failed: %s %s", r.Stdout, r.Stderr)
-	}
 }
 
 var installPhases = []string{"[fetch]", "[deploy]", "[bootstrap]", "[register]", "[start]"}

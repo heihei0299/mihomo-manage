@@ -3,7 +3,12 @@
 package acceptance
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +24,23 @@ const (
 	subscriptionDataFile = "/opt/mihomo-manager/state/subscription-data.txt"
 )
 
-var testURL = "https://raw.githubusercontent.com/MetaCubeX/mihomo-dashboard/refs/heads/gh-pages/index.html"
+const subscriptionFixture = `proxies:
+  - name: acceptance-test
+    type: ss
+    server: example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: acceptance-test
+`
+
+func startSubscriptionServer(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(subscriptionFixture))
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
 
 func buildBinaryAndPreflight(t *testing.T) string {
 	t.Helper()
@@ -231,14 +252,15 @@ func TestAcceptanceSubscriptionSet(t *testing.T) {
 	binary := buildBinaryAndPreflight(t)
 	ensureInstalled(t, binary)
 
-	r := runMihomo(t, binary, "subscription", "set", testURL)
+	subscriptionURL := startSubscriptionServer(t)
+	r := runMihomo(t, binary, "subscription", "set", subscriptionURL)
 	assertExitCode(t, r, 0)
 
 	if !fileExists(subscriptionURLFile) {
 		t.Error("expected subscription-url.txt to exist")
 	}
 	content := readFileSudo(t, subscriptionURLFile)
-	if strings.TrimSpace(content) != testURL {
+	if strings.TrimSpace(content) != subscriptionURL {
 		t.Errorf("expected subscription-url.txt to contain URL, got %q", content)
 	}
 
@@ -275,7 +297,7 @@ func TestAcceptanceSubscriptionSync(t *testing.T) {
 	binary := buildBinaryAndPreflight(t)
 	ensureInstalled(t, binary)
 
-	runMihomo(t, binary, "subscription", "set", testURL)
+	runMihomo(t, binary, "subscription", "set", startSubscriptionServer(t))
 
 	r := runMihomo(t, binary, "subscription", "sync")
 	assertExitCode(t, r, 0)
@@ -365,7 +387,7 @@ func TestAcceptanceUpgrade(t *testing.T) {
 	r := runMihomo(t, binary, "upgrade", currentVersion)
 	assertExitCode(t, r, 0)
 	assertStdoutContains(t, r, "[fetch]")
-	assertStdoutContains(t, r, "[deploy]")
+	assertStdoutContains(t, r, "[replace]")
 	assertStdoutContains(t, r, "[start]")
 
 	if !fileExists(backupsDir + "/mihomo.bak") {
@@ -381,12 +403,22 @@ func TestAcceptanceUpgrade(t *testing.T) {
 func getCurrentVersion(t *testing.T, binary string) string {
 	t.Helper()
 	r := runMihomo(t, binary, "status")
-	for _, line := range strings.Split(r.Stdout, "\n") {
-		if strings.Contains(line, "version:") {
-			parts := strings.Split(line, "version:")
-			if len(parts) > 1 {
-				return strings.TrimSpace(parts[1])
-			}
+	return parseStatusVersion(r.Stdout)
+}
+
+func parseStatusVersion(stdout string) string {
+	for _, line := range strings.Split(stdout, "\n") {
+		idx := strings.Index(line, "version:")
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(line[idx+len("version:"):])
+		if end := strings.IndexAny(rest, ") \t"); end >= 0 {
+			rest = rest[:end]
+		}
+		rest = strings.TrimSpace(rest)
+		if rest != "" {
+			return rest
 		}
 	}
 	return ""
@@ -402,30 +434,72 @@ func TestAcceptanceUpgradeRollback(t *testing.T) {
 		t.Fatal("could not determine current version")
 	}
 
-	backupBinary := "/tmp/mihomo.bak.test"
-	runSudo(t, "cp", binaryPath, backupBinary)
-
-	fakeScript := "#!/bin/sh\nexit 1\n"
-	writeFile(t, binaryPath, fakeScript)
-	chmodFile(t, binaryPath, "0755")
-
+	// Type=exec makes systemd wait for a successful exec, so the unstartable
+	// replacement binary fails the start job synchronously instead of racing
+	// with the active-state check.
+	dropInDir := "/etc/systemd/system/mihomo.service.d"
+	dropInPath := dropInDir + "/acceptance-rollback.conf"
+	if r := runSudo(t, "mkdir", "-p", dropInDir); r.ExitCode != 0 {
+		t.Fatalf("creating systemd drop-in directory: %s%s", r.Stdout, r.Stderr)
+	}
+	writeFileSudo(t, dropInPath, "[Service]\nType=exec\n")
+	if r := runSudo(t, "systemctl", "daemon-reload"); r.ExitCode != 0 {
+		t.Fatalf("reloading systemd units: %s%s", r.Stdout, r.Stderr)
+	}
 	t.Cleanup(func() {
-		runSudo(t, "cp", backupBinary, binaryPath)
-		removeFile(t, backupBinary)
-		ensureBackToRunning(t, binary)
+		runSudo(t, "rm", "-f", dropInPath)
+		runSudo(t, "rmdir", dropInDir)
+		runSudo(t, "systemctl", "daemon-reload")
+		runSudo(t, "systemctl", "reset-failed", "mihomo")
+		if r := runSudo(t, "systemctl", "is-active", "mihomo"); strings.TrimSpace(r.Stdout) != "active" {
+			runMihomo(t, binary, "start")
+		}
 	})
 
-	r := runMihomo(t, binary, "upgrade", currentVersion)
-	if r.ExitCode != 0 {
-		t.Logf("upgrade returned exit %d, checking rollback state", r.ExitCode)
+	// Serve a fake release whose executable cannot start. The upgrade replaces
+	// the working binary, fails to start the fake one, and must restore the old
+	// binary instead of writing over the running executable.
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	if _, err := gz.Write([]byte("not an executable\n")); err != nil {
+		t.Fatalf("writing fake release: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("closing fake release: %v", err)
+	}
+	sum := sha256.Sum256(archive.Bytes())
+
+	fakeVersion := "v9.99.99"
+	assetName := "mihomo-" + fakeVersion + ".gz"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + assetName:
+			_, _ = w.Write(archive.Bytes())
+		case "/checksum.txt":
+			_, _ = fmt.Fprintf(w, "%x\n", sum)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	r := runMihomoEnv(t, []string{
+		"MIHOMO_RELEASE_URL=" + server.URL + "/mihomo-{version}.gz",
+		"MIHOMO_RELEASE_CHECKSUM_URL=" + server.URL + "/checksum.txt",
+	}, binary, "upgrade", fakeVersion)
+	if r.ExitCode == 0 {
+		t.Fatalf("expected upgrade to fail and roll back, got success\nstdout:\n%s\nstderr:\n%s", r.Stdout, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "rolled back") {
+		t.Errorf("expected rollback output, got:\n%s", r.Stdout)
 	}
 
-	versionAfter := getCurrentVersion(t, binary)
-	t.Logf("version before: %s, after: %s", currentVersion, versionAfter)
-
+	if got := getCurrentVersion(t, binary); got != currentVersion {
+		t.Errorf("version after rollback = %q, want %q", got, currentVersion)
+	}
 	active := runSudo(t, "systemctl", "is-active", "mihomo")
 	if strings.TrimSpace(active.Stdout) != "active" {
-		t.Errorf("expected service active after upgrade/rollback, got %q", active.Stdout)
+		t.Errorf("expected service active after rollback, got %q", active.Stdout)
 	}
 }
 
