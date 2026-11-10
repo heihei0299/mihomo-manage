@@ -110,7 +110,9 @@ func main() {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := startTUI(ctx, ctrl, lifecycle, cfg, sched); err != nil {
+		err := startTUI(ctx, ctrl, lifecycle, cfg, sched)
+		restoreInvokerOwnership()
+		if err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -216,6 +218,7 @@ func main() {
 	}
 
 	stop()
+	restoreInvokerOwnership()
 	os.Exit(exitCode)
 }
 

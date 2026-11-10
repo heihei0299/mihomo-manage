@@ -27,3 +27,9 @@ var (
 	configApplyStatusFile      = filepath.Join(stateDir, "config-apply-status.json")
 	configApplyTransactionFile = filepath.Join(stateDir, "config-apply-transaction.json")
 )
+
+// ManagedRoots lists the filesystem trees the manager owns: the mihomo
+// instance installation and the manager's own state.
+func ManagedRoots() []string {
+	return []string{installRoot, managerRoot}
+}
