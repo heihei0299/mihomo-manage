@@ -20,14 +20,9 @@
 /MISSION.md
 /PROJECT.md
 /RESOURCES.md
-/fushen.md
-/assets/
-/learning-records/
-/lessons/
-/reference/
 
 # === 提交内容治理：仅提交 README + 源码 ===
 # 其余文档保留在本地磁盘，不纳入版本控制
 *.md
 !README*.md
-/docs/
+/doc/
