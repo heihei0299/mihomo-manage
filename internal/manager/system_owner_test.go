@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"testing"
@@ -38,17 +39,28 @@ func TestParseOwnerRecord(t *testing.T) {
 	}
 }
 
-func TestUserDataRootsKeepBinariesRootOwned(t *testing.T) {
-	roots := UserDataRoots()
-	for _, want := range []string{configDir, stateDir} {
-		if !slices.Contains(roots, want) {
-			t.Errorf("UserDataRoots() = %v, want it to contain %s", roots, want)
+func TestUserOwnedPathsCoverTheInstallation(t *testing.T) {
+	paths := UserOwnedPaths()
+	managed := ownerIdentity{roots: paths}
+	for _, want := range []string{
+		installRoot,
+		managerRoot,
+		filepath.Dir(instanceOperationLockFile),
+		binaryPath,
+		backupDir,
+		configDir,
+		stateDir,
+	} {
+		if !managed.within(want) {
+			t.Errorf("%s must belong to the invoking user; UserOwnedPaths() = %v", want, paths)
 		}
 	}
-	managed := ownerIdentity{roots: roots}
-	for _, path := range []string{binaryPath, backupDir, filepath.Join(backupDir, "mihomo.bak")} {
-		if managed.within(path) {
-			t.Errorf("%s must stay root-owned, but it is inside the user data trees", path)
+	if unit, err := serviceUnitPathFor(runtime.GOOS); err == nil && !managed.within(unit) {
+		t.Errorf("service unit %s must belong to the invoking user; UserOwnedPaths() = %v", unit, paths)
+	}
+	for _, outside := range []string{"/etc/passwd", "/usr/bin/mihomo", "/etc/systemd/system/other.service"} {
+		if managed.within(outside) {
+			t.Errorf("%s must stay root-owned, but UserOwnedPaths() covers it", outside)
 		}
 	}
 }

@@ -12,7 +12,7 @@ import (
 )
 
 // ownerIdentity is the user that receives ownership of everything the manager
-// creates inside UserDataRoots. An elevated process writes as root, so without
+// creates inside UserOwnedPaths. An elevated process writes as root, so without
 // this handover every run would leave files the invoking user cannot edit.
 type ownerIdentity struct {
 	uid    int
@@ -31,7 +31,7 @@ var chownPath = os.Lchown
 // trees to uid:gid. It belongs to the elevated process; an unprivileged one
 // already creates files as its own user.
 func SetManagedOwner(uid, gid int) {
-	managedOwner = ownerIdentity{uid: uid, gid: gid, roots: UserDataRoots(), active: true}
+	managedOwner = ownerIdentity{uid: uid, gid: gid, roots: UserOwnedPaths(), active: true}
 }
 
 // ClearManagedOwner disables the handover.

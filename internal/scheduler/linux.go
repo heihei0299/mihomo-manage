@@ -15,6 +15,13 @@ const (
 	systemdScheduleName    = "mihomo-manager-subscription-update.timer"
 )
 
+// UnitPaths lists the system units the subscription schedule registers. They
+// exist only on Linux; the manager hands them to the invoking user so the whole
+// mihomo installation stays editable without root.
+func UnitPaths() []string {
+	return []string{systemdScheduleService, systemdScheduleTimer}
+}
+
 type linuxPlatform struct {
 	fs  FileSystem
 	cmd CommandRunner

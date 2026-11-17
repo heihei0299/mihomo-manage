@@ -65,7 +65,7 @@ mihomo-manager
 
 - 只有改动系统状态的命令需要 root：`install`、`upgrade`、`uninstall`、`autostart`、`start`/`stop`/`restart`/`reload`、`config apply`、`config override edit`、`config rules edit`、`subscription sync`、`subscription schedule --interval|--off`，以及不带参数的 TUI。
 - `status`、`logs`、`versions`、`config preview`、`config adopt`、`subscription set`、`subscription update`、`subscription schedule`（仅查询）直接以当前用户运行，不询问 sudo。
-- `/opt/mihomo/etc` 与 `/opt/mihomo-manager/state` 中由 manager 创建的文件属于调用者；`bin/` 与二进制备份保持 `root:root`，避免普通用户替换服务以 root 运行的二进制。
+- `/opt/mihomo`、`/opt/mihomo-manager` 整棵树、`/run/mihomo-manager` 以及 manager 注册的 systemd 单元都归调用者，安装目录不需要 root 即可编辑。代价是该用户可以替换服务以 root 运行的 mihomo 二进制。
 - 由 root 直接发起的任务（例如 systemd 定时订阅更新）读取 `/opt/mihomo-manager/state/owner`，仍把新文件交给记录下来的用户。
 - 从旧版本升级后，用新二进制的绝对路径执行一次 `sudo <新二进制> status`，它会交还历史 root 文件并清理中断 apply 留下的 staging 目录。`sudo mihomo-manager` 可能命中 `/usr/bin` 下没有这套逻辑的旧构建。
 

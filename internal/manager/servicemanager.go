@@ -15,6 +15,21 @@ func serviceUnitPath() string {
 	return path
 }
 
+// serviceRegistrationPaths lists the files the manager registers for the
+// service: the unit itself and, on Linux, the enablement symlink systemctl
+// creates next to it.
+func serviceRegistrationPaths() []string {
+	unit, err := serviceUnitPathFor(runtime.GOOS)
+	if err != nil {
+		return nil
+	}
+	if runtime.GOOS != "linux" {
+		return []string{unit}
+	}
+	wants := filepath.Join(filepath.Dir(unit), "multi-user.target.wants", ServiceName+".service")
+	return []string{unit, wants}
+}
+
 func serviceUnitPathFor(goos string) (string, error) {
 	switch goos {
 	case "linux":

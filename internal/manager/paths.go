@@ -1,6 +1,10 @@
 package manager
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/heihei0299/mihomo-manage/internal/scheduler"
+)
 
 const (
 	filePermUserRW    = 0644
@@ -29,10 +33,17 @@ var (
 	configApplyTransactionFile = filepath.Join(stateDir, "config-apply-transaction.json")
 )
 
-// UserDataRoots lists the managed trees whose contents belong to the invoking
-// user rather than root: the instance configuration and the manager's state.
-// Binaries and binary backups stay root-owned so an unprivileged user cannot
-// swap the binary that the service runs as root.
-func UserDataRoots() []string {
-	return []string{configDir, stateDir}
+// UserOwnedPaths lists every path the manager hands to the invoking user: both
+// managed trees, the runtime lock, and the service units registered for them.
+// The whole installation belongs to that user so nothing under it needs root to
+// edit.
+func UserOwnedPaths() []string {
+	paths := []string{
+		installRoot,
+		managerRoot,
+		filepath.Dir(instanceOperationLockFile),
+	}
+	paths = append(paths, serviceRegistrationPaths()...)
+	paths = append(paths, scheduler.UnitPaths()...)
+	return paths
 }

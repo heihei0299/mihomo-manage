@@ -17,7 +17,7 @@ func warnUnownedUserRoots() {
 	if err != nil {
 		self = "mihomo-manager"
 	}
-	for _, root := range manager.UserDataRoots() {
+	for _, root := range manager.UserOwnedPaths() {
 		info, err := os.Lstat(root)
 		if err != nil {
 			continue

@@ -87,9 +87,16 @@ func EnsureInstanceOperationLock() error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	dir := filepath.Dir(instanceOperationLockFile)
+	if err := managedOwner.apply(dir); err != nil {
+		return err
+	}
+	if err := managedOwner.apply(instanceOperationLockFile); err != nil {
+		return err
+	}
 	// Legacy releases created the lock directory 0700, which keeps every
 	// unprivileged run out even after the file itself became readable.
-	return os.Chmod(filepath.Dir(instanceOperationLockFile), 0o755)
+	return os.Chmod(dir, 0o755)
 }
 
 // openOperationLock opens the shared lock file. Flock only needs a descriptor,

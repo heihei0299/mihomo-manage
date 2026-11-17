@@ -31,7 +31,7 @@ func prepareManagedOwnership() {
 	if err := manager.EnsureInstanceOperationLock(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: preparing instance lock: %v\n", err)
 	}
-	for _, root := range manager.UserDataRoots() {
+	for _, root := range manager.UserOwnedPaths() {
 		if err := chownTree(root, uid, gid); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: restoring ownership of %s: %v\n", root, err)
 		}
