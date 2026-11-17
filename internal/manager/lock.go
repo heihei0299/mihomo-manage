@@ -2,7 +2,9 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,16 +29,9 @@ func (l *fileOperationLock) Acquire(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := (OSSystem{}).MkdirAll(filepath.Dir(l.path), dirPermPrivate); err != nil {
-		return nil, fmt.Errorf("creating update lock directory: %w", err)
-	}
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_RDWR, filePermPrivateRW)
+	file, err := openOperationLock(l.path)
 	if err != nil {
-		return nil, fmt.Errorf("opening update lock: %w", err)
-	}
-	if err := (OSSystem{}).Chmod(l.path, filePermPrivateRW); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("protecting update lock: %w", err)
+		return nil, fmt.Errorf("opening operation lock: %w", err)
 	}
 
 	tryLock := func() error {
@@ -79,4 +74,60 @@ func (l *fileOperationLock) Acquire(ctx context.Context) (func(), error) {
 			}
 		}
 	}
+}
+
+// EnsureInstanceOperationLock creates the platform lock with the permissions
+// unprivileged runs need to open it. Linux keeps the lock under /run, which only
+// an elevated process can create after a reboot.
+func EnsureInstanceOperationLock() error {
+	file, err := createOperationLock(instanceOperationLockFile)
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	// Legacy releases created the lock directory 0700, which keeps every
+	// unprivileged run out even after the file itself became readable.
+	return os.Chmod(filepath.Dir(instanceOperationLockFile), 0o755)
+}
+
+// openOperationLock opens the shared lock file. Flock only needs a descriptor,
+// not write access, so the file stays readable for every user even when an
+// elevated run owns it.
+func openOperationLock(path string) (*os.File, error) {
+	file, err := createOperationLock(path)
+	if err == nil {
+		return file, nil
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		return nil, err
+	}
+	// A fresh boot leaves /run root-only. Serializing through the manager state
+	// tree still keeps unprivileged writers apart until an elevated run
+	// recreates the platform lock.
+	return createOperationLock(fallbackLockPath())
+}
+
+func createOperationLock(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	file, err := openLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(0o644); err != nil && !errors.Is(err, fs.ErrPermission) {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := managedOwner.apply(path); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func fallbackLockPath() string {
+	return filepath.Join(stateDir, "instance.lock")
 }

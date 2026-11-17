@@ -254,3 +254,56 @@ func TestSudoArgsUsesResolvedExecutable(t *testing.T) {
 		t.Fatalf("sudoArgs fallback = %v, want [mihomo-manager status]", fallback)
 	}
 }
+
+func TestNeedsElevationNarrowsLinuxCommands(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"tui", nil, true},
+		{"status", []string{"status"}, false},
+		{"versions", []string{"versions"}, false},
+		{"logs", []string{"logs", "--tail=20"}, false},
+		{"install", []string{"install"}, true},
+		{"upgrade", []string{"upgrade"}, true},
+		{"uninstall", []string{"uninstall"}, true},
+		{"autostart", []string{"autostart", "on"}, true},
+		{"start", []string{"start"}, true},
+		{"stop", []string{"stop"}, true},
+		{"restart", []string{"restart"}, true},
+		{"reload", []string{"reload"}, true},
+		{"config preview", []string{"config", "preview"}, false},
+		{"config apply", []string{"config", "apply"}, true},
+		{"config adopt", []string{"config", "adopt", "--force"}, false},
+		{"config override edit", []string{"config", "override", "edit"}, true},
+		{"config override usage", []string{"config", "override"}, false},
+		{"config rules edit", []string{"config", "rules", "edit"}, true},
+		{"config without subcommand", []string{"config"}, false},
+		{"subscription set", []string{"subscription", "set", "https://example.com/sub"}, false},
+		{"subscription update", []string{"subscription", "update"}, false},
+		{"subscription sync", []string{"subscription", "sync"}, true},
+		{"subscription schedule status", []string{"subscription", "schedule"}, false},
+		{"subscription schedule interval", []string{"subscription", "schedule", "--interval", "1h"}, true},
+		{"subscription schedule off", []string{"subscription", "schedule", "--off"}, true},
+		{"legacy template", []string{"template"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := needsElevationFor("linux", tc.args); got != tc.want {
+				t.Fatalf("needsElevationFor(linux, %v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNeedsElevationKeepsWindowsBehavior(t *testing.T) {
+	for _, args := range [][]string{nil, {"status"}, {"config", "preview"}, {"subscription", "update"}} {
+		if !needsElevationFor("windows", args) {
+			t.Errorf("needsElevationFor(windows, %v) = false, want true", args)
+		}
+	}
+	if needsElevationFor("windows", []string{"versions"}) {
+		t.Error("versions must stay unprivileged on Windows")
+	}
+}

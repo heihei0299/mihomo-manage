@@ -41,3 +41,35 @@ func TestChownTreeMissingRootIsNotAnError(t *testing.T) {
 		t.Fatalf("chownTree(missing root) = %v, want nil", err)
 	}
 }
+
+func TestResolveOwnerIdentity(t *testing.T) {
+	record := func(uid, gid int, ok bool) func() (int, int, bool) {
+		return func() (int, int, bool) { return uid, gid, ok }
+	}
+	cases := []struct {
+		name     string
+		euid     int
+		sudoUID  string
+		sudoGID  string
+		recorded func() (int, int, bool)
+		wantUID  int
+		wantGID  int
+		wantOK   bool
+	}{
+		{"unprivileged process does no handover", 1000, "1000", "1000", record(2000, 2000, true), 0, 0, false},
+		{"sudo invoker wins", 0, "1000", "1000", record(2000, 2001, true), 1000, 1000, true},
+		{"record covers root-initiated runs", 0, "", "", record(2000, 2001, true), 2000, 2001, true},
+		{"root without a record keeps root", 0, "", "", record(0, 0, false), 0, 0, false},
+		{"malformed sudo falls back to the record", 0, "shial", "", record(2000, 2001, true), 2000, 2001, true},
+		{"nil record is safe", 0, "", "", nil, 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uid, gid, ok := resolveOwnerIdentity(tc.euid, tc.sudoUID, tc.sudoGID, tc.recorded)
+			if ok != tc.wantOK || uid != tc.wantUID || gid != tc.wantGID {
+				t.Fatalf("resolveOwnerIdentity(%d, %q, %q) = (%d, %d, %v), want (%d, %d, %v)",
+					tc.euid, tc.sudoUID, tc.sudoGID, uid, gid, ok, tc.wantUID, tc.wantGID, tc.wantOK)
+			}
+		})
+	}
+}

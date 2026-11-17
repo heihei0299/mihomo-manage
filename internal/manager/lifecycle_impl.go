@@ -19,8 +19,6 @@ import (
 	"time"
 )
 
-var backupDir = filepath.Join(managerRoot, "backups")
-
 type lifecycleManager struct {
 	fs       FileSystem
 	cmd      CommandRunner

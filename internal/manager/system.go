@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,6 +84,9 @@ func (OSSystem) WriteFile(path string, data []byte, perm uint32) error {
 		return err
 	}
 	defer out.Close()
+	if err := managedOwner.apply(path); err != nil {
+		return err
+	}
 	if err := out.Chmod(os.FileMode(perm)); err != nil {
 		return err
 	}
@@ -107,10 +111,42 @@ func (OSSystem) Rename(oldPath, newPath string) error {
 }
 
 func (OSSystem) MkdirAll(path string, perm uint32) error {
+	created, err := missingDirs(path)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(path, os.FileMode(perm)); err != nil {
 		return err
 	}
+	for _, dir := range created {
+		if err := managedOwner.apply(dir); err != nil {
+			return err
+		}
+	}
 	return protectPathPermissions(path, perm)
+}
+
+// missingDirs lists path and its ancestors that do not exist yet, top-down, so
+// MkdirAll hands every directory it creates to the managed owner.
+func missingDirs(path string) ([]string, error) {
+	var missing []string
+	for current := filepath.Clean(path); ; {
+		if _, err := os.Lstat(current); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		missing = append(missing, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	for i, j := 0, len(missing)-1; i < j; i, j = i+1, j-1 {
+		missing[i], missing[j] = missing[j], missing[i]
+	}
+	return missing, nil
 }
 
 func (OSSystem) Chmod(path string, perm uint32) error {
@@ -165,6 +201,9 @@ func (OSSystem) Download(ctx context.Context, rawURL, dest string) error {
 		return fmt.Errorf("creating %s: %w", dest, err)
 	}
 	defer out.Close()
+	if err := managedOwner.apply(dest); err != nil {
+		return err
+	}
 	if err := out.Chmod(0600); err != nil {
 		return fmt.Errorf("protecting %s: %w", dest, err)
 	}

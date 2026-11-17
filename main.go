@@ -81,6 +81,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unsupported platform: %s; supported platforms are Linux and Windows\n", runtime.GOOS)
 		os.Exit(1)
 	}
+	prepareManagedOwnership()
 	if len(args) == 1 && args[0] == "service-run" {
 		if err := manager.RunWindowsService(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -111,7 +112,6 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		err := startTUI(ctx, ctrl, lifecycle, cfg, sched)
-		restoreInvokerOwnership()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -218,7 +218,6 @@ func main() {
 	}
 
 	stop()
-	restoreInvokerOwnership()
 	os.Exit(exitCode)
 }
 
@@ -470,24 +469,71 @@ Lifecycle:
 Run without arguments to start the TUI.`
 }
 
+// needsElevation reports whether a command must re-execute itself through sudo.
+// Linux elevates only what changes system state: installing, registering units,
+// and controlling the service. Commands that merely read or rewrite the managed
+// trees run as the invoking user, which is also what keeps created files theirs.
+// Windows keeps the previous behavior because its state lives under ProgramData
+// and needs an elevated token.
 func needsElevation(args []string) bool {
+	return needsElevationFor(runtime.GOOS, args)
+}
+
+func needsElevationFor(goos string, args []string) bool {
+	if len(args) > 0 && (args[0] == "versions" || args[0] == "v") {
+		return false
+	}
+	if goos != "linux" {
+		return true
+	}
 	if len(args) == 0 {
-		return true // TUI
+		return true // TUI can install, upgrade, and control the service.
 	}
 	switch args[0] {
-	case "status":
-		return true // Apply status may contain private subscription diagnostics.
-	case "versions", "v":
+	case "status", "logs", "template", "rules":
 		return false
-	case "logs":
-		return runtime.GOOS == "windows"
 	case "config":
-		// Preview currently performs recovery and legacy migration while holding
-		// the root-owned config lock, so it must use the same elevation path as
-		// other config mutations.
-		return true
+		return configNeedsElevation(args[1:])
+	case "subscription":
+		return subscriptionNeedsElevation(args[1:])
 	default:
 		return true
+	}
+}
+
+func configNeedsElevation(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "apply":
+		return true
+	case "override", "rules":
+		// Editing runs $EDITOR and then applies the result, which reloads the service.
+		return len(args) > 1 && args[1] == "edit"
+	default:
+		return false
+	}
+}
+
+func subscriptionNeedsElevation(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "sync":
+		return true
+	case "schedule":
+		// Status is read-only; --off and --interval write systemd units.
+		if len(args) == 1 {
+			return false
+		}
+		if args[1] == "--off" {
+			return true
+		}
+		return args[1] == "--interval" && len(args) > 2
+	default:
+		return false
 	}
 }
 

@@ -18,6 +18,7 @@ var (
 	RoutingRulesPath       = filepath.Join(configDir, "rules.txt")
 	configYAML             = filepath.Join(configDir, "config.yaml")
 	stateDir               = filepath.Join(managerRoot, "state")
+	backupDir              = filepath.Join(managerRoot, "backups")
 	ServiceLogPath         = filepath.Join(managerRoot, "logs", "mihomo.log")
 	subscriptionDataFile   = filepath.Join(stateDir, "subscription-data.txt")
 	subscriptionURLFile    = filepath.Join(stateDir, "subscription-url.txt")
@@ -28,8 +29,10 @@ var (
 	configApplyTransactionFile = filepath.Join(stateDir, "config-apply-transaction.json")
 )
 
-// ManagedRoots lists the filesystem trees the manager owns: the mihomo
-// instance installation and the manager's own state.
-func ManagedRoots() []string {
-	return []string{installRoot, managerRoot}
+// UserDataRoots lists the managed trees whose contents belong to the invoking
+// user rather than root: the instance configuration and the manager's state.
+// Binaries and binary backups stay root-owned so an unprivileged user cannot
+// swap the binary that the service runs as root.
+func UserDataRoots() []string {
+	return []string{configDir, stateDir}
 }
